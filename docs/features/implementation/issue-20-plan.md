@@ -76,4 +76,8 @@ git diff --check
 
 ## PR
 
-Pending. User reviews and merges before #21.
+Draft PR: https://github.com/gajo357/dsharplang/pull/107
+
+The isolated test-only commit dae5479aeec9e4faffbd57809b3c33e9a0ae881e must be
+reviewed and landed on main before the trusted-base verifier can accept this PR.
+Then update this branch, rerun checks, and review/merge before #21.
