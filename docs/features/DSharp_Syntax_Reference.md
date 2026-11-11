@@ -3,7 +3,10 @@
 **Version:** 0.3 — implementation handoff draft  
 **Date:** 11 November 2026  
 **Companion:** Backend Language Feature Specification v0.2  
-**Status:** Language design and implementation handoff; not a claim of an implemented compiler.
+**Status:** Language design and implementation handoff. A minimal literal-function
+compiler exists; see [implementation status](DSharp_Implementation_Status.md) and
+[bootstrap scope](../COMPILER_BOOTSTRAP.md). The remaining examples are design
+input, not a claim of implemented language/runtime support.
 **Implementation brief:** [DSharp_Implementation_Instructions.md](DSharp_Implementation_Instructions.md).
 
 **Decision boundary:** The user-selected behaviour listed in section 21.2 is authoritative design input. Exact syntax and library APIs marked proposed, illustrative or provisional must be frozen for the relevant milestone before implementation. A handoff document does not override repository automation permissions.

@@ -38,8 +38,8 @@ runtime failures, and retries do not undo external effects.
   requiring explicit compiler/build support and safe boundaries.
 
 The design does not promise BEAM-style per-actor garbage collection or execution
-preemption on .NET. Generating C# and using Akka.NET are prototype possibilities,
-not committed implementation dependencies.
+preemption on .NET. The compiler generates C# using the pinned .NET SDK.
+Akka.NET remains a possible runtime direction, not an adopted dependency.
 
 ## Purpose and scope
 
@@ -89,7 +89,9 @@ outbox or equivalent mechanism.
 | [Type system and syntax](docs/LANGUAGE.md) | Established type semantics, syntax boundaries, and unresolved rules. |
 | [Feature specification v0.2](docs/design/FEATURES.md) | Preserved source specification dated 10 November 2026. |
 | [Documentation tasks](docs/TASKS.md) | Task breakdown, review evidence, and follow-up decisions. |
-| [AI development workflows](docs/AI_WORKFLOWS.md) | Approved issue intake, draft PRs, independent verification/review, and bounded repairs. |
+| [Implementation sequence](docs/features/implementation/DSharp_Implementation_Sequence.md) | Codex web task order, dependency gates, per-issue plans and PRs. |
+| [Prepared task queue](docs/features/implementation/DSharp_Task_Queue.md) | Prompts for the 94 existing implementation/design/setup issues. |
+| [AI development workflows](docs/AI_WORKFLOWS.md) | Codex web entry point and optional API-backed GitHub coordinator. |
 
 The feature specification is the baseline. Provisional choices and open decisions
 are labeled; examples do not finalize grammar.
@@ -115,8 +117,17 @@ See [bootstrap scope and evidence](docs/COMPILER_BOOTSTRAP.md) for the exact
 subset, pins, diagnostics, tests and unresolved decisions. Compiler verification
 requires nonzero passing test discovery and preserves a TRX report.
 
-Code-task AI workflows require the separately reviewed enablement change and
-configured repository App/API settings; see [AI workflows](docs/AI_WORKFLOWS.md). Compiler tests do not demonstrate agent isolation or queue durability.
+For Codex web, follow the [implementation sequence](docs/features/implementation/DSharp_Implementation_Sequence.md):
+one issue, dedicated branch, implementation plan and draft PR. Start with the
+instruction reconciliation in [#8](https://github.com/gajo357/dsharplang/issues/8),
+then immutable locals in [#7](https://github.com/gajo357/dsharplang/issues/7). Check
+current issue/PR state and merged prerequisites before starting; do not restart
+completed work. The user reviews and merges before dependent work advances.
+
+The optional API-backed GitHub coordinator is already present and requires its
+own repository App/API settings; see [AI workflows](docs/AI_WORKFLOWS.md). Those
+settings are not prerequisites for a Codex web task. Compiler tests do not
+demonstrate agent isolation or queue durability.
 
 ## License
 
