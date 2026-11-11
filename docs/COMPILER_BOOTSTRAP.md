@@ -68,4 +68,5 @@ the handoff's established behaviour when adding later slices. Numeric extensions
 formal newline grammar, async/function-type spelling, generic disambiguation,
 worker fault wrapper, queue lifecycle, serialization, middleware, authorization
 capabilities and safe .NET interop require their own frozen contracts/tests.
-Code-writing automation is a separate reviewable change after this baseline.
+Code-writing automation is a separate reviewable change after this baseline;
+see [AI workflows](AI_WORKFLOWS.md) for its trusted verification boundary.

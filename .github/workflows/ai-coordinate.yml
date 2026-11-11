@@ -15,7 +15,7 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: read
@@ -33,6 +33,9 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           AI_MODEL: ${{ vars.AI_MODEL }}
         run: node .github/ai/coordinator.ts preflight
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
       - name: Baseline must pass
         run: bash .github/ai/bootstrap.sh && bash .github/ai/verify.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

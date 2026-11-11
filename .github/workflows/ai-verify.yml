@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -24,9 +24,14 @@ jobs:
           path: candidate
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: trusted/global.json
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
+      - name: Initialize evidence directory
+        run: mkdir -p "${{ runner.temp }}/ai-reports"
       - name: Enforce trusted publication policy
         id: policy
         env:
@@ -35,8 +40,8 @@ jobs:
         run: |
           test "$BASE_SHA" = "$GITHUB_SHA"
           test "$(git -C candidate rev-parse HEAD)" = "$HEAD_SHA"
-          node trusted/.github/ai/inspect-candidate.mjs candidate
-      - name: Run trusted verification against candidate documentation
+          node trusted/.github/ai/inspect-candidate.mjs candidate > "${{ runner.temp }}/ai-reports/scope.json"
+      - name: Run trusted compiler, documentation and automation verification
         id: checks
         env:
           AI_REPORT_DIR: ${{ runner.temp }}/ai-reports
@@ -51,7 +56,7 @@ jobs:
           REPORT_DIR: ${{ runner.temp }}/ai-reports
         run: |
           mkdir -p "$REPORT_DIR"
-          node -e 'require("node:fs").writeFileSync(process.env.REPORT_DIR + "/verification.json", JSON.stringify({baseSha:process.env.BASE_SHA,headSha:process.env.HEAD_SHA,policy:process.env.POLICY === "success" ? "pass" : "blocked",checks:process.env.CHECKS}))'
+          node trusted/.github/ai/record-verification.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

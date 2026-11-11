@@ -42,6 +42,11 @@ if (git(['rev-parse', 'HEAD']).toString().trim() !== head) {
   git(['-c', 'core.hooksPath=/dev/null', 'checkout', '--detach', head]);
 }
 assert(git(['rev-parse', 'HEAD']).toString().trim() === head);
+// Bind design and policy inputs to the frozen base, independent of candidate text.
+for (const instruction of manifest.instructions) {
+  const bytes = git(['show', `${manifest.baseSha}:${instruction.file}`]);
+  assert(createHash('sha256').update(bytes).digest('hex') === instruction.sha256, 'Frozen instruction mismatch');
+}
 // The candidate cannot replace repository instructions.
 git(['checkout', manifest.baseSha, '--', 'AGENTS.md']);
 mkdirSync(root, { recursive: true });

@@ -115,8 +115,8 @@ See [bootstrap scope and evidence](docs/COMPILER_BOOTSTRAP.md) for the exact
 subset, pins, diagnostics, tests and unresolved decisions. Compiler verification
 requires nonzero passing test discovery and preserves a TRX report.
 
-The AI worker remains documentation-only until a separate enablement change is
-reviewed. Compiler tests do not demonstrate agent isolation or queue durability.
+Code-task AI workflows require the separately reviewed enablement change and
+configured repository App/API settings; see [AI workflows](docs/AI_WORKFLOWS.md). Compiler tests do not demonstrate agent isolation or queue durability.
 
 ## License
 

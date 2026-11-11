@@ -17,3 +17,5 @@ assert len(cases) >= 7, 'Expected automation tests were not discovered'
 assert not root.findall('.//skipped'), 'Required tests were skipped'
 print(f'Verified {len(cases)} executed automation tests; reports saved.')
 PY
+
+python3 "$trusted/verify-compiler.py" "$target" "$reports"

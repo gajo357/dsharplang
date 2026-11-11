@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseSpec, validatePlan, validateReview, decide, sha } from './lib.mjs';
+import { parseSpec, validatePlan, validateReview, decide, sha, validateVerification } from './lib.mjs';
 
 const policy = JSON.parse(readFileSync(new URL('./policy.json', import.meta.url), 'utf8'));
 const repo = process.env.GITHUB_REPOSITORY!;
@@ -36,7 +36,8 @@ async function preflight() {
   const issue = await api(`/issues/${issueNumber}`);
   assert(!issue.pull_request && issue.state === 'open', 'An open issue is required');
   assert(issue.labels.some((label: any) => label.name === 'ai:approved'), 'Maintainer must add ai:approved');
-  assert(policy.mode === 'documentation-only', 'Approve a real build/test harness before enabling code tasks');
+  assert(policy.mode === 'compiler-code' && policy.version === 2, 'Unapproved executable policy');
+  for (const file of ['global.json', 'DSharp.slnx', 'tests/DSharp.Compiler.Tests/CompilerTests.cs', '.github/ai/verify-compiler.py']) readFileSync(file);
   const criteria = parseSpec(issue.body, policy.requiredSections);
   const baseSha = (await api(`/git/ref/heads/${policy.baseBranch}`)).object.sha;
   assert(sha(baseSha) && baseSha === process.env.GITHUB_SHA, 'Main moved; start a fresh run');
@@ -47,7 +48,7 @@ async function preflight() {
     await api(`/git/ref/heads/${branch}`);
     throw new Error('Task branch already exists; human reconciliation required');
   } catch (error: any) { if (error.status !== 404) throw error; }
-  const instructions = ['AGENTS.md', 'docs/ARCHITECTURE.md', 'docs/LANGUAGE.md'].map(file => ({ file, sha256: hash(readFileSync(file)) }));
+  const instructions = ['AGENTS.md', 'docs/ARCHITECTURE.md', 'docs/LANGUAGE.md', 'docs/COMPILER_BOOTSTRAP.md', 'docs/features/DSharp_Syntax_Reference.md', 'docs/features/DSharp_Implementation_Instructions.md', '.github/ai/policy.json', 'global.json'].map(file => ({ file, sha256: hash(readFileSync(file)) }));
   const manifest = {
     version: 1, repository: repo, controllerRun: runId, issueNumber, branch, baseSha,
     specification: issue.body, specHash: hash(issue.body), criteria, instructions,
@@ -129,7 +130,7 @@ async function coordinate() {
     manifest.phase = 'IMPLEMENTING'; save();
     const implementation = await dispatch('ai-implement.lock.yml', 0, { branch: manifest.branch });
     assert(implementation.conclusion === 'success', 'Implementation/publishing failed; inspect worker logs');
-    validatePlan(await artifact(implementation, `plan-${implementation.display_title}`, 'plan.json'), manifest.criteria);
+    validatePlan(await artifact(implementation, `plan-${implementation.display_title}`, 'plan.json'), manifest.criteria, policy);
     pr = await getPR();
     for (let attempt = 0; attempt <= policy.maxRepairs; attempt++) {
       checkDeadline();
@@ -140,8 +141,7 @@ async function coordinate() {
       const ci = await dispatch('ai-verify.yml', attempt, { head_sha: head });
       if (ci.conclusion !== 'success' && ci.conclusion !== 'failure') throw new Error('CI infrastructure/cancellation failure');
       const verification = await artifact(ci, `verification-${head}`, 'verification.json');
-      assert(verification.headSha === head && verification.baseSha === manifest.baseSha && verification.policy === 'pass', 'Policy failure or invalid CI evidence');
-      assert(verification.checks === 'success' || verification.checks === 'failure', 'Required checks did not execute');
+      validateVerification(verification, head, manifest.baseSha, ci.conclusion);
       const reviewed = await dispatch('ai-review.lock.yml', attempt, { head_sha: head, ci_run: String(ci.id) });
       assert(reviewed.conclusion === 'success', 'Independent reviewer failed');
       const review = validateReview(await artifact(reviewed, `review-${head}`, 'review.json'), head, manifest.criteria);
@@ -166,14 +166,14 @@ async function coordinate() {
           throw new Error('Concurrent head change; readiness withdrawn');
         }
         manifest.phase = 'READY'; save();
-        appendFileSync(process.env.GITHUB_STEP_SUMMARY!, `PR #${pr.number} ready for human review.\n\nRevision: ${head}\n\nCI run: ${ci.id}; independent review: ${reviewed.id}; repairs: ${attempt}.\n\nDocumentation checks only; no runtime exists yet. No merge or deployment performed.\n`);
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY!, `PR #${pr.number} ready for human review.\n\nRevision: ${head}\n\nCI run: ${ci.id}; independent review: ${reviewed.id}; repairs: ${attempt}.\n\nPinned compiler restore/build, trusted acceptance and feature tests verified. No agent runtime is claimed. No merge or deployment performed.\n`);
         return;
       }
       assert(decision === 'repair', 'Blocked: decision needed, stale evidence, deadline, or repair budget exhausted');
       manifest.phase = 'REPAIRING'; save();
       const repaired = await dispatch('ai-repair.lock.yml', attempt + 1, { head_sha: head, pr_number: String(pr.number), ci_run: String(ci.id), review_run: String(reviewed.id) });
       assert(repaired.conclusion === 'success', 'Repair failed');
-      validatePlan(await artifact(repaired, `plan-${repaired.display_title}`, 'plan.json'), manifest.criteria);
+      validatePlan(await artifact(repaired, `plan-${repaired.display_title}`, 'plan.json'), manifest.criteria, policy);
       assert((await getPR()).head.sha !== head, 'Repair produced no new revision');
     }
     throw new Error('Repair budget exhausted');
