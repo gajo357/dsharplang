@@ -68,7 +68,7 @@ public sealed class LetBindingTests
     [InlineData("let value =\n|42\nvalue", "DS1002", 2)]
     [InlineData("let value = 42\n|}", "DS2002", 1)]
     [InlineData("let value = 42|;\nvalue", "DS1001", 1)]
-    [InlineData("let value = 1 |+ 2\nvalue", "DS1001", 1)]
+    [InlineData("let value = 1 |^ 2\nvalue", "DS1001", 1)]
     [InlineData("let value = 42\nvalue|()", "DS1002", 1)]
     [InlineData("let value = |{ 42 }\nvalue", "DS2002", 1)]
     public void InvalidBindingsReportExactDSharpLocation(string markedBody, string code, int length)

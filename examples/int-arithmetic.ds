@@ -1,0 +1,6 @@
+module Demo
+
+fn answer(): int {
+    let base = 20
+    (base + 1) * 2
+}
