@@ -8,6 +8,7 @@ This status describes tested implementation, not the full syntax draft.
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
+| Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
 | Whitespace and single-line comments | Implemented and tested | Included in source pipeline |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
@@ -45,8 +46,13 @@ See [the example](../../examples/let-bindings.ds) and
 [implementation plan and evidence](implementation/issue-7-plan.md).
 Also see [the arithmetic example](../../examples/int-arithmetic.ds) and
 [arithmetic plan/evidence](implementation/issue-19-plan.md).
-Parameters/calls, nested scopes, additional primitives and runtime features remain
-unsupported.
+[Issue #20](https://github.com/gajo357/dsharplang/issues/20) adds explicit int
+parameters and positional calls in the same module, resolved regardless of
+declaration order. Parameter names cannot be duplicated, reassigned or redeclared
+as locals; unknown functions, wrong arity and unsupported types are rejected.
+Calls and arguments evaluate in source order. See [the example](../../examples/function-calls.ds)
+and [plan](implementation/issue-20-plan.md).
+Nested scopes, additional primitives and runtime features remain unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix
 only when the behavior and relevant generated execution/rejection tests pass.

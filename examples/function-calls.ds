@@ -1,0 +1,9 @@
+module Demo
+
+fn answer(): int {
+    identity(42)
+}
+
+fn identity(value: int): int {
+    value
+}

@@ -37,6 +37,10 @@ results and the implementation status with precisely tested behavior. Open one
 draft PR with acceptance evidence; do not merge, deploy or start the next issue.
 The user reviews and merges before dependent work advances from updated main.
 
+When a PR or its CI fails, fix the issue on that same PR branch and update the
+existing PR. Do not create another PR or change main for the fix unless main
+was already broken before the PR.
+
 Ordinary feature tasks must not edit automation, dependencies, instructions or
 architecture decisions. A separately scoped setup/infrastructure issue may propose
 only its explicitly named changes in a reviewed PR; it does not grant blanket
