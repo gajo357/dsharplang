@@ -1,0 +1,7 @@
+module Demo
+
+fn answer(): int {
+    let original = 42
+    let result = original
+    result
+}
