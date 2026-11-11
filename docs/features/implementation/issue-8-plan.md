@@ -109,4 +109,7 @@ image before this PR is treated as fully verified.
 
 ## PR
 
-Draft PR pending. The user reviews and merges before the next dependent task.
+Draft PR: https://github.com/gajo357/dsharplang/pull/102
+
+The full verifier is blocked locally as recorded above. The user reviews and
+merges after required checks pass, before the next dependent task.
