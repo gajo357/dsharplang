@@ -34,7 +34,7 @@ public sealed class CompilerTests
     [InlineData("module Demo fn answer(): string { 42 }", "DS2003")]
     [InlineData("module Demo fn answer(): int { 1 } fn answer(): int { 2 }", "DS2001")]
     [InlineData("module Demo import Other", "DS1002")]
-    [InlineData("module Demo fn answer(x: int): int { 42 }", "DS1002")]
+    [InlineData("module Demo fn answer(x): int { 42 }", "DS1002")]
     [InlineData("module Demo fn answer(): int { 42 } extra", "DS1002")]
     [InlineData("module", "DS1002")]
     public void InvalidSourceHasDSharpDiagnostic(string source, string code)
