@@ -7,17 +7,34 @@ public sealed record SourceSpan(int Start, int Length, int Line, int Column);
 public sealed record Diagnostic(string Code, string Path, SourceSpan Span, string Message);
 public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics);
 public sealed record Token(string Text, SourceSpan Span);
-public sealed record LetBindingSyntax(Token Name, Token? Annotation, Token Initializer);
+public abstract record ExpressionSyntax(Token Token);
+public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
+public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
+public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
+public abstract record BoundExpression;
+public sealed record BoundInt(int Value) : BoundExpression;
+public sealed record BoundReference(string Name) : BoundExpression;
+public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
+public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression;
+public sealed record LetBindingSyntax(Token Name, Token? Annotation, Token Initializer)
+{
+    public ExpressionSyntax? Expression { get; init; }
+}
 public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
 {
     // Literal retains its original name for bootstrap API compatibility; it is now
-    // the final expression token, which may also refer to a local.
+    // the first token of the final expression. Expression carries the full tree.
+    public ExpressionSyntax? Expression { get; init; }
     public IReadOnlyList<LetBindingSyntax> Bindings { get; init; } = Array.Empty<LetBindingSyntax>();
 }
 public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions);
-public sealed record BoundLocal(string Name, int Value, string? InitializerLocal);
+public sealed record BoundLocal(string Name, int Value, string? InitializerLocal)
+{
+    public BoundExpression? Expression { get; init; }
+}
 public sealed record BoundFunction(string Name, int Value)
 {
+    public BoundExpression? Expression { get; init; }
     public IReadOnlyList<BoundLocal> Locals { get; init; } = Array.Empty<BoundLocal>();
     public string? ResultLocal { get; init; }
 }
@@ -46,7 +63,7 @@ public static class Lexer
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
-            else if ("():{}=".Contains(c)) Advance();
+            else if ("():{}=+-*/%".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
             tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)));
         }
@@ -63,7 +80,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private SourceError Error(string message) => new(new("DS1002", path, Current.Span, message));
     private Token Expect(string text)
     {
-        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only int literals and local let bindings are supported.");
+        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported int expressions and local let bindings are accepted.");
         return Take();
     }
     private Token Identifier()
@@ -75,13 +92,36 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     // Draft language words cannot accidentally become identifiers in this subset.
     private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int public private protected internal".Split(' '));
-    private Token Expression()
+    private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0)
     {
-        var text = Current.Text;
-        if (text.Length > 0 && text.All(char.IsAsciiDigit)) return Take();
-        if (text.Length > 0 && (char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))
-            return Take();
-        throw new SourceError(new("DS2002", path, Current.Span, "Expected an int literal or local identifier."));
+        ExpressionSyntax left;
+        if (line is { } expectedLine && Current.Span.Line != expectedLine)
+            throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
+        if (Current.Text == "-")
+        {
+            var op = Take();
+            left = new UnarySyntax(op, Expression(line, 3));
+        }
+        else if (Current.Text == "(")
+        {
+            Take(); left = Expression(line); Expect(")");
+        }
+        else
+        {
+            var text = Current.Text;
+            if (text.Length == 0 || !(text.All(char.IsAsciiDigit) ||
+                ((char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))))
+                throw new SourceError(new("DS2002", path, Current.Span, "Expected an int literal, local or parenthesized expression."));
+            left = new ValueSyntax(Take());
+        }
+        while (line is null || Current.Span.Line == line)
+        {
+            var precedence = Current.Text switch { "+" or "-" => 1, "*" or "/" or "%" => 2, _ => 0 };
+            if (precedence == 0 || precedence < minimumPrecedence) break;
+            var op = Take();
+            left = new BinarySyntax(left, op, Expression(line, precedence + 1));
+        }
+        return left;
     }
     public ModuleSyntax Parse()
     {
@@ -106,18 +146,21 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     annotation = Take();
                 }
                 Expect("=");
-                var initializer = Expression();
-                if (initializer.Span.Line != keyword.Span.Line)
-                    throw new SourceError(new("DS1002", path, initializer.Span, "Write each let binding on one line."));
-                if (Current.Span.Line == initializer.Span.Line)
+                var initializerToken = Current;
+                var initializer = Expression(keyword.Span.Line);
+                var initializerEnd = tokens[position - 1];
+                if (initializerEnd.Span.Line != keyword.Span.Line)
+                    throw new SourceError(new("DS1002", path, initializerEnd.Span, "Write each let binding on one line."));
+                if (Current.Span.Line == initializerEnd.Span.Line)
                     throw Error("A let binding must be followed by a newline and a final expression or another binding.");
-                bindings.Add(new(local, annotation, initializer));
+                bindings.Add(new(local, annotation, initializerToken) { Expression = initializer });
             }
+            var resultToken = Current;
             var result = Expression();
             if (Current.Text == "=")
-                throw new SourceError(new("DS2005", path, result.Span, "Local bindings cannot be reassigned."));
+                throw new SourceError(new("DS2005", path, resultToken.Span, "Local bindings cannot be reassigned."));
             Expect("}");
-            functions.Add(new(function, type, result) { Bindings = bindings.Count == 0 ? Array.Empty<LetBindingSyntax>() : bindings });
+            functions.Add(new(function, type, resultToken) { Expression = result, Bindings = bindings.Count == 0 ? Array.Empty<LetBindingSyntax>() : bindings });
         }
         if (functions.Count == 0) throw Error("Expected at least one function.");
         return new(name, functions);
@@ -137,33 +180,56 @@ public static class Binder
             if (function.ReturnType.Text != "int") Fail("DS2003", function.ReturnType, "Only the int return type is supported.");
             var locals = new Dictionary<string, int>(StringComparer.Ordinal);
             var boundLocals = new List<BoundLocal>();
-            (int Value, string? Local) BindExpression(Token token)
+            BoundExpression BindExpression(ExpressionSyntax expression)
             {
-                if (token.Text.Length > 0 && token.Text.All(char.IsAsciiDigit))
+                switch (expression)
                 {
-                    if (!int.TryParse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
-                        Fail("DS2004", token, "Integer literal is outside the int range.");
-                    return (literal, null);
+                    case ValueSyntax valueSyntax:
+                        var token = valueSyntax.Value;
+                        if (token.Text.Length > 0 && token.Text.All(char.IsAsciiDigit))
+                        {
+                            if (!int.TryParse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
+                                Fail("DS2004", token, "Integer literal is outside the int range.");
+                            return new BoundInt(literal);
+                        }
+                        if (!locals.ContainsKey(token.Text))
+                            Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
+                        return new BoundReference(token.Text);
+                    case UnarySyntax unary:
+                        return new BoundUnary(unary.Operator.Text, BindExpression(unary.Operand));
+                    case BinarySyntax binary:
+                        var left = BindExpression(binary.Left);
+                        var right = BindExpression(binary.Right);
+                        return new BoundBinary(left, binary.Operator.Text, right);
+                    default: throw new InvalidOperationException("Unknown expression syntax.");
                 }
-                if (!locals.TryGetValue(token.Text, out var value))
-                    Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
-                return (value, token.Text);
             }
+            // Preserve bootstrap values for literal/local-only clients. Arithmetic
+            // has no compile-time value: evaluating it here would move faults out
+            // of execution. The bound expression is authoritative for emission.
+            int LegacyValue(BoundExpression expression) => expression switch
+            {
+                BoundInt literal => literal.Value,
+                BoundReference reference => locals[reference.Name],
+                _ => 0
+            };
             foreach (var binding in function.Bindings)
             {
                 if (locals.ContainsKey(binding.Name.Text))
                     Fail("DS2006", binding.Name, "Duplicate local binding.");
                 if (binding.Annotation is { } annotation && annotation.Text != "int")
                     Fail("DS2008", annotation, "Only int local annotations are supported.");
-                var initializer = BindExpression(binding.Initializer);
-                locals.Add(binding.Name.Text, initializer.Value);
-                boundLocals.Add(new(binding.Name.Text, initializer.Value, initializer.Local));
+                var initializer = BindExpression(binding.Expression ?? new ValueSyntax(binding.Initializer));
+                var value = LegacyValue(initializer);
+                locals.Add(binding.Name.Text, value);
+                boundLocals.Add(new(binding.Name.Text, value, (initializer as BoundReference)?.Name) { Expression = initializer });
             }
-            var result = BindExpression(function.Literal);
-            functions.Add(new(function.Name.Text, result.Value)
+            var result = BindExpression(function.Expression ?? new ValueSyntax(function.Literal));
+            functions.Add(new(function.Name.Text, LegacyValue(result))
             {
                 Locals = boundLocals.Count == 0 ? Array.Empty<BoundLocal>() : boundLocals,
-                ResultLocal = result.Local
+                ResultLocal = (result as BoundReference)?.Name,
+                Expression = boundLocals.Count == 0 && result is BoundInt ? null : result
             });
         }
         return new(syntax.Name.Text, functions);
@@ -184,24 +250,46 @@ public static class CSharpEmitter
         foreach (var function in module.Functions)
         {
             output.Append("    public static int @").Append(function.Name).Append("()");
-            if (function.Locals.Count == 0)
+            if (function.Expression is null && function.Locals.Count == 0)
             {
                 output.Append(" => ").Append(function.Value.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                 continue;
             }
-            output.Append("\n    {\n");
+            output.Append("\n    {\n        checked\n        {\n");
             var localNames = new Dictionary<string, string>(StringComparer.Ordinal);
+            var literalCount = 0;
+            string EmitExpression(BoundExpression expression)
+            {
+                switch (expression)
+                {
+                    case BoundInt literal:
+                        // C# constant overflow/division errors must instead be D#
+                        // execution faults. Lift literals to ordinary int locals.
+                        var name = "__dsharp_int_" + (literalCount++).ToString(CultureInfo.InvariantCulture);
+                        output.Append("            int ").Append(name).Append(" = ")
+                            .Append(literal.Value.ToString(CultureInfo.InvariantCulture)).Append(";\n");
+                        return name;
+                    case BoundReference reference: return localNames[reference.Name];
+                    case BoundUnary unary: return "(-" + EmitExpression(unary.Operand) + ")";
+                    case BoundBinary binary:
+                        var left = EmitExpression(binary.Left);
+                        var right = EmitExpression(binary.Right);
+                        return "(" + left + " " + binary.Operator + " " + right + ")";
+                    default: throw new InvalidOperationException("Unknown bound expression.");
+                }
+            }
             foreach (var local in function.Locals)
             {
                 var emittedName = "__dsharp_local_" + localNames.Count.ToString(CultureInfo.InvariantCulture);
-                var initializer = local.InitializerLocal is { } reference
-                    ? localNames[reference] : local.Value.ToString(CultureInfo.InvariantCulture);
-                output.Append("        int ").Append(emittedName).Append(" = ").Append(initializer).Append(";\n");
+                var expression = local.Expression ?? (local.InitializerLocal is { } reference
+                    ? (BoundExpression)new BoundReference(reference) : new BoundInt(local.Value));
+                var initializer = EmitExpression(expression);
+                output.Append("            int ").Append(emittedName).Append(" = ").Append(initializer).Append(";\n");
                 localNames.Add(local.Name, emittedName);
             }
-            var result = function.ResultLocal is { } resultLocal
-                ? localNames[resultLocal] : function.Value.ToString(CultureInfo.InvariantCulture);
-            output.Append("        return ").Append(result).Append(";\n    }\n");
+            var result = EmitExpression(function.Expression ?? (function.ResultLocal is { } resultLocal
+                ? (BoundExpression)new BoundReference(resultLocal) : new BoundInt(function.Value)));
+            output.Append("            return ").Append(result).Append(";\n        }\n    }\n");
         }
         return output.Append("}\n").ToString();
     }

@@ -8,6 +8,7 @@ This status describes tested implementation, not the full syntax draft.
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
+| Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
 | Whitespace and single-line comments | Implemented and tested | Included in source pipeline |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
@@ -24,17 +25,27 @@ small milestones. No agent isolation or durability follows from this bootstrap.
 
 Follow the [Codex web implementation sequence](implementation/DSharp_Implementation_Sequence.md)
 and [task queue](implementation/DSharp_Task_Queue.md). [Issue #7](https://github.com/gajo357/dsharplang/issues/7)
-is implemented in this slice: one binding per line, only nonnegative int literals
-or earlier locals as initializers, optional `: int`, no reassignment or shadowing.
+is implemented: one binding per line, optional `: int`, no reassignment or shadowing.
+[Issue #19](https://github.com/gajo357/dsharplang/issues/19) extends initializers and
+final expressions with checked int arithmetic and parentheses. Numeric tokens
+remain nonnegative literals in 0..2147483647; unary minus is an operator, and
+`-2147483648` is still rejected. Binary operators are left-associative with
+multiplicative precedence. Operands evaluate left to right. Division truncates
+toward zero; remainder follows the dividend sign. Overflow (including the CLR
+minimum-int divided/remainder by -1 cases) and division/remainder by zero are
+execution faults, even for constant-looking expressions. No arithmetic is folded
+at binding time. Binding declarations retain their one-line boundary.
 Bindings become visible after their initializer and never cross function boundaries.
 Reassignment (DS2005), duplicate locals (DS2006), unknown/self/forward/cross-function
-references (DS2007), unsupported local annotations (DS2008) and int overflow
+references (DS2007), unsupported local annotations (DS2008) and out-of-range int literals
 (DS2004) are rejected with D# source spans. Malformed declarations and unsupported
 expressions continue to produce source diagnostics.
 
 See [the example](../../examples/let-bindings.ds) and
-[implementation plan and evidence](implementation/issue-7-plan.md). Arithmetic,
-parameters/calls, nested scopes, additional primitives and runtime features remain
+[implementation plan and evidence](implementation/issue-7-plan.md).
+Also see [the arithmetic example](../../examples/int-arithmetic.ds) and
+[arithmetic plan/evidence](implementation/issue-19-plan.md).
+Parameters/calls, nested scopes, additional primitives and runtime features remain
 unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix
