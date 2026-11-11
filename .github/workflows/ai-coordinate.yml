@@ -1,0 +1,81 @@
+name: AI coordinate
+run-name: 'AI issue ${{ inputs.issue_number }}'
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Approved specification issue number
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: ai-implementation-pilot
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Freeze approved scope and base revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+        run: node .github/ai/coordinator.ts preflight
+      - name: Baseline must pass
+        run: bash .github/ai/bootstrap.sh && bash .github/ai/verify.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: approved-manifest
+          path: manifest.json
+          if-no-files-found: error
+          retention-days: 14
+  coordinate:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: approved-manifest
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: coordinator-token
+        with:
+          app-id: ${{ vars.AI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AI_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: write
+          permission-contents: read
+          permission-pull-requests: write
+      - name: Coordinate implementation, independent checks, review and bounded repairs
+        env:
+          GH_TOKEN: ${{ steps.coordinator-token.outputs.token }}
+          ROUTER_TOKEN: ${{ github.token }}
+        run: node .github/ai/coordinator.ts coordinate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: coordinator-state
+          path: state.json
+          if-no-files-found: warn
+          retention-days: 14
