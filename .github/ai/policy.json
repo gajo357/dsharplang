@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "documentation-only",
+  "baseBranch": "main",
+  "allowedPrefixes": ["docs/features/"],
+  "maxFiles": 20,
+  "maxPatchBytes": 131072,
+  "maxRepairs": 2,
+  "deadlineMinutes": 60,
+  "requiredSections": ["Goal", "Acceptance criteria", "Constraints", "Non-goals", "Verification", "Decisions already made"]
+}
