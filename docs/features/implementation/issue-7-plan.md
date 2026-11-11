@@ -112,4 +112,6 @@ verifier before the PR is treated as fully verified.
 
 ## PR
 
-Draft PR pending. The user reviews and merges before #19 begins.
+Draft PR: https://github.com/gajo357/dsharplang/pull/103
+
+The user reviews and merges after required checks pass, before #19 begins.
