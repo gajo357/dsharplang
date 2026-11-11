@@ -49,7 +49,9 @@ replace an older pending dispatch when another one is queued.
 
 `ai-implement.md` starts a read-only authenticated worker. A separate safe-output
 job creates one draft PR on `ai/issue-N`. Publishing allows the exact globs in policy.json: compiler/CLI C# source,
-new feature-test C#, `.ds` examples and feature Markdown, 20 files and 128 KiB.
+new feature-test C#, `.ds` examples, implementation notes under
+`docs/features/implementation/` and the implementation-status file, 20 files and
+128 KiB. The frozen syntax reference and handoff instructions are protected.
 The trusted diff gate additionally rejects edits to existing tests and requires
 new feature tests for source changes. Manifests/locks, SDK pins, instructions,
 architecture, scripts, verifier and all workflow sources/locks remain protected.

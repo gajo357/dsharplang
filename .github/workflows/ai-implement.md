@@ -53,7 +53,7 @@ safe-outputs:
     fallback-as-issue: false
     if-no-changes: error
     protected-files: blocked
-    allowed-files: ["docs/features/**/*.md", "src/DSharp.Compiler/**/*.cs", "src/DSharp.Cli/**/*.cs", "tests/features/**/*.cs", "examples/**/*.ds"]
+    allowed-files: ["docs/features/implementation/**/*.md", "docs/features/DSharp_Implementation_Status.md", "src/DSharp.Compiler/**/*.cs", "src/DSharp.Cli/**/*.cs", "tests/features/**/*.cs", "examples/**/*.ds"]
     max-patch-files: 20
     max-patch-size: 128
 steps:

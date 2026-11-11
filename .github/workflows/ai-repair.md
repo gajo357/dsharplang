@@ -59,7 +59,7 @@ safe-outputs:
     fallback-as-pull-request: false
     if-no-changes: error
     protected-files: blocked
-    allowed-files: ["docs/features/**/*.md", "src/DSharp.Compiler/**/*.cs", "src/DSharp.Cli/**/*.cs", "tests/features/**/*.cs", "examples/**/*.ds"]
+    allowed-files: ["docs/features/implementation/**/*.md", "docs/features/DSharp_Implementation_Status.md", "src/DSharp.Compiler/**/*.cs", "src/DSharp.Cli/**/*.cs", "tests/features/**/*.cs", "examples/**/*.ds"]
     max-patch-size: 128
 steps:
   - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1

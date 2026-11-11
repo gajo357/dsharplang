@@ -61,8 +61,8 @@ test('publisher and trusted policy share exact bounded implementation globs', ()
     const line = text.split('\n').find(line => line.includes('allowed-files:'));
     assert.deepEqual(JSON.parse(line.split('allowed-files: ')[1]), codePolicy.allowedFiles);
   }
-  for (const path of ['src/DSharp.Compiler/Lexer.cs', 'src/DSharp.Compiler/Parsing/Parser.cs', 'src/DSharp.Cli/Program.cs', 'tests/features/Numbers.cs', 'examples/demo.ds', 'docs/features/status.md']) assert(allowedPath(path, codePolicy), path);
-  for (const path of ['AGENTS.md', '.github/workflows/ci.yml', 'Directory.Build.props', 'src/DSharp.Compiler/DSharp.Compiler.csproj', 'src/DSharp.Compiler/packages.lock.json', 'src/DSharp.Compiler/.hidden/evil.cs', 'src/DSharp.Compiler/../evil.cs', 'tests/DSharp.Compiler.Tests/CompilerTests.cs', 'scripts/verify-compiler.sh', 'src/Other/Bad.cs']) assert(!allowedPath(path, codePolicy), path);
+  for (const path of ['src/DSharp.Compiler/Lexer.cs', 'src/DSharp.Compiler/Parsing/Parser.cs', 'src/DSharp.Cli/Program.cs', 'tests/features/Numbers.cs', 'examples/demo.ds', 'docs/features/implementation/status.md']) assert(allowedPath(path, codePolicy), path);
+  for (const path of ['AGENTS.md', 'docs/features/DSharp_Syntax_Reference.md', 'docs/features/DSharp_Implementation_Instructions.md', '.github/workflows/ci.yml', 'Directory.Build.props', 'src/DSharp.Compiler/DSharp.Compiler.csproj', 'src/DSharp.Compiler/packages.lock.json', 'src/DSharp.Compiler/.hidden/evil.cs', 'src/DSharp.Compiler/../evil.cs', 'tests/DSharp.Compiler.Tests/CompilerTests.cs', 'scripts/verify-compiler.sh', 'src/Other/Bad.cs']) assert(!allowedPath(path, codePolicy), path);
 });
 test('code pilot accepts implementation plus new tests and rejects workflow/manifest/old-test edits', () => {
   const root = mkdtempSync(join(tmpdir(), 'ai-code-policy-'));

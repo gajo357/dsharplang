@@ -15,7 +15,8 @@
     "Decisions already made"
   ],
   "allowedFiles": [
-    "docs/features/**/*.md",
+    "docs/features/implementation/**/*.md",
+    "docs/features/DSharp_Implementation_Status.md",
     "src/DSharp.Compiler/**/*.cs",
     "src/DSharp.Cli/**/*.cs",
     "tests/features/**/*.cs",
