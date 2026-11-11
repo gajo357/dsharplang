@@ -34,7 +34,7 @@ timeout-minutes: 20
 concurrency:
   job-discriminator: "${{ github.run_id }}"
 network:
-  allowed: [defaults, python, node]
+  allowed: [defaults, node]
 tools:
   github:
     toolsets: [default, actions]
@@ -82,3 +82,10 @@ zero blockers. Missing CI, ambiguous requirements, or a new architectural choice
 must not pass. Use needs_decision for unresolved architecture or scope.
 The controller validates the JSON; your prose is never readiness evidence.
 
+
+Check actual compiler build and machine-readable acceptance/feature test evidence
+from CI, not documentation checks alone. Verify each AC maps to relevant test
+names/fixtures, source diagnostics and generated execution where applicable.
+Zero/missing/skipped tests, weakening old tests, dependency changes or unsupported
+syntax decisions cannot pass. Existing tests, manifests and trusted infrastructure
+are protected; workers may add feature tests only. No merge or deployment.

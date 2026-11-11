@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-for (const scenario of ['success', 'stale', 'exhausted']) {
+for (const scenario of ['success', 'stale', 'exhausted', 'build-failure', 'zero-tests', 'stale-verification', 'forbidden']) {
   test(`controller integration: ${scenario}`, () => {
     const dir = mkdtempSync(join(tmpdir(), 'ai-controller-test-'));
     try {
@@ -25,8 +25,8 @@ for (const scenario of ['success', 'stale', 'exhausted']) {
         assert.notEqual(result.status, 0);
         assert.equal(state.phase, 'BLOCKED');
         assert.equal(trace.filter(t => t.ready).length, 0);
-        assert.equal(trace.filter(t => t.dispatch === 'ai-repair.lock.yml').length, scenario === 'exhausted' ? 2 : 0);
-        if (scenario === 'exhausted') {
+        assert.equal(trace.filter(t => t.dispatch === 'ai-repair.lock.yml').length, ['exhausted','build-failure'].includes(scenario) ? 2 : 0);
+        if (['exhausted','build-failure'].includes(scenario)) {
           assert.equal(trace.filter(t => t.dispatch === 'ai-verify.yml').length, 3);
           assert.equal(trace.filter(t => t.dispatch === 'ai-review.lock.yml').length, 3);
         }

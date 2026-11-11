@@ -20,6 +20,7 @@ globalThis.fetch = async (url, options = {}) => {
       assert.equal(JSON.parse(body.inputs.aw_context).actor, manifest.actor);
     }
     current = { id: ++serial, head_sha: manifest.baseSha, run_attempt: 1, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', display_title: body.inputs.run_key, workflow, inputs: body.inputs };
+    if (workflow === 'ai-verify.yml' && process.env.SCENARIO === 'build-failure') current.conclusion = 'failure';
     if (workflow === 'ai-repair.lock.yml') {
       const context = JSON.parse(body.inputs.aw_context);
       assert(context.item_number === 7 && context.pr_head_sha === head);
@@ -40,9 +41,9 @@ globalThis.fetch = async (url, options = {}) => {
     const isReview = run.workflow === 'ai-review.lock.yml';
     const reportHead = process.env.SCENARIO === 'stale' && isReview ? 'f'.repeat(40) : run.inputs.head_sha;
     const fail = process.env.SCENARIO === 'exhausted';
-    const report = isPlan ? { affectedFiles: ['docs/features/example.md'], steps: ['Write documentation'], criteria: [{id:'AC1', evidence:'Documented behavior'}], assumptions: [], risks: [] } : isReview
+    const report = isPlan ? { affectedFiles: ['src/DSharp.Compiler/New.cs', 'tests/features/New.cs'], steps: ['Implement and test frozen slice'], criteria: [{id:'AC1', evidence:'Documented behavior'}], assumptions: [], risks: [] } : isReview
       ? { headSha: reportHead, verdict: fail ? 'changes_required' : 'pass', blockers: fail ? [{ description: 'Missing behavior', requiredEvidence: 'Demonstrate AC1' }] : [], criteria: [{ id: 'AC1', status: fail ? 'fail' : 'pass', evidence: 'docs/features/example.md' }] }
-      : { headSha: reportHead, baseSha: manifest.baseSha, policy: 'pass', checks: 'success' };
+      : { headSha: process.env.SCENARIO === 'stale-verification' ? 'f'.repeat(40) : reportHead, baseSha: manifest.baseSha, policy: process.env.SCENARIO === 'forbidden' ? 'blocked' : 'pass', checks: process.env.SCENARIO === 'build-failure' ? 'failure' : 'success', changedFiles: ['src/DSharp.Compiler/New.cs', 'tests/features/New.cs'], compiler: {attempted:true,build:process.env.SCENARIO === 'build-failure' ? 'failure' : 'success',acceptance:{total:18,passed:18,skipped:0},features:{total:process.env.SCENARIO === 'zero-tests' ? 0 : 1,passed:1,skipped:0}} };
     // A minimal, real ZIP with one uncompressed JSON member.
     const data = Buffer.from(JSON.stringify(report));
     const filename = Buffer.from(isPlan ? 'plan.json' : isReview ? 'review.json' : 'verification.json');

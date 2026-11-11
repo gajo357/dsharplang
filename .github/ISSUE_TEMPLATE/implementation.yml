@@ -6,8 +6,9 @@ body:
     attributes:
       value: |
         Maintainers approve by adding `ai:approved`, then manually run AI coordinate.
-        The current pilot permits documentation under docs/features/ only.
-        Code implementation is blocked until a real build and test harness is approved.
+        Code tasks must use the reviewed compiler baseline and policy.json allowedFiles.
+        Freeze one small syntax slice; map every AC to executable tests and results.
+        No worker dependency, workflow, instruction or trusted acceptance changes.
   - type: textarea
     id: goal
     attributes: {label: Goal, description: Observable outcome}

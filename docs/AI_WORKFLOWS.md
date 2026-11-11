@@ -2,15 +2,15 @@
 
 This pilot uses GitHub as coordinator, GitHub Agentic Workflows with Codex as the
 implementation and review workers, and ordinary Actions as the verifier.
-Automation never merges or deploys. The repository currently contains designs,
-so the enforced scope is Markdown under `docs/features/` only. It cannot build or
-test a DSharp compiler or runtime that does not exist.
+Automation never merges or deploys. The reviewed compiler bootstrap is required
+first. Code-task mode supports only frozen compiler slices using the existing
+C# backend and pinned .NET toolchain; no agent runtime is implied.
 
 ## Enable in GitHub
 
 1. Review and merge the workflow files, their generated `.lock.yml` files, and
-   the trusted `.github/ai/` harness into `main`. No files have been pushed by
-   this setup task. Actions must allow the pinned GitHub and OpenAI tooling.
+   the trusted `.github/ai/` harness into `main`. Merge the compiler bootstrap first and retarget the stacked enablement PR to
+   main. Actions must allow the pinned GitHub and OpenAI tooling and SDK image.
    GitHub Agentic Workflows is a preview; confirm availability for the repository.
 2. Install a dedicated GitHub App on **this repository only**. Give it repository
    Contents, Pull requests, Issues and Actions read/write, and Checks read.
@@ -24,7 +24,8 @@ test a DSharp compiler or runtime that does not exist.
    credential. Enter secrets through GitHub settings, never issues or chat.
    These are **GitHub Actions settings**, separate from cloud environment secrets.
 4. Create label `ai:approved`. Restrict its use to maintainers. Protect `main`:
-   require `CI / documentation-and-automation`, human approval, dismissal of stale
+   require `CI / documentation-and-automation` and `Compiler / build-and-test`,
+   human approval, dismissal of stale
    approvals, and no automation App bypass. Protect `ai/issue-*` against force
    pushes and deletion during active runs. Automation must not count as the
    required human approval.
@@ -47,14 +48,21 @@ repository; another dispatch waits through Actions concurrency. GitHub may
 replace an older pending dispatch when another one is queued.
 
 `ai-implement.md` starts a read-only authenticated worker. A separate safe-output
-job creates one draft PR on `ai/issue-N`. Publishing allows only feature Markdown,
-20 changed files and 128 KiB. It blocks protected files and duplicate task branches.
+job creates one draft PR on `ai/issue-N`. Publishing allows the exact globs in policy.json: compiler/CLI C# source,
+new feature-test C#, `.ds` examples, implementation notes under
+`docs/features/implementation/` and the implementation-status file, 20 files and
+128 KiB. The frozen syntax reference and handoff instructions are protected.
+The trusted diff gate additionally rejects edits to existing tests and requires
+new feature tests for source changes. Manifests/locks, SDK pins, instructions,
+architecture, scripts, verifier and all workflow sources/locks remain protected.
+Dependency or infrastructure changes need a separate maintainer-reviewed PR. It blocks protected files and duplicate task branches.
 The worker saves a plan artifact with acceptance-criterion evidence mapping.
 
 For every candidate revision, `ai-verify.yml` runs on a fresh runner using the
 checker from the frozen trusted base. It rejects scope violations, deletions,
-symlinks and executable files before checking documentation. It uploads exact
-revision metadata, documentation results and JUnit automation reports.
+symlinks and executable files before running checks. It uploads exact revision
+metadata, compiler build status, acceptance/feature TRX reports, documentation
+results and JUnit automation reports. Missing or zero required tests cannot pass.
 `ai-review.md` starts a fresh Codex context with the frozen specification, diff
 and CI evidence. Its structured report must contain evidence for every criterion
 and the exact head SHA. Malformed, missing or stale output blocks the task.
@@ -85,8 +93,10 @@ detected concurrent change. A human can always change a draft's status manually.
 
 ## Local development and regeneration
 
-Requirements: Linux amd64, Git, curl, unzip, Python 3.11+ and Node 24+. No runtime
-services or external credentials are needed for local validation.
+Requirements: Linux amd64, Git, curl, unzip, Node 24+, Docker and
+exact .NET SDK 10.0.100. No external credentials are needed for local validation.
+The online trusted restore downloads only pinned public NuGet packages. Candidate
+source is never built on the host in the trusted AI verifier.
 
 ```bash
 bash .github/ai/bootstrap.sh
@@ -105,9 +115,11 @@ secret/action change, review the compiler's safe-update report before using
 
 The tests exercise the real Git diff policy and the controller through a mocked
 GitHub API, including readiness, stale reports and exhausting two repairs.
-Documentation checks verify nonempty design files and local file links. They do
-not validate language semantics, external URLs or Markdown anchor correctness.
-JUnit discovery rejects missing/skipped required automation tests.
+Documentation checks verify nonempty design files and local links. Compiler
+acceptance checks exercise the literal-function subset, including generated-code
+execution. JUnit and TRX discovery reject missing/zero/skipped/failed results.
+Automation tests exercise real Git policy and mocked controller/API integration;
+they do not constitute a live model/API worker execution.
 
 The ordinary workflow YAML passes actionlint 1.7.12. That version reports newer
 framework-generated `queue`, `cache-mode` and `job.workflow_*` syntax as unknown;
@@ -129,14 +141,44 @@ custom redirect or external reporting destination was added. Generated shell,
 token scopes and third-party code still need human review before enabling the
 App or API spend; local compilation is not an audit or a live execution test.
 
-## Enable implementation later
+## Executable verification and publishing boundary
 
-.NET is the established target platform. Compiler implementation language,
-emission strategy and runtime protocols remain open in the architecture docs.
-First approve a minimal executable skeleton with pinned dependencies and a real
-build/test entry point. In a separately reviewed automation change, replace the
-documentation-only verifier, require nonzero runtime test discovery and AC test
-mapping, and update policy, safe-output allowlists and controller preflight
-together. Protect that trusted acceptance harness from worker modifications.
-Do not simply add `src/` to an allowlist and describe documentation checks as
-runtime verification.
+The trusted verifier restores the frozen solution with `--locked-mode` on the
+host, then constructs a fresh workspace from trusted project files, package locks
+and acceptance tests. Only candidate source C# and new feature tests enter it.
+It builds/tests in the digest-pinned .NET 10.0.100 SDK container with no network,
+no capabilities, no publishing credentials, no host home/Git metadata/socket,
+read-only package cache and root filesystem, a non-root user, and resource limits.
+An explicit empty environment also removes Docker's inherited proxy variables.
+Only bounded TRX data is copied back for trusted host-side parsing. Docker/kernel
+isolation is part of the runner trust boundary, not a language isolation claim.
+
+Acceptance runs use only protected `CompilerTests.cs` (at least 18 tests). A
+separate Features build discovers tests added under tests/features/. Source
+changes require a new feature-test file and nonzero feature test discovery.
+Worker-authored tests complement, and cannot replace, trusted acceptance tests.
+Review must still assess whether every AC has meaningful positive/negative and
+generated-execution coverage; passing counts do not prove arbitrary features.
+
+The host recorder binds those outcomes to the checked head/base SHA and scope.
+The controller refuses readiness without successful build and nonzero passing
+acceptance evidence, plus feature evidence for code tasks, at that exact SHA.
+Missing/stale evidence or policy failure blocks immediately. Build/test failures
+may receive at most two repairs; all checks and independent review rerun after
+each revision. Marking ready never merges. Branch protection/human approval is
+still the final merge boundary.
+
+The verifier's default image is pinned in `.github/ai/compiler-image.txt`.
+`AI_COMPILER_IMAGE` is an operator-only local test override; workflows do not set
+it and candidate code cannot change it. Use the default in CI. NuGet audit runs
+during online trusted restore; offline restore uses the reviewed cache and disables
+network audit lookup. Packages and SDK changes require review, not worker choice.
+
+## Enablement evidence and rollout
+
+See [enablement validation](AUTOMATION_ENABLEMENT.md) for the actual local pilot,
+intentional failure results and environment limitations. The controller/API pilot
+is mocked and does not consume model credentials or create task PRs. A live
+GitHub/model pilot remains an operator rollout step after both PRs are reviewed,
+merged and repository App/API settings are configured. Do not launch a real code
+task before those checks pass. No live pilot is claimed by local tests.

@@ -8,7 +8,7 @@ permissions:
 jobs:
   documentation-and-automation:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -20,6 +20,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
           persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: trusted/global.json
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -37,3 +40,12 @@ jobs:
       # On automation changes, exercise the proposed harness as well, without secrets/write permissions.
       - name: Validate proposed automation
         run: bash candidate/.github/ai/bootstrap.sh && bash candidate/.github/ai/verify.sh
+      - name: Exercise proposed compiler verifier pilots
+        run: node candidate/.github/ai/pilot.mjs "${{ runner.temp }}/pilot-reports"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: compiler-verifier-pilots
+          path: ${{ runner.temp }}/pilot-reports/
+          if-no-files-found: error
+          retention-days: 14

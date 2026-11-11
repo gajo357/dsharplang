@@ -245,6 +245,10 @@ readable C# emission built through the pinned .NET SDK. No runtime framework
 (including Akka.NET) is selected or required. The implemented subset and exact
 pins are recorded in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md).
 
+Generated output uses normal managed .NET execution. Native AOT is deferred:
+future imported packages may require runtime features incompatible with AOT.
+Future package interop still requires the safety contracts described below.
+
 Compatible C# and F# NuGet libraries require compiler and build integration.
 Interop must address CLR constructors, methods, properties, interfaces, generics,
 delegates, tasks, cancellation, and deterministic disposal. Foreign nulls and
