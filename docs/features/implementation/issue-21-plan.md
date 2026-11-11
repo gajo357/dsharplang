@@ -71,4 +71,7 @@ git diff --check
 
 ## PR
 
-Pending; user reviews and merges before #22.
+Draft PR: https://github.com/gajo357/dsharplang/pull/108
+
+User reviews and merges after required checks pass, before #22. Fix any PR/CI
+issues on this same branch.
