@@ -1,0 +1,5 @@
+module Demo
+
+fn answer(): int {
+    42
+}
