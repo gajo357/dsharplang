@@ -26,6 +26,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
+      # One-time, exact migration of the obsolete typed-parameter assertion.
+      # All other trusted test content remains byte-for-byte from the base.
+      - name: Reconcile the reviewed parameter fixture
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: node candidate/.github/ai/migrate-parameter-fixture.mjs trusted candidate "$BASE_SHA"
       - name: Verify candidate with the base harness when available
         run: |
           if [[ -f trusted/.github/ai/bootstrap.sh && -f trusted/.github/ai/verify.sh ]]; then

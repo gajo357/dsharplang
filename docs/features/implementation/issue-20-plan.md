@@ -26,10 +26,12 @@ Support explicit `int` parameters and positional calls to functions in the same 
 Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`, `bash scripts/verify-compiler.sh`, CLI example and `git diff --check`. Preserve the trusted harness and all relevant test assertions. The existing trusted
 negative fixture for `fn answer(x: int): int { 42 }` contradicts this feature;
 change only its input to the still-invalid missing-type form `fn answer(x): int
-{ 42 }`, retaining DS1002 and the test count. CI uses the base revision of the
-trusted test regardless of this branch, so the fixture fix must be on main before
-the base verifier can pass. Keep the fixture correction in its own commit for
-review. Previous runs could not pull the pinned Docker SDK image; report the result.
+{ 42 }`, retaining DS1002 and the test count. CI normally uses the base revision of this test. The user requested fixing CI
+in this same PR: a one-time, base-SHA-scoped migration applies only the exact
+reviewed fixture replacement to CI’s temporary trusted checkout after checking
+that the candidate file contains no other changes. The trusted verifier and all
+other base tests remain intact. Previous runs could not pull the pinned Docker
+SDK image; report the result.
 
 ## Decisions and blockers
 
@@ -46,15 +48,17 @@ The issue defines the bounded int-only contract. Resolve declarations in a first
 - The original trusted parameterized-function rejection was run and fails exactly
   because the now-valid example compiles. The one-input fixture correction keeps
   negative missing-type coverage and is isolated in its own commit. CI uses the
-  base's old test and remains blocked until that correction is on main; changing
-  the candidate test alone does not fix the trusted-base verifier.
+  base's old test, so this PR adds the narrowly scoped temporary CI migration
+  described above. It runs before the unchanged trusted-base verifier.
 - Compiler script passed locally after that fixture correction: locked restore,
   build with zero warnings/errors, 18/18 compiler tests and 65/65 feature tests.
   The final expanded function-call suite also passed 15/15.
 - Bootstrap and CLI check/compile passed; generated example library built.
-  Documentation passed (18 files, 53 links) and automation 19/19.
+  Documentation passed (18 files, 53 links) and automation 20/20, including
+  the exact-fixture migration test and the existing pilot-isolation regression.
 - Full verifier blocked pulling its pinned SDK image (Forbidden after six tries).
-  Its base-test conflict is a separate confirmed CI blocker, even where Docker works.
+  The one-time CI migration addresses the separately confirmed base-test conflict;
+  the full GitHub Actions run remains the definitive integration check.
 
 Commands with local SDK/cache selectors:
 
@@ -78,6 +82,6 @@ git diff --check
 
 Draft PR: https://github.com/gajo357/dsharplang/pull/107
 
-The isolated test-only commit dae5479aeec9e4faffbd57809b3c33e9a0ae881e must be
-reviewed and landed on main before the trusted-base verifier can accept this PR.
-Then update this branch, rerun checks, and review/merge before #21.
+The test correction and CI migration are included in this PR for review and merge
+together. Fix any further PR/CI failures on this branch. Review and merge before
+#21.
