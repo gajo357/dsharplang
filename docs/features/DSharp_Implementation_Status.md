@@ -10,6 +10,7 @@ This status describes tested implementation, not the full syntax draft.
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
+| Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -65,7 +66,7 @@ is no truthiness. See [the example](../../examples/bool-logic.ds) and
 `if`/`else` expressions with bool conditions, matching branch types, and nested
 block-local bindings. Branch names do not escape; redeclaring a visible local
 or parameter is rejected, while sibling branches may reuse a name. Only the
-selected branch executes. Else is required because Unit is not yet implemented.
+selected branch executes. Value-producing conditionals require `else`; Unit-valued conditionals may omit it.
 See [the example](../../examples/if-scopes.ds) and
 [implementation plan](implementation/issue-22-plan.md).
 [Issue #23](https://github.com/gajo357/dsharplang/issues/23) adds immutable
@@ -74,6 +75,13 @@ is exactly one UTF-16 code unit; malformed literals and unsupported escapes are
 rejected. String equality is ordinal. See [the example](../../examples/text-literals.ds)
 and [implementation plan](implementation/issue-23-plan.md). Interpolation,
 raw/multiline strings and concatenation remain unsupported.
+[Issue #24](https://github.com/gajo357/dsharplang/issues/24) adds the distinct
+`Unit` value `()`, empty Unit blocks, Unit-valued statements and explicit
+`return`. An `if` without `else` is permitted only when its completing branch
+is Unit. Returns target the nearest function, including from nested conditionals;
+reachable non-Unit paths still require a matching value. Unit never becomes an
+implicit `Success()`. See [the example](../../examples/unit-return.ds) and
+[implementation plan](implementation/issue-24-plan.md).
 Additional primitives and runtime features remain unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix
