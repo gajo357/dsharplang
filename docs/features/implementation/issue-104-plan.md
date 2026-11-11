@@ -65,4 +65,6 @@ node .github/ai/pilot.mjs /workspace/work/issue104-pilots
 
 ## PR
 
-Pending. Merge the repair first, then update #103 from main and rerun CI.
+Draft PR: https://github.com/gajo357/dsharplang/pull/105
+
+Merge the repair after required checks/review, then update #103 from main and rerun CI.
