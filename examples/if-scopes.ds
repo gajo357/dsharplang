@@ -1,0 +1,12 @@
+module Demo
+
+fn answer(ready: bool): int {
+    let base = 40
+    if ready {
+        let adjustment = 2
+        base + adjustment
+    } else {
+        let adjustment = 1
+        base - adjustment
+    }
+}
