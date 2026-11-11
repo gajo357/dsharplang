@@ -1,0 +1,7 @@
+{
+  "name": "dsharp-validation",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "dependencies": { "saxes": "6.0.0" }
+}

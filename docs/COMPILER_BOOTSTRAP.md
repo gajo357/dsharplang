@@ -60,6 +60,16 @@ line/column. The initial compiler reports the first source error. Unsupported
 constructs fail explicitly rather than being ignored or handed to C# diagnostics.
 CLI usage errors exit 2, source/I/O failures exit 1, SDK build failures propagate.
 
+## Validation tooling and deployment
+
+Repository validation uses JavaScript on Node 24+, with saxes 6.0.0 pinned in
+package.json and its transitive graph/integrity hashes pinned in package-lock.json.
+Use npm ci with lifecycle scripts disabled; no Python runtime is required.
+Compiler implementation and generated code remain C# on the pinned .NET 10 SDK.
+Generated applications use normal managed .NET execution. Native AOT is deferred
+because future imported packages may require runtime features it does not support;
+AOT compatibility is not a requirement of the language or package contract.
+
 ## Deferred
 
 No runtime, actors, queues, imports, general inference, nullable/result types,
@@ -68,4 +78,5 @@ the handoff's established behaviour when adding later slices. Numeric extensions
 formal newline grammar, async/function-type spelling, generic disambiguation,
 worker fault wrapper, queue lifecycle, serialization, middleware, authorization
 capabilities and safe .NET interop require their own frozen contracts/tests.
-Code-writing automation is a separate reviewable change after this baseline.
+Code-writing automation is a separate reviewable change after this baseline;
+see [AI workflows](AI_WORKFLOWS.md) for its trusted verification boundary.
