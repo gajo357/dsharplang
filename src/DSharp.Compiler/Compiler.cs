@@ -8,6 +8,7 @@ public sealed record Diagnostic(string Code, string Path, SourceSpan Span, strin
 public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics);
 public sealed record Token(string Text, SourceSpan Span);
 public abstract record ExpressionSyntax(Token Token);
+public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
 public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
 public sealed record CallSyntax(Token Name, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(Name);
 public sealed record ParameterSyntax(Token Name, Token Type);
@@ -15,6 +16,7 @@ public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : Exp
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public abstract record BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
+public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
@@ -34,10 +36,13 @@ public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
 public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions);
 public sealed record BoundLocal(string Name, int Value, string? InitializerLocal)
 {
+    public string Type { get; init; } = "int";
     public BoundExpression? Expression { get; init; }
 }
 public sealed record BoundFunction(string Name, int Value)
 {
+    public string ReturnType { get; init; } = "int";
+    public IReadOnlyList<string> ParameterTypes { get; init; } = Array.Empty<string>();
     public BoundExpression? Expression { get; init; }
     public IReadOnlyList<string> Parameters { get; init; } = Array.Empty<string>();
     public IReadOnlyList<BoundLocal> Locals { get; init; } = Array.Empty<BoundLocal>();
@@ -68,7 +73,8 @@ public static class Lexer
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
-            else if ("(),:{}=+-*/%".Contains(c)) Advance();
+            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||")) { Advance(); Advance(); }
+            else if ("(),:{}=+-*/%!<>".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
             tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)));
         }
@@ -85,7 +91,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private SourceError Error(string message) => new(new("DS1002", path, Current.Span, message));
     private Token Expect(string text)
     {
-        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported int expressions and local let bindings are accepted.");
+        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported int/bool expressions and local let bindings are accepted.");
         return Take();
     }
     private Token Identifier()
@@ -96,29 +102,29 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         return Take();
     }
     // Draft language words cannot accidentally become identifiers in this subset.
-    private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int public private protected internal".Split(' '));
+    private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int bool public private protected internal".Split(' '));
     private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0)
     {
         ExpressionSyntax left;
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
-        if (Current.Text == "-")
+        if (Current.Text is "-" or "!")
         {
             var op = Take();
-            left = new UnarySyntax(op, Expression(line, 3));
+            left = new UnarySyntax(op, Expression(line, 7));
         }
         else if (Current.Text == "(")
         {
-            Take(); left = Expression(line); Expect(")");
+            var open = Take(); var inner = Expression(line); Expect(")"); left = new GroupSyntax(open, inner);
         }
         else
         {
             var text = Current.Text;
-            if (text.Length == 0 || !(text.All(char.IsAsciiDigit) ||
+            if (text.Length == 0 || !(text is "true" or "false" || text.All(char.IsAsciiDigit) ||
                 ((char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))))
-                throw new SourceError(new("DS2002", path, Current.Span, "Expected an int literal, local or parenthesized expression."));
+                throw new SourceError(new("DS2002", path, Current.Span, "Expected an int or bool literal, local or parenthesized expression."));
             var name = Take();
-            if (Current.Text == "(" && (line is null || Current.Span.Line == line))
+            if (name.Text is not ("true" or "false") && Current.Text == "(" && (line is null || Current.Span.Line == line))
             {
                 var open = Take();
                 var args = new List<ExpressionSyntax>();
@@ -138,10 +144,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (line is null || Current.Span.Line == line)
         {
-            var precedence = Current.Text switch { "+" or "-" => 1, "*" or "/" or "%" => 2, _ => 0 };
+            var precedence = Current.Text switch { "||" => 1, "&&" => 2, "==" or "!=" => 3,
+                "<" or "<=" or ">" or ">=" => 4, "+" or "-" => 5, "*" or "/" or "%" => 6, _ => 0 };
             if (precedence == 0 || precedence < minimumPrecedence) break;
             var op = Take();
-            left = new BinarySyntax(left, op, Expression(line, precedence + 1));
+            var right = Expression(line, precedence + 1);
+            static bool Comparison(ExpressionSyntax expr) => expr is BinarySyntax binary &&
+                binary.Operator.Text is "==" or "!=" or "<" or "<=" or ">" or ">=";
+            if (precedence is 3 or 4 && (Comparison(left) || Comparison(right)))
+                throw new SourceError(new("DS2013", path, op.Span, "Chained comparisons require explicit grouping."));
+            left = new BinarySyntax(left, op, right);
         }
         return left;
     }
@@ -211,49 +223,74 @@ public static class Binder
         foreach (var function in syntax.Functions)
         {
             if (!signatures.TryAdd(function.Name.Text, function)) Fail("DS2001", function.Name, "Duplicate function declaration.");
-            if (function.ReturnType.Text != "int") Fail("DS2003", function.ReturnType, "Only the int return type is supported.");
+            if (function.ReturnType.Text is not ("int" or "bool")) Fail("DS2003", function.ReturnType, "Only int and bool return types are supported.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters)
             {
                 if (!names.Add(parameter.Name.Text)) Fail("DS2010", parameter.Name, "Duplicate parameter.");
-                if (parameter.Type.Text != "int") Fail("DS2011", parameter.Type, "Only int parameters are supported.");
+                if (parameter.Type.Text is not ("int" or "bool")) Fail("DS2011", parameter.Type, "Only int and bool parameters are supported.");
             }
         }
         var functions = new List<BoundFunction>();
         foreach (var function in syntax.Functions)
         {
-            var locals = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, 0);
+            var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
+            foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             var boundLocals = new List<BoundLocal>();
-            BoundExpression BindExpression(ExpressionSyntax expression)
+            void Require(ExpressionSyntax syntaxNode, string actual, string expected)
+            {
+                if (actual != expected) Fail("DS2002", syntaxNode.Token, $"Expected {expected}, found {actual}.");
+            }
+            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression)
             {
                 switch (expression)
                 {
+                    case GroupSyntax group: return BindExpression(group.Inner);
                     case ValueSyntax valueSyntax:
                         var token = valueSyntax.Value;
+                        if (token.Text is "true" or "false") return (new BoundBool(token.Text == "true"), "bool");
                         if (token.Text.Length > 0 && token.Text.All(char.IsAsciiDigit))
                         {
                             if (!int.TryParse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
                                 Fail("DS2004", token, "Integer literal is outside the int range.");
-                            return new BoundInt(literal);
+                            return (new BoundInt(literal), "int");
                         }
-                        if (!locals.ContainsKey(token.Text))
+                        if (!locals.TryGetValue(token.Text, out var local))
                             Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
-                        return new BoundReference(token.Text);
+                        return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
-                        if (locals.ContainsKey(call.Name.Text))
-                            Fail("DS1002", call.OpenParen, "Local values are not callable.");
-                        if (!signatures.TryGetValue(call.Name.Text, out var target))
-                            Fail("DS2009", call.Name, "Unknown function.");
-                        if (target!.Parameters.Count != call.Arguments.Count)
-                            Fail("DS2012", call.Name, "Incorrect number of arguments.");
-                        return new BoundCall(call.Name.Text, call.Arguments.Select(BindExpression).ToArray());
+                        if (locals.ContainsKey(call.Name.Text)) Fail("DS1002", call.OpenParen, "Local values are not callable.");
+                        if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
+                        if (target!.Parameters.Count != call.Arguments.Count) Fail("DS2012", call.Name, "Incorrect number of arguments.");
+                        var args = new List<BoundExpression>();
+                        for (var i = 0; i < call.Arguments.Count; i++)
+                        {
+                            var arg = BindExpression(call.Arguments[i]);
+                            Require(call.Arguments[i], arg.Type, target.Parameters[i].Type.Text);
+                            args.Add(arg.Expression);
+                        }
+                        return (new BoundCall(call.Name.Text, args), target.ReturnType.Text);
                     case UnarySyntax unary:
-                        return new BoundUnary(unary.Operator.Text, BindExpression(unary.Operand));
+                        var operand = BindExpression(unary.Operand);
+                        var expected = unary.Operator.Text == "!" ? "bool" : "int";
+                        Require(unary.Operand, operand.Type, expected);
+                        return (new BoundUnary(unary.Operator.Text, operand.Expression), expected);
                     case BinarySyntax binary:
                         var left = BindExpression(binary.Left);
                         var right = BindExpression(binary.Right);
-                        return new BoundBinary(left, binary.Operator.Text, right);
+                        var op = binary.Operator.Text;
+                        if (op is "&&" or "||")
+                        {
+                            Require(binary.Left, left.Type, "bool"); Require(binary.Right, right.Type, "bool");
+                            return (new BoundBinary(left.Expression, op, right.Expression), "bool");
+                        }
+                        if (op is "==" or "!=")
+                        {
+                            Require(binary.Right, right.Type, left.Type);
+                            return (new BoundBinary(left.Expression, op, right.Expression), "bool");
+                        }
+                        Require(binary.Left, left.Type, "int"); Require(binary.Right, right.Type, "int");
+                        return (new BoundBinary(left.Expression, op, right.Expression), op is "<" or "<=" or ">" or ">=" ? "bool" : "int");
                     default: throw new InvalidOperationException("Unknown expression syntax.");
                 }
             }
@@ -263,27 +300,31 @@ public static class Binder
             int LegacyValue(BoundExpression expression) => expression switch
             {
                 BoundInt literal => literal.Value,
-                BoundReference reference => locals[reference.Name],
+                BoundReference reference => locals[reference.Name].Value,
                 _ => 0
             };
             foreach (var binding in function.Bindings)
             {
                 if (locals.ContainsKey(binding.Name.Text))
                     Fail("DS2006", binding.Name, "Duplicate local binding.");
-                if (binding.Annotation is { } annotation && annotation.Text != "int")
-                    Fail("DS2008", annotation, "Only int local annotations are supported.");
+                if (binding.Annotation is { } annotation && annotation.Text is not ("int" or "bool"))
+                    Fail("DS2008", annotation, "Only int and bool local annotations are supported.");
                 var initializer = BindExpression(binding.Expression ?? new ValueSyntax(binding.Initializer));
-                var value = LegacyValue(initializer);
-                locals.Add(binding.Name.Text, value);
-                boundLocals.Add(new(binding.Name.Text, value, (initializer as BoundReference)?.Name) { Expression = initializer });
+                if (binding.Annotation is { } annotationType) Require(binding.Expression ?? new ValueSyntax(binding.Initializer), initializer.Type, annotationType.Text);
+                var value = LegacyValue(initializer.Expression);
+                locals.Add(binding.Name.Text, (value, initializer.Type));
+                boundLocals.Add(new(binding.Name.Text, value, (initializer.Expression as BoundReference)?.Name) { Expression = initializer.Expression, Type = initializer.Type });
             }
             var result = BindExpression(function.Expression ?? new ValueSyntax(function.Literal));
-            functions.Add(new(function.Name.Text, LegacyValue(result))
+            Require(function.Expression ?? new ValueSyntax(function.Literal), result.Type, function.ReturnType.Text);
+            functions.Add(new(function.Name.Text, LegacyValue(result.Expression))
             {
                 Locals = boundLocals.Count == 0 ? Array.Empty<BoundLocal>() : boundLocals,
-                ResultLocal = (result as BoundReference)?.Name,
+                ResultLocal = (result.Expression as BoundReference)?.Name,
+                ReturnType = function.ReturnType.Text,
+                ParameterTypes = function.Parameters.Select(p => p.Type.Text).ToArray(),
                 Parameters = function.Parameters.Count == 0 ? Array.Empty<string>() : function.Parameters.Select(p => p.Name.Text).ToArray(),
-                Expression = boundLocals.Count == 0 && result is BoundInt ? null : result
+                Expression = boundLocals.Count == 0 && result.Expression is BoundInt ? null : result.Expression
             });
         }
         return new(syntax.Name.Text, functions);
@@ -303,11 +344,11 @@ public static class CSharpEmitter
             .Append(container).Append("\n{\n");
         foreach (var function in module.Functions)
         {
-            output.Append("    public static int @").Append(function.Name).Append("(");
+            output.Append("    public static ").Append(function.ReturnType).Append(" @").Append(function.Name).Append("(");
             for (var i = 0; i < function.Parameters.Count; i++)
             {
                 if (i != 0) output.Append(", ");
-                output.Append("int __dsharp_param_").Append(i.ToString(CultureInfo.InvariantCulture));
+                output.Append(function.ParameterTypes.Count == 0 ? "int" : function.ParameterTypes[i]).Append(" __dsharp_param_").Append(i.ToString(CultureInfo.InvariantCulture));
             }
             output.Append(")");
             if (function.Expression is null && function.Locals.Count == 0)
@@ -331,11 +372,12 @@ public static class CSharpEmitter
                         output.Append("            int ").Append(name).Append(" = ")
                             .Append(literal.Value.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                         return name;
+                    case BoundBool boolean: return boolean.Value ? "true" : "false";
                     case BoundReference reference: return localNames[reference.Name];
                     case BoundCall call:
                         var args = call.Arguments.Select(EmitExpression).ToArray();
                         return container + ".@" + call.Name + "(" + string.Join(", ", args) + ")";
-                    case BoundUnary unary: return "(-" + EmitExpression(unary.Operand) + ")";
+                    case BoundUnary unary: return "(" + unary.Operator + EmitExpression(unary.Operand) + ")";
                     case BoundBinary binary:
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
@@ -349,7 +391,7 @@ public static class CSharpEmitter
                 var expression = local.Expression ?? (local.InitializerLocal is { } reference
                     ? (BoundExpression)new BoundReference(reference) : new BoundInt(local.Value));
                 var initializer = EmitExpression(expression);
-                output.Append("            int ").Append(emittedName).Append(" = ").Append(initializer).Append(";\n");
+                output.Append("            ").Append(local.Type).Append(" ").Append(emittedName).Append(" = ").Append(initializer).Append(";\n");
                 localNames.Add(local.Name, emittedName);
             }
             var result = EmitExpression(function.Expression ?? (function.ResultLocal is { } resultLocal

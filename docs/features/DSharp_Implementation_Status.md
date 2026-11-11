@@ -9,6 +9,7 @@ This status describes tested implementation, not the full syntax draft.
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
+| Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
 | Whitespace and single-line comments | Implemented and tested | Included in source pipeline |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
@@ -52,6 +53,12 @@ declaration order. Parameter names cannot be duplicated, reassigned or redeclare
 as locals; unknown functions, wrong arity and unsupported types are rejected.
 Calls and arguments evaluate in source order. See [the example](../../examples/function-calls.ds)
 and [plan](implementation/issue-20-plan.md).
+[Issue #21](https://github.com/gajo357/dsharplang/issues/21) adds `bool` values
+and annotations in functions, parameters and locals, int comparisons, int/bool
+equality, and `!`, `&&`, `||` with short-circuit evaluation. Operands and call/
+return types must match; unparenthesized chained comparisons are rejected. There
+is no truthiness. See [the example](../../examples/bool-logic.ds) and
+[implementation plan](implementation/issue-21-plan.md).
 Nested scopes, additional primitives and runtime features remain unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix

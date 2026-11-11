@@ -1,0 +1,10 @@
+module Demo
+
+fn isEligible(age: int, verified: bool): bool {
+    let adult: bool = age >= 18
+    adult && verified
+}
+
+fn answer(): bool {
+    isEligible(21, true)
+}
