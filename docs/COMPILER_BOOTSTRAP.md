@@ -78,5 +78,7 @@ the handoff's established behaviour when adding later slices. Numeric extensions
 formal newline grammar, async/function-type spelling, generic disambiguation,
 worker fault wrapper, queue lifecycle, serialization, middleware, authorization
 capabilities and safe .NET interop require their own frozen contracts/tests.
-Code-writing automation is a separate reviewable change after this baseline;
-see [AI workflows](AI_WORKFLOWS.md) for its trusted verification boundary.
+Compiler-code automation is now present as an optional API-backed workflow;
+see [AI workflows](AI_WORKFLOWS.md) for its trusted verification boundary. For
+Codex web tasks, follow the [implementation sequence](features/implementation/DSharp_Implementation_Sequence.md).
+Neither route implies implementation of the deferred language/runtime features.

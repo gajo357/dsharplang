@@ -1,6 +1,28 @@
-# Approved issue to reviewed draft PR
+# Codex web tasks and the optional GitHub coordinator
 
-This pilot uses GitHub as coordinator, GitHub Agentic Workflows with Codex as the
+## Codex web
+
+Use the existing published environment and follow the
+[implementation sequence](features/implementation/DSharp_Implementation_Sequence.md)
+and [prepared task queue](features/implementation/DSharp_Task_Queue.md). Inspect
+current main, issue/PR state and merged prerequisites. Use one dedicated branch,
+write `docs/features/implementation/issue-N-plan.md` before implementation, then
+implement, test and open one draft PR with AC evidence. The user reviews and merges
+before dependent work advances. Do not auto-merge or launch another issue.
+
+No `ai:approved` label, Actions dispatch or API-backed worker is required to launch
+a Codex web task. Preserve repository scope, tests and verification. Setup issues
+may propose their explicitly scoped infrastructure changes in separate reviewed
+PRs; ordinary feature tasks cannot change policy or dependencies.
+
+## Optional API-backed GitHub coordinator
+
+The remaining sections describe this separate workflow. Its serialized dispatch,
+20-file / 128-KiB patch boundary, 60-minute deadline and worker execution budgets
+are repository workflow settings, not Codex web limits. Its frozen-input, policy,
+verification and human-review requirements remain unchanged.
+
+This optional pilot uses GitHub as coordinator, GitHub Agentic Workflows with Codex as the
 implementation and review workers, and ordinary Actions as the verifier.
 Automation never merges or deploys. The reviewed compiler bootstrap is required
 first. Code-task mode supports only frozen compiler slices using the existing

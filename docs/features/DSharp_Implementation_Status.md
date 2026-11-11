@@ -17,3 +17,12 @@ provisional contract before implementing it. Worker-call failure representation,
 queue lifecycle, durable serialization, middleware, authorization capability
 validity, numeric extensions and safe .NET interop remain decisions for later
 small milestones. No agent isolation or durability follows from this bootstrap.
+
+## Planned work
+
+Follow the [Codex web implementation sequence](implementation/DSharp_Implementation_Sequence.md)
+and [task queue](implementation/DSharp_Task_Queue.md). [Issue #7](https://github.com/gajo357/dsharplang/issues/7)
+tracks immutable locals and remains unimplemented on this documented baseline.
+Instruction reconciliation in #8 does not add language behavior. Issue creation,
+approval labels and planning PRs are not implementation evidence; update the matrix
+only when the behavior and relevant generated execution/rejection tests pass.
