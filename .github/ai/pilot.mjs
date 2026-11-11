@@ -20,6 +20,14 @@ try {
   const source = join(candidate, 'src/DSharp.Compiler/Compiler.cs');
   const original = readFileSync(source, 'utf8');
   writeFileSync(source, original + '\n// Offline code-task pilot.\n');
+  // The verifier stages trusted tests before overlaying candidate feature files.
+  // Shadow existing features only in this disposable candidate, otherwise they
+  // would make the zero-test fixture pass and could hide a broken success pilot.
+  for (const existing of files(join(trusted, 'tests/features')).filter(path => path.endsWith('.cs'))) {
+    const destination = join(candidate, relative(trusted, existing));
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, '// Existing feature excluded from isolated pilot.\n');
+  }
   const feature = join(candidate, 'tests/features/PilotTests.cs');
   mkdirSync(dirname(feature), { recursive: true });
   writeFileSync(feature, String.raw`using Xunit;
