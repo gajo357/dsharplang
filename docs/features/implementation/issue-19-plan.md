@@ -104,4 +104,7 @@ the PR is treated as fully verified.
 
 ## PR
 
-Pending. User reviews/merges before #20.
+Draft PR: https://github.com/gajo357/dsharplang/pull/106
+
+User reviews/merges after required checks pass, before #20. Further fixes stay
+on this PR branch.
