@@ -59,7 +59,7 @@ public sealed class LetBindingTests
     [InlineData("let value = |value\nvalue", "DS2007", 5)]
     [InlineData("let value: |string = 42\nvalue", "DS2008", 6)]
     [InlineData("let value = |2147483648\nvalue", "DS2004", 10)]
-    [InlineData("let value = |true\nvalue", "DS2002", 4)]
+    [InlineData("let value = |else\nvalue", "DS2002", 4)]
     [InlineData("let value = |null\nvalue", "DS2002", 4)]
     [InlineData("let |let = 42\n42", "DS1002", 3)]
     [InlineData("let |@invalid = 42\n42", "DS1001", 1)]
