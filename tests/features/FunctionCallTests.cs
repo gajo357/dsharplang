@@ -74,7 +74,7 @@ public sealed class FunctionCallTests
     [InlineData("fn test(): int { |missing(1) }")]
     [InlineData("fn identity(a: int): int { a }\nfn test(): int { |identity() }")]
     [InlineData("fn identity(a: int): int { a }\nfn test(): int { |identity(1, 2) }")]
-    [InlineData("fn test(value: |string): int { 1 }")]
+    [InlineData("fn test(value: |float): int { 1 }")]
     [InlineData("fn identity(a: int): int { a }\nfn test(): int { identity(|true) }")]
     [InlineData("fn identity(a: int): int { a }\nfn test(): int { identity(|missing) }")]
     [InlineData("fn test(value: int): |string { value }")]

@@ -1,0 +1,10 @@
+module Demo
+
+fn greet(name: string): string {
+    let message: string = "Héllo, \"D#\"!"
+    if name == "D#" { message } else { "Welcome" }
+}
+
+fn separator(): char {
+    '\n'
+}

@@ -21,10 +21,14 @@ public sealed record BoundBlock(IReadOnlyList<BoundLocal> Locals, BoundExpressio
 public sealed record BoundIf(BoundExpression Condition, BoundBlock Then, BoundBlock Else, string Type) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
+public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
-public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression;
+public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression
+{
+    public string OperandType { get; init; } = "int";
+}
 public sealed record LetBindingSyntax(Token Name, Token? Annotation, Token Initializer)
 {
     public ExpressionSyntax? Expression { get; init; }
@@ -73,7 +77,26 @@ public static class Lexer
             { while (i < source.Length && source[i] != '\n') Advance(); continue; }
             int start = i, startLine = line, startColumn = column;
             char c = source[i];
-            if (char.IsAsciiLetter(c) || c == '_')
+            if (c is '\"' or '\'')
+            {
+                var quote = c; Advance();
+                while (i < source.Length && source[i] != quote)
+                {
+                    if (source[i] is '\n' or '\r')
+                        throw new SourceError(new("DS1001", path, new(i, 1, line, column), "Text literals cannot span lines."));
+                    if (source[i] == '\\')
+                    {
+                        Advance();
+                        if (i >= source.Length || source[i] is '\n' or '\r')
+                            throw new SourceError(new("DS1001", path, new(i, 0, line, column), "Unterminated text escape."));
+                    }
+                    Advance();
+                }
+                if (i == source.Length)
+                    throw new SourceError(new("DS1001", path, new(start, i - start, startLine, startColumn), "Unterminated text literal."));
+                Advance();
+            }
+            else if (char.IsAsciiLetter(c) || c == '_')
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
@@ -95,7 +118,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private SourceError Error(string message) => new(new("DS1002", path, Current.Span, message));
     private Token Expect(string text)
     {
-        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported int/bool expressions and local let bindings are accepted.");
+        if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported expressions and local let bindings are accepted.");
         return Take();
     }
     private Token Identifier()
@@ -106,7 +129,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         return Take();
     }
     // Draft language words cannot accidentally become identifiers in this subset.
-    private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int bool public private protected internal".Split(' '));
+    private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int bool string char public private protected internal".Split(' '));
     private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0)
     {
         ExpressionSyntax left;
@@ -133,11 +156,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         else
         {
             var text = Current.Text;
-            if (text.Length == 0 || !(text is "true" or "false" || text.All(char.IsAsciiDigit) ||
+            if (text.Length == 0 || !(text[0] is '"' or '\'' || text is "true" or "false" || text.All(char.IsAsciiDigit) ||
                 ((char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))))
-                throw new SourceError(new("DS2002", path, Current.Span, "Expected an int or bool literal, local or parenthesized expression."));
+                throw new SourceError(new("DS2002", path, Current.Span, "Expected a supported literal, local or parenthesized expression."));
             var name = Take();
-            if (name.Text is not ("true" or "false") && Current.Text == "(" && (line is null || Current.Span.Line == line))
+            if (name.Text[0] is not ('"' or '\'') && name.Text is not ("true" or "false") && Current.Text == "(" && (line is null || Current.Span.Line == line))
             {
                 var open = Take();
                 var args = new List<ExpressionSyntax>();
@@ -259,6 +282,33 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
 
 public static class Binder
 {
+    private static string DecodeText(Token token, string path)
+    {
+        var raw = token.Text;
+        var value = new StringBuilder();
+        for (var i = 1; i < raw.Length - 1; i++)
+        {
+            var c = raw[i];
+            if (c != '\\') { value.Append(c); continue; }
+            var escape = ++i;
+            if (i >= raw.Length - 1) throw new SourceError(new("DS2014", path, token.Span, "Incomplete text escape."));
+            switch (raw[i])
+            {
+                case 'n': value.Append('\n'); break;
+                case 'r': value.Append('\r'); break;
+                case 't': value.Append('\t'); break;
+                case '\\': value.Append('\\'); break;
+                case '\"': value.Append('\"'); break;
+                case '\'': value.Append('\''); break;
+                case 'u':
+                    if (i + 4 >= raw.Length - 1 || !ushort.TryParse(raw.AsSpan(i + 1, 4), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var code))
+                        throw new SourceError(new("DS2014", path, token.Span, "Unicode escapes require exactly four hexadecimal digits."));
+                    value.Append((char)code); i += 4; break;
+                default: throw new SourceError(new("DS2014", path, token.Span, $"Unsupported text escape at offset {escape}."));
+            }
+        }
+        return value.ToString();
+    }
     public static BoundModule Bind(ModuleSyntax syntax, string path = "<source>")
     {
         void Fail(string code, Token token, string message) => throw new SourceError(new(code, path, token.Span, message));
@@ -266,12 +316,12 @@ public static class Binder
         foreach (var function in syntax.Functions)
         {
             if (!signatures.TryAdd(function.Name.Text, function)) Fail("DS2001", function.Name, "Duplicate function declaration.");
-            if (function.ReturnType.Text is not ("int" or "bool")) Fail("DS2003", function.ReturnType, "Only int and bool return types are supported.");
+            if (function.ReturnType.Text is not ("int" or "bool" or "string" or "char")) Fail("DS2003", function.ReturnType, "Only int, bool, string and char return types are supported.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters)
             {
                 if (!names.Add(parameter.Name.Text)) Fail("DS2010", parameter.Name, "Duplicate parameter.");
-                if (parameter.Type.Text is not ("int" or "bool")) Fail("DS2011", parameter.Type, "Only int and bool parameters are supported.");
+                if (parameter.Type.Text is not ("int" or "bool" or "string" or "char")) Fail("DS2011", parameter.Type, "Only int, bool, string and char parameters are supported.");
             }
         }
         var functions = new List<BoundFunction>();
@@ -298,6 +348,13 @@ public static class Binder
                     case GroupSyntax group: return BindExpression(group.Inner);
                     case ValueSyntax valueSyntax:
                         var token = valueSyntax.Value;
+                        if (token.Text.Length > 0 && (token.Text[0] is '\"' or '\''))
+                        {
+                            var text = DecodeText(token, path);
+                            var isChar = token.Text[0] == '\'';
+                            if (isChar && text.Length != 1) Fail("DS2014", token, "A char literal must contain exactly one UTF-16 code unit.");
+                            return (new BoundText(text, isChar), isChar ? "char" : "string");
+                        }
                         if (token.Text is "true" or "false") return (new BoundBool(token.Text == "true"), "bool");
                         if (token.Text.Length > 0 && token.Text.All(char.IsAsciiDigit))
                         {
@@ -337,7 +394,7 @@ public static class Binder
                         if (op is "==" or "!=")
                         {
                             Require(binary.Right, right.Type, left.Type);
-                            return (new BoundBinary(left.Expression, op, right.Expression), "bool");
+                            return (new BoundBinary(left.Expression, op, right.Expression) { OperandType = left.Type }, "bool");
                         }
                         Require(binary.Left, left.Type, "int"); Require(binary.Right, right.Type, "int");
                         return (new BoundBinary(left.Expression, op, right.Expression), op is "<" or "<=" or ">" or ">=" ? "bool" : "int");
@@ -360,10 +417,14 @@ public static class Binder
                 {
                     if (locals.ContainsKey(binding.Name.Text))
                         Fail("DS2006", binding.Name, "Duplicate local binding.");
-                    if (binding.Annotation is { } annotation && annotation.Text is not ("int" or "bool"))
-                        Fail("DS2008", annotation, "Only int and bool local annotations are supported.");
+                    if (binding.Annotation is { } annotation && annotation.Text is not ("int" or "bool" or "string" or "char"))
+                        Fail("DS2008", annotation, "Only int, bool, string and char local annotations are supported.");
                     var initializer = BindExpression(binding.Expression ?? new ValueSyntax(binding.Initializer));
-                    if (binding.Annotation is { } annotationType) Require(binding.Expression ?? new ValueSyntax(binding.Initializer), initializer.Type, annotationType.Text);
+                    if (binding.Annotation is { } annotationType && initializer.Type != annotationType.Text)
+                    {
+                        if (annotationType.Text is "string" or "char") Fail("DS2008", annotationType, "Local annotation does not match initializer.");
+                        Require(binding.Expression ?? new ValueSyntax(binding.Initializer), initializer.Type, annotationType.Text);
+                    }
                     var value = LegacyValue(initializer.Expression);
                     locals.Add(binding.Name.Text, (value, initializer.Type));
                     resultLocals.Add(new(binding.Name.Text, value, (initializer.Expression as BoundReference)?.Name) { Expression = initializer.Expression, Type = initializer.Type });
@@ -390,6 +451,8 @@ public static class Binder
             }
             boundLocals.AddRange(BindLocals(function.Bindings));
             var result = BindExpression(function.Expression ?? new ValueSyntax(function.Literal));
+            if (result.Type != function.ReturnType.Text && (function.ReturnType.Text is "string" or "char"))
+                Fail("DS2003", function.ReturnType, "Return type does not match the function body.");
             Require(function.Expression ?? new ValueSyntax(function.Literal), result.Type, function.ReturnType.Text);
             functions.Add(new(function.Name.Text, LegacyValue(result.Expression))
             {
@@ -458,6 +521,16 @@ public static class CSharpEmitter
                         EmitBlock(conditional.Else);
                         output.Append("            }\n            }\n");
                         return helper + "()";
+                    case BoundText text:
+                        if (text.IsChar)
+                        {
+                            // Keep comparisons nonconstant under warnings-as-errors.
+                            var charName = "__dsharp_char_" + (literalCount++).ToString(CultureInfo.InvariantCulture);
+                            output.Append("            char ").Append(charName).Append(" = (char)0x")
+                                .Append(((int)text.Value[0]).ToString("X4", CultureInfo.InvariantCulture)).Append(";\n");
+                            return charName;
+                        }
+                        return "new string(new char[] { " + string.Join(", ", text.Value.Select(c => "(char)0x" + ((int)c).ToString("X4", CultureInfo.InvariantCulture))) + " })";
                     case BoundBool boolean:
                         // Avoid C# constant-condition/unreachable warnings while
                         // retaining pure literal evaluation in short-circuit paths.
@@ -473,6 +546,11 @@ public static class CSharpEmitter
                     case BoundBinary binary:
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
+                        if (binary.OperandType == "string" && (binary.Operator is "==" or "!="))
+                        {
+                            var equals = "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)";
+                            return binary.Operator == "!=" ? "(!" + equals + ")" : equals;
+                        }
                         return "(" + left + " " + binary.Operator + " " + right + ")";
                     default: throw new InvalidOperationException("Unknown bound expression.");
                 }
