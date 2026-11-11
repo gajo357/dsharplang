@@ -1,7 +1,17 @@
 # Architecture and implementation
 
+**Source precedence:** the selected requirements in syntax reference revision 0.3,
+[section 21.2](features/DSharp_Syntax_Reference.md), and the handoff's section 4
+supersede older conflicting examples here. In particular, declarations are public,
+interfaces may supply method defaults, `T?` matches present values or null,
+`Success(value)` constructs results, local builders cannot escape, and callable
+workers differ from enqueue-only agents. No default-service selection is implied.
+Remaining syntax/API proposals stay provisional. Only the literal-function subset
+in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md) is currently executable.
+
 This document explains [Feature specification v0.2](design/FEATURES.md).
-All components below are planned: this repository has no implementation yet.
+Runtime components below are planned. The minimal compiler bootstrap is implemented;
+see [its exact scope](COMPILER_BOOTSTRAP.md).
 Package names and provisional choices are not compatibility guarantees.
 See [Type system and syntax](LANGUAGE.md) for language contracts and the
 [README](../README.md) for motivation.
@@ -229,9 +239,11 @@ restart; reconnection and missed-message recovery require an explicit protocol.
 
 .NET is the target platform, including CLR garbage collection. The conceptual
 path is source code, type/composition checks, executable .NET output, and runtime
-hosting. No parser, intermediate representation, compiler implementation language,
-or emission strategy has been selected. Generating C#, potentially with Akka.NET,
-is a prototype direction, not a committed dependency.
+hosting. The approved bootstrap uses C# on .NET 10, a hand-written lexer/parser,
+a syntax tree, binding/type checks, a small typed representation, and deterministic
+readable C# emission built through the pinned .NET SDK. No runtime framework
+(including Akka.NET) is selected or required. The implemented subset and exact
+pins are recorded in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md).
 
 Compatible C# and F# NuGet libraries require compiler and build integration.
 Interop must address CLR constructors, methods, properties, interfaces, generics,

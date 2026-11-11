@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>dsharp</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../DSharp.Compiler/DSharp.Compiler.csproj"/></ItemGroup>
+</Project>

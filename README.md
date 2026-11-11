@@ -3,9 +3,9 @@
 A strongly typed, actor-first language for APIs, events, and background jobs on
 .NET.
 
-**Status:** language and runtime design. This repository contains documentation,
-not a compiler, runtime, or installable toolchain. DSharp is the working project
-name; final language naming remains open.
+**Status:** a minimal executable compiler prototype plus language/runtime design.
+Only parameterless integer-literal functions are implemented. No agent runtime
+exists. DSharp is the working name; final language naming remains open.
 
 ## Why this language exists
 
@@ -96,16 +96,27 @@ are labeled; examples do not finalize grammar.
 
 ## Implementation status
 
-There are no compiler or runtime build, run, or test commands yet. Documentation
-and automation checks are described in [AI development workflows](docs/AI_WORKFLOWS.md).
-The proposed first milestone is
-typed immutable messages, explicit registration, and SQLite-backed enqueue,
-execution, retries, and crash recovery. Events and cron follow, then HTTP and
-typed middleware, then WebSockets and additional storage providers.
+Install the exact SDK in `global.json` (.NET 10.0.100), plus Python 3.11+, Node 24+,
+Git and unzip. Run:
 
-Grammar, compiler architecture, safe .NET interop, and some runtime protocols
-still need design work. gRPC is deferred. Read the detailed design before
-building against a proposed capability or contributing a design change.
+```bash
+bash .github/ai/bootstrap.sh
+bash .github/ai/verify.sh
+bash scripts/verify-compiler.sh
+dotnet run --project src/DSharp.Cli -- check examples/answer.ds
+dotnet run --project src/DSharp.Cli -- compile examples/answer.ds artifacts/demo
+```
+
+`compile` emits readable C#, pins the child SDK and builds a .NET library with
+`dotnet build`. Its accessible `DSharp.Generated.Demo.answer()` returns 42.
+`check` performs D# checks without invoking the C# compiler. Both commands exit
+nonzero on failure. CLI spellings, `.ds` and generated CLR names are provisional.
+See [bootstrap scope and evidence](docs/COMPILER_BOOTSTRAP.md) for the exact
+subset, pins, diagnostics, tests and unresolved decisions. Compiler verification
+requires nonzero passing test discovery and preserves a TRX report.
+
+The AI worker remains documentation-only until a separate enablement change is
+reviewed. Compiler tests do not demonstrate agent isolation or queue durability.
 
 ## License
 

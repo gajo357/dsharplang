@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DSharp.Cli/DSharp.Cli.csproj" />
+    <Project Path="src/DSharp.Compiler/DSharp.Compiler.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj" />
+  </Folder>
+</Solution>

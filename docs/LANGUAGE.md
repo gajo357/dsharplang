@@ -1,11 +1,20 @@
 # Type system and syntax
 
+**Source precedence:** the selected requirements in syntax reference revision 0.3,
+[section 21.2](features/DSharp_Syntax_Reference.md), and the handoff's section 4
+supersede older conflicting examples here. In particular, declarations are public,
+interfaces may supply method defaults, `T?` matches present values or null,
+`Success(value)` constructs results, local builders cannot escape, and callable
+workers differ from enqueue-only agents. No default-service selection is implied.
+Remaining syntax/API proposals stay provisional. Only the literal-function subset
+in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md) is currently executable.
+
 This document separates established language semantics from syntax that has not
 been designed. It is based on [Feature specification v0.2](design/FEATURES.md),
 sections 1–6 and 11–13. See [Architecture](ARCHITECTURE.md) for runtime behavior.
-There is no compiler yet, so no examples here have been compiled.
+The older conceptual examples below are not compiler fixtures; see the precedence note above.
 
-**Grammar, keywords, and concrete syntax are open.** The notation below is
+**Grammar beyond the approved bootstrap and selected revision 0.3 requirements remains open.** The notation below is
 pseudocode for reviewing contracts, not a proposed executable grammar. It does
 not select declaration keywords, punctuation, primitive type names, or generic
 syntax. This document must not be treated as a finalized parser specification.
