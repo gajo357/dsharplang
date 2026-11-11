@@ -4,6 +4,8 @@ Read README.md, docs/ARCHITECTURE.md, and docs/LANGUAGE.md first. This is a
 compiler prototype targeting .NET. Read docs/COMPILER_BOOTSTRAP.md and both
 files under docs/features/ before compiler work. C# implementation, generated C#
 and the pinned .NET SDK are approved; the broader language remains unimplemented.
+Use JavaScript for repository validation; do not introduce Python. Keep the
+pinned .NET 10 managed backend; Native AOT is deferred for package compatibility.
 Do not silently finalize syntax, dependencies, public APIs, or runtime protocols.
 
 Run `bash .github/ai/bootstrap.sh` and `bash .github/ai/verify.sh`.

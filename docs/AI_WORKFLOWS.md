@@ -93,7 +93,7 @@ detected concurrent change. A human can always change a draft's status manually.
 
 ## Local development and regeneration
 
-Requirements: Linux amd64, Git, curl, unzip, Python 3.11+, Node 24+, Docker and
+Requirements: Linux amd64, Git, curl, unzip, Node 24+, Docker and
 exact .NET SDK 10.0.100. No external credentials are needed for local validation.
 The online trusted restore downloads only pinned public NuGet packages. Candidate
 source is never built on the host in the trusted AI verifier.

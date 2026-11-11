@@ -37,7 +37,7 @@ async function preflight() {
   assert(!issue.pull_request && issue.state === 'open', 'An open issue is required');
   assert(issue.labels.some((label: any) => label.name === 'ai:approved'), 'Maintainer must add ai:approved');
   assert(policy.mode === 'compiler-code' && policy.version === 2, 'Unapproved executable policy');
-  for (const file of ['global.json', 'DSharp.slnx', 'tests/DSharp.Compiler.Tests/CompilerTests.cs', '.github/ai/verify-compiler.py']) readFileSync(file);
+  for (const file of ['global.json', 'DSharp.slnx', 'tests/DSharp.Compiler.Tests/CompilerTests.cs', '.github/ai/verify-compiler.mjs']) readFileSync(file);
   const criteria = parseSpec(issue.body, policy.requiredSections);
   const baseSha = (await api(`/git/ref/heads/${policy.baseBranch}`)).object.sha;
   assert(sha(baseSha) && baseSha === process.env.GITHUB_SHA, 'Main moved; start a fresh run');
@@ -48,7 +48,7 @@ async function preflight() {
     await api(`/git/ref/heads/${branch}`);
     throw new Error('Task branch already exists; human reconciliation required');
   } catch (error: any) { if (error.status !== 404) throw error; }
-  const instructions = ['AGENTS.md', 'docs/ARCHITECTURE.md', 'docs/LANGUAGE.md', 'docs/COMPILER_BOOTSTRAP.md', 'docs/features/DSharp_Syntax_Reference.md', 'docs/features/DSharp_Implementation_Instructions.md', '.github/ai/policy.json', 'global.json'].map(file => ({ file, sha256: hash(readFileSync(file)) }));
+  const instructions = ['AGENTS.md', 'docs/ARCHITECTURE.md', 'docs/LANGUAGE.md', 'docs/COMPILER_BOOTSTRAP.md', 'docs/features/DSharp_Syntax_Reference.md', 'docs/features/DSharp_Implementation_Instructions.md', '.github/ai/policy.json', 'global.json', 'package.json', 'package-lock.json'].map(file => ({ file, sha256: hash(readFileSync(file)) }));
   const manifest = {
     version: 1, repository: repo, controllerRun: runId, issueNumber, branch, baseSha,
     specification: issue.body, specHash: hash(issue.body), criteria, instructions,

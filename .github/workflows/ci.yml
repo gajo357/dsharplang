@@ -41,7 +41,7 @@ jobs:
       - name: Validate proposed automation
         run: bash candidate/.github/ai/bootstrap.sh && bash candidate/.github/ai/verify.sh
       - name: Exercise proposed compiler verifier pilots
-        run: python3 candidate/.github/ai/pilot.py "${{ runner.temp }}/pilot-reports"
+        run: node candidate/.github/ai/pilot.mjs "${{ runner.temp }}/pilot-reports"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

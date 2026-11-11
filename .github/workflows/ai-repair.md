@@ -40,7 +40,7 @@ timeout-minutes: 20
 concurrency:
   job-discriminator: "${{ github.run_id }}"
 network:
-  allowed: [defaults, python, node, dotnet]
+  allowed: [defaults, node, dotnet]
 tools:
   github:
     toolsets: [default, actions]

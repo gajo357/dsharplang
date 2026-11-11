@@ -25,7 +25,7 @@ export function parseSpec(body, sections) {
   return criteria;
 }
 export function allowedPath(path, policy) {
-  if (typeof path !== 'string' || path.split('/').some(p => !p || p === '..' || p === 'bin' || p === 'obj' || p.startsWith('.')) || path.includes('\\')) return false;
+  if (typeof path !== 'string' || path.split('/').some(p => !p || p === '..' || ['bin', 'obj', 'node_modules'].includes(p) || p.startsWith('.')) || path.includes('\\')) return false;
   // The same bounded glob patterns are passed to the publisher. **/ includes zero directories.
   return policy.allowedFiles.some(pattern => {
     const regex = pattern.split('**/').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '[^/]*')).join('(?:.*/)?');

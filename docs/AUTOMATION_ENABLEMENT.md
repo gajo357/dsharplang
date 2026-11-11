@@ -15,7 +15,7 @@ A successful mocked code-task controller pilot reaches READY only after fresh
 CI evidence and independent review. Build failure exhausts exactly two repairs;
 zero tests, stale evidence and forbidden edits cannot reach readiness.
 
-`python3 .github/ai/pilot.py` is a reproducible operator-run compiler pilot. It
+`node .github/ai/pilot.mjs` is a reproducible operator-run compiler pilot. It
 constructs disposable candidates without GitHub/model calls: an implementation
 comment plus a meaningful new literal-binding test, then a deliberately broken
 C# source, then a feature file containing no tests. It runs the actual offline
@@ -24,7 +24,7 @@ to implement a new language feature or exercise the live model worker.
 
 ## Observed results
 
-- Full bootstrap/verify entrypoint: documentation links passed, 15 automation tests
+- Full bootstrap/verify entrypoint: documentation links passed, 18 automation tests
   passed with no skips, locked compiler restore and Release build passed, and 18
   protected acceptance tests passed in the offline container.
 - Real compiler pilot: success exited 0 with 18 acceptance tests and 1 feature test;
@@ -38,6 +38,14 @@ to implement a new language feature or exercise the live model worker.
   compiler warnings. Authored ordinary workflow YAML passed actionlint 1.7.12.
 
 ## Environment and rollout
+
+All repository validation is JavaScript on Node 24+, including documentation,
+TRX/JUnit parsing, offline compiler orchestration and pilot scenarios. XML parsing
+uses exact saxes 6.0.0 plus a committed npm lock file; lifecycle scripts are disabled
+during npm ci. Regression tests cover malformed XML, namespaces, DTD rejection,
+missing/duplicate test IDs, inconsistent counts and nonpassing JUnit results.
+The compiler remains C# with managed .NET 10 output; Native AOT is deferred for
+compatibility with future imported packages.
 
 The cloud proxy allows MCR manifests but blocks the SDK image layer redirect at
 `westus.data.mcr.microsoft.com`. Local container validation therefore uses an
