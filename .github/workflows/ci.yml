@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  documentation-and-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Verify candidate with the base harness when available
+        run: |
+          if [[ -f trusted/.github/ai/bootstrap.sh && -f trusted/.github/ai/verify.sh ]]; then
+            bash trusted/.github/ai/bootstrap.sh
+            bash trusted/.github/ai/verify.sh "$GITHUB_WORKSPACE/candidate"
+          elif [[ ! -e trusted/.github/ai ]]; then
+            echo '::notice::Base revision predates the verification harness; proposed automation validation is required below.'
+          else
+            echo '::error::Base verification harness is incomplete.'
+            exit 1
+          fi
+      # On automation changes, exercise the proposed harness as well, without secrets/write permissions.
+      - name: Validate proposed automation
+        run: bash candidate/.github/ai/bootstrap.sh && bash candidate/.github/ai/verify.sh

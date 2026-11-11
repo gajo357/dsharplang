@@ -1,0 +1,34 @@
+name: Approved automation specification
+description: A bounded task with explicit acceptance criteria and verification.
+title: "[spec] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Maintainers approve by adding `ai:approved`, then manually run AI coordinate.
+        The current pilot permits documentation under docs/features/ only.
+        Code implementation is blocked until a real build and test harness is approved.
+  - type: textarea
+    id: goal
+    attributes: {label: Goal, description: Observable outcome}
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes: {label: Acceptance criteria, description: "Use AC1:, AC2:, etc. Give independently verifiable criteria."}
+    validations: {required: true}
+  - type: textarea
+    id: constraints
+    attributes: {label: Constraints, description: Allowed scope and compatibility requirements}
+    validations: {required: true}
+  - type: textarea
+    id: nongoals
+    attributes: {label: Non-goals}
+    validations: {required: true}
+  - type: textarea
+    id: verification
+    attributes: {label: Verification, description: Required commands and evidence for every AC}
+    validations: {required: true}
+  - type: textarea
+    id: decisions
+    attributes: {label: Decisions already made, description: Architecture choices the worker must preserve}
+    validations: {required: true}

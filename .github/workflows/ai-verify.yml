@@ -1,0 +1,61 @@
+name: AI independent verification
+run-name: '${{ inputs.run_key }}'
+on:
+  workflow_dispatch:
+    inputs:
+      run_key: {type: string, required: true}
+      controller_run: {type: string, required: true}
+      base_sha: {type: string, required: true}
+      head_sha: {type: string, required: true}
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.head_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Enforce trusted publication policy
+        id: policy
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          test "$BASE_SHA" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$HEAD_SHA"
+          node trusted/.github/ai/inspect-candidate.mjs candidate
+      - name: Run trusted verification against candidate documentation
+        id: checks
+        env:
+          AI_REPORT_DIR: ${{ runner.temp }}/ai-reports
+        run: bash trusted/.github/ai/verify.sh "$GITHUB_WORKSPACE/candidate"
+      - name: Record exact revision and executed outcomes
+        if: always()
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          POLICY: ${{ steps.policy.outcome }}
+          CHECKS: ${{ steps.checks.outcome }}
+          REPORT_DIR: ${{ runner.temp }}/ai-reports
+        run: |
+          mkdir -p "$REPORT_DIR"
+          node -e 'require("node:fs").writeFileSync(process.env.REPORT_DIR + "/verification.json", JSON.stringify({baseSha:process.env.BASE_SHA,headSha:process.env.HEAD_SHA,policy:process.env.POLICY === "success" ? "pass" : "blocked",checks:process.env.CHECKS}))'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: verification-${{ inputs.head_sha }}
+          path: ${{ runner.temp }}/ai-reports/
+          if-no-files-found: error
+          retention-days: 14

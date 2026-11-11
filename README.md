@@ -89,13 +89,16 @@ outbox or equivalent mechanism.
 | [Type system and syntax](docs/LANGUAGE.md) | Established type semantics, syntax boundaries, and unresolved rules. |
 | [Feature specification v0.2](docs/design/FEATURES.md) | Preserved source specification dated 10 November 2026. |
 | [Documentation tasks](docs/TASKS.md) | Task breakdown, review evidence, and follow-up decisions. |
+| [AI development workflows](docs/AI_WORKFLOWS.md) | Approved issue intake, draft PRs, independent verification/review, and bounded repairs. |
 
 The feature specification is the baseline. Provisional choices and open decisions
 are labeled; examples do not finalize grammar.
 
 ## Implementation status
 
-There are no build, run, or test commands yet. The proposed first milestone is
+There are no compiler or runtime build, run, or test commands yet. Documentation
+and automation checks are described in [AI development workflows](docs/AI_WORKFLOWS.md).
+The proposed first milestone is
 typed immutable messages, explicit registration, and SQLite-backed enqueue,
 execution, retries, and crash recovery. Events and cron follow, then HTTP and
 typed middleware, then WebSockets and additional storage providers.
