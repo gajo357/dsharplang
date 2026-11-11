@@ -9,6 +9,7 @@ This status describes tested implementation, not the full syntax draft.
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
+| Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
 | Whitespace and single-line comments | Implemented and tested | Included in source pipeline |
@@ -59,7 +60,14 @@ equality, and `!`, `&&`, `||` with short-circuit evaluation. Operands and call/
 return types must match; unparenthesized chained comparisons are rejected. There
 is no truthiness. See [the example](../../examples/bool-logic.ds) and
 [implementation plan](implementation/issue-21-plan.md).
-Nested scopes, additional primitives and runtime features remain unsupported.
+[Issue #22](https://github.com/gajo357/dsharplang/issues/22) adds value-producing
+`if`/`else` expressions with bool conditions, matching branch types, and nested
+block-local bindings. Branch names do not escape; redeclaring a visible local
+or parameter is rejected, while sibling branches may reuse a name. Only the
+selected branch executes. Else is required because Unit is not yet implemented.
+See [the example](../../examples/if-scopes.ds) and
+[implementation plan](implementation/issue-22-plan.md).
+Additional primitives and runtime features remain unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix
 only when the behavior and relevant generated execution/rejection tests pass.
