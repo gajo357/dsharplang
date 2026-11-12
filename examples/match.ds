@@ -1,0 +1,20 @@
+module Demo
+
+type Delivery {
+    | Pending
+    | Sent(int)
+    | Failed(string)
+}
+
+fn deliveredCount(delivery: Delivery): int {
+    match delivery {
+        Pending => 0
+        Sent(count) when count > 0 => count
+        Sent(_) => 0
+        Failed(_) => -1
+    }
+}
+
+fn answer(): int {
+    deliveredCount(Delivery.Sent(42))
+}

@@ -13,6 +13,7 @@ This status describes tested implementation, not the full syntax draft.
 | Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
 | Immutable records | Named construction, public fields, nested records, copy updates, structural equality and source diagnostics | Copies preserve the original; field expressions evaluate in source order |
 | Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
+| Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -106,8 +107,17 @@ unambiguous even when an expected type is known; `Union.Case` qualifies a case.
 If a case and record constructor share a name, both are ambiguous unqualified;
 the current subset has no module-qualified record construction, so that record
 constructor needs a different name until module qualification is implemented.
-Pattern matching remains a separate issue. See [the example](../../examples/unions.ds)
+See [the example](../../examples/unions.ds)
 and [implementation plan](implementation/issue-26-plan.md).
+[Issue #27](https://github.com/gajo357/dsharplang/issues/27) adds match
+expressions with nested case patterns, literal patterns, bindings, `_` and bool
+guards. Exhaustiveness covers union and bool combinations, including nested
+payloads; open primitive domains need an unguarded catch-all. Guarded arms do
+not establish coverage, and `_` intentionally covers future cases. The matched
+value is evaluated once and the first pattern with a successful guard selects
+the result. Nullable patterns and Result-specific semantics remain later work.
+See [the example](../../examples/match.ds) and
+[implementation plan](implementation/issue-27-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
