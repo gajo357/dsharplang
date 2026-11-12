@@ -1,0 +1,14 @@
+module Demo
+
+fn apply(value: int, transform: (int) -> int): int {
+    transform(value)
+}
+
+fn makeIncrement(): (int) -> int {
+    value => value + 1
+}
+
+fn answer(): int {
+    let increment = makeIncrement()
+    apply(41, increment)
+}

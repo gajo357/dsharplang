@@ -20,6 +20,7 @@ This status describes tested implementation, not the full syntax draft.
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
+| Function types and capture-free lambdas | Function-valued parameters, locals and returns; explicit or contextually inferred lambda parameters and checked calls | Generated delegates execute higher-order calls; lambda `return` and Result `?` remain within the lambda |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -175,6 +176,17 @@ success payloads retain their types. Nullable values and user-defined types name
 `Result` are not implicitly unwrapped. Lambda and async forms remain unsupported.
 See [the example](../../examples/result-propagation.ds) and
 [implementation plan](implementation/issue-32-plan.md).
+[Issue #33](https://github.com/gajo357/dsharplang/issues/33) adds function
+types and capture-free lambdas with zero or more parameters, expression or block
+bodies, and function-valued parameters, locals and returns. Arguments and results
+are checked, including generic and nullable function types. Explicit return and
+Result propagation leave the nearest lambda rather than its caller. A lambda
+cannot capture enclosing locals or parameters; function values cannot be stored
+in records or union payloads, including through generic data constructors or
+helpers. Function-value equality is unsupported; nullable functions may be
+compared with `null`. Closure capture and async lambdas remain separate work. See
+[the example](../../examples/capture-free-lambdas.ds) and
+[implementation plan](implementation/issue-33-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
