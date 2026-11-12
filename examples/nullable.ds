@@ -1,0 +1,20 @@
+module Demo
+
+type User {
+    id: int
+}
+
+fn lookup(known: bool): User? {
+    if known { User { id = 42 } } else { null }
+}
+
+fn userId(known: bool): int {
+    match lookup(known) {
+        user => user.id
+        null => 0
+    }
+}
+
+fn answer(): int {
+    userId(true)
+}

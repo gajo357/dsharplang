@@ -18,6 +18,7 @@ public sealed record LetStatementSyntax(LetBindingSyntax Binding) : StatementSyn
 public sealed record ReturnStatementSyntax(Token Keyword, ExpressionSyntax Value) : StatementSyntax;
 public sealed record ExpressionStatementSyntax(ExpressionSyntax Expression) : StatementSyntax;
 public sealed record UnitSyntax(Token Unit) : ExpressionSyntax(Unit);
+public sealed record NullSyntax(Token Null) : ExpressionSyntax(Null);
 public sealed record BlockSyntax(IReadOnlyList<LetBindingSyntax> Bindings, ExpressionSyntax Result)
 {
     public IReadOnlyList<StatementSyntax> Statements { get; init; } = Array.Empty<StatementSyntax>();
@@ -52,6 +53,7 @@ public abstract record PatternSyntax(Token Token);
 public sealed record WildcardPatternSyntax(Token Wildcard) : PatternSyntax(Wildcard);
 public sealed record LiteralPatternSyntax(Token Literal, Token? Minus = null) : PatternSyntax(Minus ?? Literal);
 public sealed record UnitPatternSyntax(Token Open) : PatternSyntax(Open);
+public sealed record NullPatternSyntax(Token Null) : PatternSyntax(Null);
 // A bare name may be either a binding or a zero-payload case; the binder resolves it.
 public sealed record NamePatternSyntax(Token Name) : PatternSyntax(Name);
 public sealed record CasePatternSyntax(Token? Qualifier, Token Name, IReadOnlyList<PatternSyntax> Arguments) : PatternSyntax(Qualifier ?? Name);
@@ -63,6 +65,7 @@ public sealed record BoundLetStatement(BoundLocal Local) : BoundStatement;
 public sealed record BoundReturnStatement(BoundExpression Value) : BoundStatement;
 public sealed record BoundExpressionStatement(BoundExpression Expression) : BoundStatement;
 public sealed record BoundUnit : BoundExpression;
+public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundNever(BoundExpression Expression, string Type) : BoundExpression;
 public sealed record BoundBlock(IReadOnlyList<BoundLocal> Locals, BoundExpression Result)
 {
@@ -88,6 +91,8 @@ public sealed record BoundUnionDeclaration(string Name, IReadOnlyList<BoundUnion
 public sealed record BoundUnionConstruction(string Type, string Case, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public abstract record BoundPattern;
 public sealed record BoundWildcardPattern : BoundPattern;
+public sealed record BoundNullPattern : BoundPattern;
+public sealed record BoundPresentPattern(BoundPattern Inner, string Type) : BoundPattern;
 public sealed record BoundBindingPattern(string Name, string Type) : BoundPattern;
 public sealed record BoundLiteralPattern(BoundExpression Value, string Type) : BoundPattern;
 public sealed record BoundCasePattern(string Union, string Case, IReadOnlyList<BoundPattern> Arguments) : BoundPattern;
@@ -221,8 +226,8 @@ public static class Lexer
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
-            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>")) { Advance(); Advance(); }
-            else if ("(),.:{}=+-*/%!<>|".Contains(c)) Advance();
+            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>" or "??" or "?.")) { Advance(); Advance(); }
+            else if ("(),.:{}=+-*/%!<>|?".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
             tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)) { HasInterveningComment = hasInterveningComment });
             hasInterveningComment = false;
@@ -252,6 +257,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (text.Length == 0 || !(char.IsAsciiLetter(text[0]) || text[0] == '_') || Reserved.Contains(text))
             throw Error("Expected an identifier.");
         return Take();
+    }
+    private Token TypeToken()
+    {
+        if (Current.Text == "" || Current.IsDocumentation) throw Error("Expected a type.");
+        var type = Take();
+        if (Current.Text == "??") throw Error("Repeated nullable suffixes are not supported.");
+        if (Current.Text != "?") return type;
+        var suffix = Take();
+        if (Current.Text is "?" or "??") throw Error("Repeated nullable suffixes are not supported.");
+        var span = new SourceSpan(type.Span.Start, suffix.Span.Start + suffix.Span.Length - type.Span.Start,
+            type.Span.Line, type.Span.Column);
+        return new Token(type.Text + "?", span);
     }
     // Draft language words cannot accidentally become identifiers in this subset.
     private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int bool string char public private protected internal".Split(' '));
@@ -283,7 +300,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (Current.IsDocumentation) throw Error("Expected an expression.");
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
-        if (Current.Text == "match")
+        if (Current.Text == "null")
+        {
+            left = new NullSyntax(Take());
+        }
+        else if (Current.Text == "match")
         {
             var keyword = Take();
             var scrutinee = Expression(Current.Span.Line, stopAtBlock: true);
@@ -414,6 +435,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     };
     private PatternSyntax Pattern()
     {
+        if (Current.Text == "null") return new NullPatternSyntax(Take());
         if (Current.Text == "_") return new WildcardPatternSyntax(Take());
         if (Current.Text == "(")
         {
@@ -501,7 +523,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "let")
             {
                 var keyword = Take(); var local = Identifier(); Token? annotation = null;
-                if (Current.Text == ":") { Take(); if (Current.Text == "") throw Error("Expected a local type annotation."); annotation = Take(); }
+                if (Current.Text == ":") { Take(); annotation = TypeToken(); }
                 var equals = Expect("=");
                 if (equals.Span.Line != keyword.Span.Line)
                     throw new SourceError(new("DS1002", path, equals.Span, "A binding header must be on one line."));
@@ -561,7 +583,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                                 do
                                 {
                                     if (Current.Text is "" or ")" or ",") throw Error("Expected a union payload type.");
-                                    payloads.Add(Take());
+                                    payloads.Add(TypeToken());
                                     if (Current.Text != ",") break;
                                     Take();
                                 } while (true);
@@ -579,7 +601,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 {
                     var fieldName = Identifier(); Expect(":");
                     if (Current.Text == "") throw Error("Expected a field type.");
-                    var fieldType = Take();
+                    var fieldType = TypeToken();
                     fields.Add(new(fieldName, fieldType));
                     if (Current.Text != "}" && Current.Span.Line == fieldType.Span.Line)
                         throw Error("Expected a newline after a record field declaration.");
@@ -596,14 +618,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 {
                     var parameter = Identifier(); Expect(":");
                     if (Current.Text == "") throw Error("Expected a parameter type.");
-                    parameters.Add(new(parameter, Take()));
+                    parameters.Add(new(parameter, TypeToken()));
                     if (Current.Text != ",") break;
                     Take();
                 } while (true);
             }
             Expect(")"); Expect(":");
-            var type = Take();
-            if (type.Text == "") throw new SourceError(new("DS1002", path, type.Span, "Expected a return type."));
+            var type = TypeToken();
             var body = Block();
             // Prefer the missing-result span over a following stray closing brace.
             if (Current.Text == "}" && type.Text == "int" && body.Result is UnitSyntax missing &&
@@ -663,7 +684,12 @@ public static class Binder
                 Fail("DS2017", union.Name.Span.Start > conflictingRecord.Name.Span.Start ? union.Name : conflictingRecord.Name,
                     "A record and union cannot share a type name.");
         }
-        bool SupportedType(string type) => type is "int" or "bool" or "string" or "char" or "Unit" || records.ContainsKey(type) || unions.ContainsKey(type);
+        bool IsNullable(string type) => type.EndsWith("?", StringComparison.Ordinal);
+        bool SupportedType(string type)
+        {
+            if (IsNullable(type)) type = type[..^1];
+            return type is "int" or "bool" or "string" or "char" or "Unit" || records.ContainsKey(type) || unions.ContainsKey(type);
+        }
         foreach (var record in syntax.Records)
         {
             var fields = new HashSet<string>(StringComparer.Ordinal);
@@ -708,9 +734,22 @@ public static class Binder
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             var boundLocals = new List<BoundLocal>();
+            bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected ||
+                (IsNullable(expected) && (actual == "<null>" || actual == expected[..^1]));
+            string? CommonType(string left, string right)
+            {
+                if (left == "<never>") return right;
+                if (right == "<never>") return left;
+                if (left == right) return left;
+                if (left == "<null>") return IsNullable(right) ? right : right + "?";
+                if (right == "<null>") return IsNullable(left) ? left : left + "?";
+                if (IsNullable(left) && left[..^1] == right) return left;
+                if (IsNullable(right) && right[..^1] == left) return right;
+                return null;
+            }
             void Require(ExpressionSyntax syntaxNode, string actual, string expected)
             {
-                if (actual != expected && actual != "<never>") Fail("DS2002", syntaxNode.Token, $"Expected {expected}, found {actual}.");
+                if (!Convertible(actual, expected)) Fail("DS2002", syntaxNode.Token, $"Expected {expected}, found {actual}.");
             }
             // Some noncompleting expressions still carry a known nominal type.
             // Preserve it when checking unreachable code and chained record operations.
@@ -719,6 +758,7 @@ public static class Binder
                 BoundRecordConstruction construction => construction.Type,
                 BoundRecordUpdate update => update.Type,
                 BoundUnionConstruction construction => construction.Type,
+                BoundNull value => value.Type,
                 BoundFieldAccess access when records.TryGetValue(access.ReceiverType, out var record) =>
                     record.Fields.FirstOrDefault(field => field.Name.Text == access.Field)?.Type.Text,
                 BoundCall call when signatures.TryGetValue(call.Name, out var target) => target.ReturnType.Text,
@@ -783,10 +823,19 @@ public static class Binder
             }
             BoundPattern BindPattern(PatternSyntax pattern, string expected, List<string> introduced)
             {
+                if (pattern is WildcardPatternSyntax) return new BoundWildcardPattern();
+                if (pattern is NullPatternSyntax nullPattern)
+                {
+                    if (!IsNullable(expected)) Fail("DS2021", nullPattern.Token, "Null requires a nullable matched type.");
+                    return new BoundNullPattern();
+                }
+                if (IsNullable(expected))
+                {
+                    var contained = expected[..^1];
+                    return new BoundPresentPattern(BindPattern(pattern, contained, introduced), contained);
+                }
                 switch (pattern)
                 {
-                    case WildcardPatternSyntax:
-                        return new BoundWildcardPattern();
                     case UnitPatternSyntax unit:
                         if (expected != "Unit") Fail("DS2019", unit.Token, $"Expected a {expected} pattern.");
                         return new BoundLiteralPattern(new BoundUnit(), "Unit");
@@ -849,6 +898,7 @@ public static class Binder
                 switch (expression)
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
+                    case NullSyntax: return (new BoundNull("<null>"), "<null>");
                     case MatchSyntax match:
                         var scrutinee = BindExpression(match.Scrutinee);
                         var scrutineeType = scrutinee.Type == "<never>" ? KnownType(scrutinee.Expression) : scrutinee.Type;
@@ -875,7 +925,12 @@ public static class Binder
                                 if (!guardNever && value.Type != "<never>")
                                 {
                                     if (matchResultType is null) matchResultType = value.Type;
-                                    else Require(arm.Value, value.Type, matchResultType);
+                                    else
+                                    {
+                                        var common = CommonType(matchResultType, value.Type);
+                                        if (common is null) Fail("DS2002", arm.Value.Token, "Match arms must have compatible types.");
+                                        matchResultType = common;
+                                    }
                                 }
                                 boundArms.Add((pattern, guard, value.Expression, value.Type, guardNever));
                             }
@@ -892,7 +947,8 @@ public static class Binder
                             Fail("DS2020", match.Match, "Match patterns are not exhaustive.");
                         var emittedMatchType = matchResultType ?? "Unit";
                         var arms = boundArms.Select(arm => new BoundMatchArm(arm.Pattern, arm.Guard,
-                            arm.GuardNever ? arm.Value : Coerce(arm.Value, emittedMatchType, arm.Type), arm.GuardNever)).ToArray();
+                            arm.GuardNever ? arm.Value : emittedMatchType == "<null>" && arm.Type == "<never>"
+                                ? new BoundNever(arm.Value, "<null>") : Coerce(arm.Value, emittedMatchType, arm.Type), arm.GuardNever)).ToArray();
                         return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType),
                             scrutinee.Type == "<never>" || boundArms.All(arm => arm.GuardNever || arm.Type == "<never>") ? "<never>" : emittedMatchType);
                     case IfSyntax conditional:
@@ -902,16 +958,16 @@ public static class Binder
                         var elseBlock = BindBlock(conditional.Else);
                         if (!conditional.HasElse && thenBlock.Type is not ("Unit" or "<never>"))
                             Fail("DS1002", conditional.MissingElseLocation ?? conditional.If, "An if without else requires a Unit branch.");
-                        if (thenBlock.Type != "<never>" && elseBlock.Type != "<never>" && thenBlock.Type != elseBlock.Type)
+                        var branchType = CommonType(thenBlock.Type, elseBlock.Type);
+                        if (branchType is null)
                         {
                             var location = conditional.Then.Result is UnitSyntax ? conditional.Then.Result : conditional.Else.Result;
                             Fail("DS2002", location.Token, "Conditional branches must have the same type.");
                         }
-                        var branchType = thenBlock.Type == "<never>" ? elseBlock.Type : thenBlock.Type;
                         var emittedType = branchType == "<never>" ? "Unit" : branchType;
                         if (condition.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
-                            CoerceBlock(thenBlock.Block, emittedType), CoerceBlock(elseBlock.Block, emittedType), emittedType), branchType);
+                            CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
                     case GroupSyntax group: return BindExpression(group.Inner);
                     case RecordConstructionSyntax construction:
                         if (locals.ContainsKey(construction.Name.Text)) Fail("DS2016", construction.Name, "A local value is not a record constructor.");
@@ -1006,10 +1062,12 @@ public static class Binder
                         }
                         if (op is "==" or "!=")
                         {
-                            var operandType = left.Type == "<never>" ? (right.Type == "<never>" ? "int" : right.Type) : left.Type;
+                            var operandType = CommonType(left.Type, right.Type);
+                            if (operandType == "<never>") operandType = "int";
+                            if (operandType == "<null>") Fail("DS2021", binary.Left.Token, "Cannot infer a type for null equality.");
+                            if (operandType is null) Fail("DS2002", binary.Right.Token, "Equality operands have incompatible types.");
                             if (operandType == "Unit") Fail("DS2002", binary.Operator, "Unit equality is not supported.");
-                            Require(binary.Right, right.Type, operandType);
-                            return (new BoundBinary(Coerce(left.Expression, operandType, left.Type), op, Coerce(right.Expression, operandType, right.Type)) { OperandType = operandType }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : "bool");
+                            return (new BoundBinary(Coerce(left.Expression, operandType!, left.Type), op, Coerce(right.Expression, operandType!, right.Type)) { OperandType = operandType! }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : "bool");
                         }
                         Require(binary.Left, left.Type, "int"); Require(binary.Right, right.Type, "int");
                         return (new BoundBinary(Coerce(left.Expression, "int", left.Type), op, Coerce(right.Expression, "int", right.Type)), left.Type == "<never>" || right.Type == "<never>" ? "<never>" : op is "<" or "<=" or ">" or ">=" ? "bool" : "int");
@@ -1027,9 +1085,28 @@ public static class Binder
             };
             BoundExpression Coerce(BoundExpression expression, string expected, string actual = "")
             {
-                if (actual == "<never>") return new BoundNever(expression, expected);
+                // Delay resolving an all-null conditional/match until its context
+                // or another branch supplies the contained type.
+                if (expected == "<null>") return expression;
+                if (actual == "<never>")
+                {
+                    if (expression is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundNever)
+                        expression = Coerce(expression, expected);
+                    return new BoundNever(expression, expected);
+                }
+                if (expression is BoundNever never)
+                {
+                    var inner = never.Expression;
+                    if (inner is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundNever)
+                        inner = Coerce(inner, expected);
+                    return never with { Expression = inner, Type = expected };
+                }
+                if (expression is BoundNull) return new BoundNull(expected);
                 if (expression is BoundIf conditional)
                     return conditional with { Type = expected, Then = CoerceBlock(conditional.Then, expected), Else = CoerceBlock(conditional.Else, expected) };
+                if (expression is BoundMatch match)
+                    return match with { Type = expected, Arms = match.Arms.Select(arm => arm.GuardNever ? arm :
+                        arm with { Value = Coerce(arm.Value, expected) }).ToArray() };
                 return expression;
             }
             BoundBlock CoerceBlock(BoundBlock block, string expected) => block.EvaluateResult
@@ -1053,13 +1130,16 @@ public static class Binder
                                 if (binding.Annotation is { } annotation && !SupportedType(annotation.Text)) Fail("DS2008", annotation, "Unsupported local annotation.");
                                 var initSyntax = binding.Expression ?? new ValueSyntax(binding.Initializer);
                                 var init = BindExpression(initSyntax);
+                                if (binding.Annotation is null && init.Type == "<null>")
+                                    Fail("DS2002", initSyntax.Token, "Cannot infer the contained type of null.");
                                 // A record expression retains its nominal type even when an
                                 // initializer cannot complete. Later unreachable statements
                                 // still need that type to be checked consistently.
                                 var localType = binding.Annotation?.Text ?? (init.Type == "<never>" ? KnownType(init.Expression) ?? "Unit" : init.Type);
                                 if (binding.Annotation is { } annotationType && init.Type != "<never>" && init.Type != localType)
                                 {
-                                    if (localType is "string" or "char") Fail("DS2008", annotationType, "Local annotation does not match initializer.");
+                                    if ((localType is "string" or "char") && init.Type != "<null>" && !IsNullable(init.Type))
+                                        Fail("DS2008", annotationType, "Local annotation does not match initializer.");
                                     Require(initSyntax, init.Type, localType);
                                 }
                                 var boundInit = Coerce(init.Expression, localType, init.Type);
@@ -1090,7 +1170,7 @@ public static class Binder
             }
             var sourceBody = function.Body ?? new BlockSyntax(function.Bindings, function.Expression ?? new ValueSyntax(function.Literal));
             var body = BindBlock(sourceBody, true);
-            if (body.Type != "<never>" && body.Type != function.ReturnType.Text && (function.ReturnType.Text is "string" or "char"))
+            if (body.Type != "<never>" && body.Type != "<null>" && !IsNullable(body.Type) && body.Type != function.ReturnType.Text && (function.ReturnType.Text is "string" or "char"))
                 Fail("DS2003", function.ReturnType, "Return type does not match the function body.");
             Require(sourceBody.Result, body.Type, function.ReturnType.Text);
             var resultExpression = Coerce(body.Block.Result, function.ReturnType.Text, body.Type);
@@ -1124,7 +1204,7 @@ public static class CSharpEmitter
     public static string Emit(BoundModule module)
     {
         // A generated namespace avoids a C# member/type name collision without restricting D# names.
-        var output = new StringBuilder("// Generated by DSharp.\nnamespace DSharp.Generated;\n\n");
+        var output = new StringBuilder("// Generated by DSharp.\n#nullable disable\nnamespace DSharp.Generated;\n\n");
         var globalNames = new HashSet<string>(StringComparer.Ordinal) { module.Name };
         foreach (var function in module.Functions) globalNames.Add(function.Name);
         foreach (var record in module.Records)
@@ -1169,7 +1249,29 @@ public static class CSharpEmitter
             while (!memberNames.Add(name)) name += "_";
             equalityMethods.Add(union.Name, name);
         }
-        string CType(string type) => type == "Unit" ? unitType : recordTypes.TryGetValue(type, out var recordType) ? recordType : type;
+        static bool IsValueType(string type) => type is "int" or "bool" or "char" or "Unit";
+        string CType(string type)
+        {
+            if (type.EndsWith("?", StringComparison.Ordinal))
+            {
+                var inner = type[..^1];
+                return IsValueType(inner) ? "global::System.Nullable<" + CType(inner) + ">" : CType(inner);
+            }
+            return type == "Unit" ? unitType : recordTypes.TryGetValue(type, out var recordType) ? recordType : type;
+        }
+        string EqualValue(string type, string left, string right)
+        {
+            if (type.EndsWith("?", StringComparison.Ordinal))
+            {
+                var inner = type[..^1];
+                if (IsValueType(inner))
+                    return "global::System.Collections.Generic.EqualityComparer<" + CType(type) + ">.Default.Equals(" + left + ", " + right + ")";
+                type = inner;
+            }
+            return type == "Unit" ? "true" :
+                type == "string" ? "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)" :
+                equalityMethods.TryGetValue(type, out var nested) ? nested + "(" + left + ", " + right + ")" : left + " == " + right;
+        }
         output.Append("public readonly struct ").Append(unitType).Append(" {}\n\n");
         foreach (var record in module.Records)
         {
@@ -1240,9 +1342,7 @@ public static class CSharpEmitter
             foreach (var field in record.Fields)
             {
                 var left = "__left.@" + field.Name; var right = "__right.@" + field.Name;
-                var equals = field.Type == "Unit" ? "true" :
-                    field.Type == "string" ? "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)" :
-                    equalityMethods.TryGetValue(field.Type, out var nested) ? nested + "(" + left + ", " + right + ")" : left + " == " + right;
+                var equals = EqualValue(field.Type, left, right);
                 output.Append(" && ").Append(equals);
             }
             output.Append(");\n");
@@ -1264,9 +1364,7 @@ public static class CSharpEmitter
                     var payloadType = unionCase.PayloadTypes[i];
                     var accessor = ".__dsharp_case_" + caseSuffix + "_item_" + i.ToString(CultureInfo.InvariantCulture);
                     var left = "__left" + accessor; var right = "__right" + accessor;
-                    var equals = payloadType == "Unit" ? "true" :
-                        payloadType == "string" ? "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)" :
-                        equalityMethods.TryGetValue(payloadType, out var nested) ? nested + "(" + left + ", " + right + ")" : left + " == " + right;
+                    var equals = EqualValue(payloadType, left, right);
                     output.Append(" && ").Append(equals);
                 }
                 output.Append(";\n");
@@ -1305,6 +1403,7 @@ public static class CSharpEmitter
                 return "(" + value + ").__dsharp_case_" + caseIndex.ToString(CultureInfo.InvariantCulture) +
                     "_item_" + item.ToString(CultureInfo.InvariantCulture);
             }
+            string PresentValue(string innerType, string value) => IsValueType(innerType) ? "(" + value + ").Value" : value;
             string PatternCondition(BoundPattern pattern, string value)
             {
                 switch (pattern)
@@ -1313,6 +1412,11 @@ public static class CSharpEmitter
                         // A nonconstant true expression keeps later arms and the
                         // defensive fallback reachable under C# warnings-as-errors.
                         return "global::System.Object.ReferenceEquals(null, null)";
+                    case BoundNullPattern:
+                        return "(" + value + " is null)";
+                    case BoundPresentPattern present:
+                        var presentTest = IsValueType(present.Type) ? "(" + value + ").HasValue" : "!global::System.Object.ReferenceEquals(" + value + ", null)";
+                        return "(" + presentTest + " && " + PatternCondition(present.Inner, PresentValue(present.Type, value)) + ")";
                     case BoundLiteralPattern literal:
                         if (literal.Type == "Unit") return "global::System.Object.ReferenceEquals(null, null)";
                         var expected = EmitExpression(literal.Value);
@@ -1340,6 +1444,9 @@ public static class CSharpEmitter
                         localNames.Add(binding.Name, name);
                         names.Add(binding.Name);
                         break;
+                    case BoundPresentPattern present:
+                        EmitPatternBindings(present.Inner, PresentValue(present.Type, value), names);
+                        break;
                     case BoundCasePattern unionCase:
                         for (var i = 0; i < unionCase.Arguments.Count; i++)
                             EmitPatternBindings(unionCase.Arguments[i], PatternItem(unionCase, i, value), names);
@@ -1351,6 +1458,7 @@ public static class CSharpEmitter
                 switch (expression)
                 {
                     case BoundUnit: return "default(" + unitType + ")";
+                    case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
                     case BoundInt literal:
                         // C# constant overflow/division errors must instead be D#
                         // execution faults. Lift literals to ordinary int locals.
@@ -1471,14 +1579,10 @@ public static class CSharpEmitter
                     case BoundBinary binary:
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
-                        if (binary.OperandType == "string" && (binary.Operator is "==" or "!="))
+                        if ((binary.Operator is "==" or "!=") && (binary.OperandType.EndsWith("?", StringComparison.Ordinal) ||
+                            binary.OperandType == "string" || equalityMethods.ContainsKey(binary.OperandType)))
                         {
-                            var equals = "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)";
-                            return binary.Operator == "!=" ? "(!" + equals + ")" : equals;
-                        }
-                        if (equalityMethods.TryGetValue(binary.OperandType, out var equality) && (binary.Operator is "==" or "!="))
-                        {
-                            var equals = equality + "(" + left + ", " + right + ")";
+                            var equals = EqualValue(binary.OperandType, left, right);
                             return binary.Operator == "!=" ? "(!" + equals + ")" : equals;
                         }
                         return "(" + left + " " + binary.Operator + " " + right + ")";
