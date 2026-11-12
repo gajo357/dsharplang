@@ -65,7 +65,7 @@ advance to another issue before review.
   matching in either order, nominal identity, original spans, Unit, name
   collisions, contextual construction, early returns and warnings-as-errors.
   Existing tests remain unchanged.
-- Bootstrap, Release build with zero warnings, 18 baseline and 356 feature tests,
+- Bootstrap, Release build with zero warnings, 18 baseline and 337 feature tests,
   CLI example check/compile, 20 automation tests and documentation checks passed.
   The local full verifier could not download its pinned SDK image (`Forbidden`);
   GitHub Actions runs the unchanged containerized verifier.
@@ -73,3 +73,7 @@ advance to another issue before review.
 ## PR
 
 Draft PR pending user review and merge. Fix any CI failure on this branch.
+The initial GitHub compiler run passed all tests but its TRX report exceeded the
+trusted 512,000-byte limit. The new Result diagnostic scenarios were grouped into
+named batches without removing their inputs or assertions; the limit and verifier
+remain unchanged. The resulting report has headroom for runner-specific paths.

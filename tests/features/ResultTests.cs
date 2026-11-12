@@ -7,10 +7,10 @@ using Xunit;
 
 namespace DSharp.Tests;
 
-public sealed class ResultTests
+public sealed class Result
 {
-    [Fact]
-    public async Task SuccessNullPresentAndErrorRemainDistinctInEitherPatternOrder()
+    [Fact(DisplayName = "Result/nullable outcomes")]
+    public async Task NullableOutcomes()
     {
         const string source = """
             module Demo
@@ -50,8 +50,8 @@ public sealed class ResultTests
         await WithGenerated(source, type => Assert.Equal(true, Invoke(type, "run")));
     }
 
-    [Fact]
-    public async Task UnitShorthandMatchesExplicitUnitAndNullableSuccessRemainsDistinct()
+    [Fact(DisplayName = "Result/Unit outcomes")]
+    public async Task UnitOutcomes()
     {
         const string source = """
             module Demo
@@ -77,8 +77,8 @@ public sealed class ResultTests
         await WithGenerated(source, type => Assert.Equal(true, Invoke(type, "run")));
     }
 
-    [Fact]
-    public async Task ContextualResultsCanBeReturnedStoredMatchedAndExplicitlyConsumed()
+    [Fact(DisplayName = "Result/consumption")]
+    public async Task Consumption()
     {
         const string source = """
             module Demo
@@ -126,8 +126,8 @@ public sealed class ResultTests
         await WithGenerated(source, type => Assert.Equal(42, Invoke(type, "run")));
     }
 
-    [Fact]
-    public async Task ConstructorsAreLazyInContextAndPayloadEvaluatesOnce()
+    [Fact(DisplayName = "Result/payload order")]
+    public async Task PayloadOrder()
     {
         const string source = """
             module Demo
@@ -170,8 +170,8 @@ public sealed class ResultTests
         });
     }
 
-    [Fact]
-    public async Task UnrelatedUserResultAndConstructorNamesRemainOrdinaryIdentifiers()
+    [Fact(DisplayName = "Result/user names")]
+    public async Task UserNames()
     {
         const string source = """
             module Demo
@@ -195,8 +195,8 @@ public sealed class ResultTests
         });
     }
 
-    [Fact]
-    public async Task CurrentModuleCasesAndFunctionsTakePrecedenceOverImplicitResultCases()
+    [Fact(DisplayName = "Result/lookup precedence")]
+    public async Task LookupPrecedence()
     {
         const string source = """
             module Demo
@@ -233,8 +233,8 @@ public sealed class ResultTests
         });
     }
 
-    [Fact]
-    public async Task PreludeCaseNamesRemainAvailableAsBindingsForUnrelatedUnions()
+    [Fact(DisplayName = "Result/pattern bindings")]
+    public async Task PatternBindings()
     {
         const string source = """
             module Demo
@@ -257,8 +257,8 @@ public sealed class ResultTests
         });
     }
 
-    [Fact]
-    public void UnusedStandardResultDoesNotChangeThePublicBoundUnionList()
+    [Fact(DisplayName = "Result/bound unions")]
+    public void BoundUnions()
     {
         const string ordinary = """
             module Demo
@@ -278,64 +278,93 @@ public sealed class ResultTests
         Assert.Empty(DSharpCompiler.Compile(withResult, "result.ds").Diagnostics);
     }
 
-    [Theory]
-    [InlineData("fn f(): Result<int, int> { Success() }")]
-    [InlineData("fn f(): Result<Unit?, int> { Success() }")]
-    [InlineData("fn f(): Result<Unit, int> { Success(null) }")]
-    [InlineData("fn f(): Result<int, int> { Success(true) }")]
-    [InlineData("fn f(): Result<int, int> { Error(true) }")]
-    [InlineData("fn f(): Result<int, int> { Success(1, 2) }")]
-    [InlineData("fn f(): Result<int, int> { Error() }")]
-    [InlineData("fn f(): int { let value = Success(42)\n 42 }")]
-    [InlineData("fn f(): int { let value = Success()\n 42 }")]
-    [InlineData("fn f(): int { let value = Error(42)\n 42 }")]
-    [InlineData("fn f(): int { let value = Success(null)\n 42 }")]
-    [InlineData("fn f(value: Result<int, int>): int { match value { Success(n) => n } }")]
-    [InlineData("fn f(value: Result<int, int>): int { match value { Error(n) => n } }")]
-    [InlineData("fn f(value: Result<int?, int>): int { match value { Success(n) => n\n Error(e) => e } }")]
-    [InlineData("fn make(): Result<int, int> { Success(42) }\nfn f(): int { make()\n 42 }")]
-    [InlineData("fn make(): Result<int, int> { Success(42) }\nfn f(): Unit { if true { make()\n () } }")]
-    [InlineData("fn f(): int { let saved: Result<int, int> = Success(42)\n saved\n 42 }")]
-    [InlineData("type Other { | Success(int) }\nfn f(): Result<int, int> { Success(42) }")]
-    [InlineData("type Other { | Success(int) }\nfn Success(value: int): int { value }\nfn f(): int { Success(42) }")]
-    [InlineData("fn f(): Result<int, int> { Success(\"wrong\") }")]
-    [InlineData("fn f(): Result<int, int> { Error(null) }")]
-    public void InvalidResultProgramsAreRejected(string body)
+    [Theory(DisplayName = "Result/invalid")]
+    [InlineData("constructors", 0, 6)]
+    [InlineData("inference", 7, 10)]
+    [InlineData("coverage", 11, 13)]
+    [InlineData("consumption", 14, 16)]
+    [InlineData("lookup", 17, 20)]
+    public void Invalid(string group, int first, int last)
     {
-        var source = "module Demo\n" + body;
-        var result = DSharpCompiler.Compile(source, "result.ds");
-        Assert.Null(result.CSharp);
-        var error = Assert.Single(result.Diagnostics);
-        Assert.StartsWith("DS", error.Code);
-        Assert.Equal("result.ds", error.Path);
-        Assert.InRange(error.Span.Start, 0, source.Length);
-        Assert.InRange(error.Span.Length, 0, source.Length - error.Span.Start);
-        Assert.True(error.Span.Line >= 1);
-        Assert.True(error.Span.Column >= 1);
+        for (var id = first; id <= last; id++)
+        {
+            var failure = Record.Exception(() =>
+            {
+                string body = id switch
+                {
+                    0 => "fn f(): Result<int, int> { Success() }",
+                    1 => "fn f(): Result<Unit?, int> { Success() }",
+                    2 => "fn f(): Result<Unit, int> { Success(null) }",
+                    3 => "fn f(): Result<int, int> { Success(true) }",
+                    4 => "fn f(): Result<int, int> { Error(true) }",
+                    5 => "fn f(): Result<int, int> { Success(1, 2) }",
+                    6 => "fn f(): Result<int, int> { Error() }",
+                    7 => "fn f(): int { let value = Success(42)\n 42 }",
+                    8 => "fn f(): int { let value = Success()\n 42 }",
+                    9 => "fn f(): int { let value = Error(42)\n 42 }",
+                    10 => "fn f(): int { let value = Success(null)\n 42 }",
+                    11 => "fn f(value: Result<int, int>): int { match value { Success(n) => n } }",
+                    12 => "fn f(value: Result<int, int>): int { match value { Error(n) => n } }",
+                    13 => "fn f(value: Result<int?, int>): int { match value { Success(n) => n\n Error(e) => e } }",
+                    14 => "fn make(): Result<int, int> { Success(42) }\nfn f(): int { make()\n 42 }",
+                    15 => "fn make(): Result<int, int> { Success(42) }\nfn f(): Unit { if true { make()\n () } }",
+                    16 => "fn f(): int { let saved: Result<int, int> = Success(42)\n saved\n 42 }",
+                    17 => "type Other { | Success(int) }\nfn f(): Result<int, int> { Success(42) }",
+                    18 => "type Other { | Success(int) }\nfn Success(value: int): int { value }\nfn f(): int { Success(42) }",
+                    19 => "fn f(): Result<int, int> { Success(\"wrong\") }",
+                    20 => "fn f(): Result<int, int> { Error(null) }",
+                    _ => throw new ArgumentOutOfRangeException(nameof(id))
+                };
+                var source = "module Demo\n" + body;
+                var result = DSharpCompiler.Compile(source, "result.ds");
+                Assert.Null(result.CSharp);
+                var error = Assert.Single(result.Diagnostics);
+                Assert.StartsWith("DS", error.Code);
+                Assert.Equal("result.ds", error.Path);
+                Assert.InRange(error.Span.Start, 0, source.Length);
+                Assert.InRange(error.Span.Length, 0, source.Length - error.Span.Start);
+                Assert.True(error.Span.Line >= 1);
+                Assert.True(error.Span.Column >= 1);
+            });
+            Assert.True(failure is null, $"Result {group} scenario {id} failed: {failure}");
+        }
     }
 
-    [Theory]
-    [InlineData("fn f(): Result<int, int> { ~Success() }", "Success")]
-    [InlineData("fn f(): Result<int, int> { Success(~true) }", "true")]
-    [InlineData("fn f(): Result<int, int> { Error(~true) }", "true")]
-    [InlineData("fn f(): int { let value = ~Success(42)\n 42 }", "Success")]
-    [InlineData("fn make(): Result<int, int> { Success(42) }\nfn f(): int { ~make()\n 42 }", "make")]
-    public void ResultDiagnosticsPointAtOriginalDSharpSource(string marked, string token)
+    [Theory(DisplayName = "Result/diagnostic span")]
+    [InlineData("constructors", 0, 2)]
+    [InlineData("usage", 3, 4)]
+    public void DiagnosticSpan(string group, int first, int last)
     {
-        var marker = marked.IndexOf('~');
-        var source = "module Demo\n" + marked.Remove(marker, 1);
-        var start = "module Demo\n".Length + marker;
-        var result = DSharpCompiler.Compile(source, "result.ds");
-        Assert.Null(result.CSharp);
-        var error = Assert.Single(result.Diagnostics);
-        Assert.Equal("result.ds", error.Path);
-        var prefix = source[..start];
-        Assert.Equal(new SourceSpan(start, token.Length, prefix.Count(c => c == '\n') + 1,
-            start - prefix.LastIndexOf('\n')), error.Span);
+        for (var id = first; id <= last; id++)
+        {
+            var failure = Record.Exception(() =>
+            {
+                (string marked, string token) = id switch
+                {
+                    0 => ("fn f(): Result<int, int> { ~Success() }", "Success"),
+                    1 => ("fn f(): Result<int, int> { Success(~true) }", "true"),
+                    2 => ("fn f(): Result<int, int> { Error(~true) }", "true"),
+                    3 => ("fn f(): int { let value = ~Success(42)\n 42 }", "Success"),
+                    4 => ("fn make(): Result<int, int> { Success(42) }\nfn f(): int { ~make()\n 42 }", "make"),
+                    _ => throw new ArgumentOutOfRangeException(nameof(id))
+                };
+                var marker = marked.IndexOf('~');
+                var source = "module Demo\n" + marked.Remove(marker, 1);
+                var start = "module Demo\n".Length + marker;
+                var result = DSharpCompiler.Compile(source, "result.ds");
+                Assert.Null(result.CSharp);
+                var error = Assert.Single(result.Diagnostics);
+                Assert.Equal("result.ds", error.Path);
+                var prefix = source[..start];
+                Assert.Equal(new SourceSpan(start, token.Length, prefix.Count(c => c == '\n') + 1,
+                    start - prefix.LastIndexOf('\n')), error.Span);
+            });
+            Assert.True(failure is null, $"Result {group} span scenario {id} failed: {failure}");
+        }
     }
 
-    [Fact]
-    public void StandardCasePatternDiagnosticDistinguishesAUserDefinedResult()
+    [Fact(DisplayName = "Result/case diagnostic")]
+    public void CasePatternDiagnostic()
     {
         const string source = "module Demo\ntype Result { | Named(int) }\n" +
             "fn f(value: Result): int { match value { Success(n) => n\n _ => 0 } }";
