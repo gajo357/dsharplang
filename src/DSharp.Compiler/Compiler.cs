@@ -48,6 +48,15 @@ public sealed record UnionDeclarationSyntax(Token Name, IReadOnlyList<UnionCaseS
 public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
+public abstract record PatternSyntax(Token Token);
+public sealed record WildcardPatternSyntax(Token Wildcard) : PatternSyntax(Wildcard);
+public sealed record LiteralPatternSyntax(Token Literal, Token? Minus = null) : PatternSyntax(Minus ?? Literal);
+public sealed record UnitPatternSyntax(Token Open) : PatternSyntax(Open);
+// A bare name may be either a binding or a zero-payload case; the binder resolves it.
+public sealed record NamePatternSyntax(Token Name) : PatternSyntax(Name);
+public sealed record CasePatternSyntax(Token? Qualifier, Token Name, IReadOnlyList<PatternSyntax> Arguments) : PatternSyntax(Qualifier ?? Name);
+public sealed record MatchArmSyntax(PatternSyntax Pattern, ExpressionSyntax? Guard, ExpressionSyntax Value);
+public sealed record MatchSyntax(Token Match, ExpressionSyntax Scrutinee, IReadOnlyList<MatchArmSyntax> Arms) : ExpressionSyntax(Match);
 public abstract record BoundExpression;
 public abstract record BoundStatement;
 public sealed record BoundLetStatement(BoundLocal Local) : BoundStatement;
@@ -77,6 +86,14 @@ public sealed record BoundRecordUpdate(BoundExpression Receiver, string Type, IR
 public sealed record BoundUnionCase(string Name, IReadOnlyList<string> PayloadTypes);
 public sealed record BoundUnionDeclaration(string Name, IReadOnlyList<BoundUnionCase> Cases);
 public sealed record BoundUnionConstruction(string Type, string Case, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
+public abstract record BoundPattern;
+public sealed record BoundWildcardPattern : BoundPattern;
+public sealed record BoundBindingPattern(string Name, string Type) : BoundPattern;
+public sealed record BoundLiteralPattern(BoundExpression Value, string Type) : BoundPattern;
+public sealed record BoundCasePattern(string Union, string Case, IReadOnlyList<BoundPattern> Arguments) : BoundPattern;
+public sealed record BoundMatchArm(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, bool GuardNever);
+public sealed record BoundMatch(BoundExpression Scrutinee, string ScrutineeType,
+    IReadOnlyList<BoundMatchArm> Arms, string Type) : BoundExpression;
 public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
 public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression
 {
@@ -204,7 +221,7 @@ public static class Lexer
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
-            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||")) { Advance(); Advance(); }
+            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>")) { Advance(); Advance(); }
             else if ("(),.:{}=+-*/%!<>|".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
             tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)) { HasInterveningComment = hasInterveningComment });
@@ -266,7 +283,33 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (Current.IsDocumentation) throw Error("Expected an expression.");
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
-        if (Current.Text == "if")
+        if (Current.Text == "match")
+        {
+            var keyword = Take();
+            var scrutinee = Expression(Current.Span.Line, stopAtBlock: true);
+            Expect("{");
+            var arms = new List<MatchArmSyntax>();
+            while (Current.Text is not ("}" or ""))
+            {
+                var pattern = Pattern();
+                ExpressionSyntax? guard = null;
+                if (Current.Text == "when")
+                {
+                    Take();
+                    guard = Expression(Current.Span.Line);
+                }
+                Expect("=>");
+                var value = Expression(Current.Span.Line);
+                var end = tokens[position - 1];
+                arms.Add(new(pattern, guard, value));
+                if (Current.Text != "}" && Current.Span.Line == end.Span.Line)
+                    throw Error("Expected a newline after a match arm.");
+            }
+            if (arms.Count == 0) throw Error("A match expression requires at least one arm.");
+            Expect("}");
+            left = new MatchSyntax(keyword, scrutinee, arms);
+        }
+        else if (Current.Text == "if")
         {
             var keyword = Take();
             var condition = Expression(Current.Span.Line, stopAtBlock: true);
@@ -365,10 +408,55 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or RecordConstructionSyntax or FieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or RecordConstructionSyntax or FieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
+    private PatternSyntax Pattern()
+    {
+        if (Current.Text == "_") return new WildcardPatternSyntax(Take());
+        if (Current.Text == "(")
+        {
+            var open = Take();
+            Expect(")");
+            return new UnitPatternSyntax(open);
+        }
+        Token? minus = null;
+        if (Current.Text == "-") minus = Take();
+        var text = Current.Text;
+        if (text.Length > 0 && (text[0] is '"' or '\'' || text is "true" or "false" || text.All(char.IsAsciiDigit)))
+        {
+            if (minus is not null && !text.All(char.IsAsciiDigit)) throw Error("Expected an integer after '-'.");
+            return new LiteralPatternSyntax(Take(), minus);
+        }
+        if (minus is not null) throw Error("Expected an integer after '-'.");
+        var first = Identifier();
+        Token? qualifier = null;
+        var name = first;
+        if (Current.Text == ".")
+        {
+            Take();
+            qualifier = first;
+            name = Identifier();
+        }
+        if (Current.Text == "(")
+        {
+            Take();
+            var arguments = new List<PatternSyntax>();
+            if (Current.Text != ")")
+            {
+                do
+                {
+                    arguments.Add(Pattern());
+                    if (Current.Text != ",") break;
+                    Take();
+                } while (true);
+            }
+            Expect(")");
+            return new CasePatternSyntax(qualifier, name, arguments);
+        }
+        return qualifier is null ? new NamePatternSyntax(name) : new CasePatternSyntax(qualifier, name, Array.Empty<PatternSyntax>());
+    }
     private IReadOnlyList<RecordInitializerSyntax> RecordInitializers()
     {
         Expect("{");
@@ -636,6 +724,7 @@ public static class Binder
                 BoundCall call when signatures.TryGetValue(call.Name, out var target) => target.ReturnType.Text,
                 BoundNever never => never.Type,
                 BoundIf conditional => conditional.Type,
+                BoundMatch match => match.Type,
                 _ => null
             };
             (IReadOnlyList<BoundRecordInitializer> Fields, bool Never) BindRecordFields(
@@ -692,11 +781,120 @@ public static class Binder
                 if (unionCase is null) Fail("DS2018", name, "Unknown union case.");
                 return BindCase(union, unionCase!, name, arguments);
             }
+            BoundPattern BindPattern(PatternSyntax pattern, string expected, List<string> introduced)
+            {
+                switch (pattern)
+                {
+                    case WildcardPatternSyntax:
+                        return new BoundWildcardPattern();
+                    case UnitPatternSyntax unit:
+                        if (expected != "Unit") Fail("DS2019", unit.Token, $"Expected a {expected} pattern.");
+                        return new BoundLiteralPattern(new BoundUnit(), "Unit");
+                    case LiteralPatternSyntax literal:
+                        var literalValue = BindExpression(new ValueSyntax(literal.Literal));
+                        if (literal.Minus is not null && literalValue.Type != "int")
+                            Fail("DS2019", literal.Token, "Only an int literal can be negative.");
+                        if (literalValue.Type != expected)
+                            Fail("DS2019", literal.Token, $"Expected a {expected} pattern.");
+                        return new BoundLiteralPattern(literal.Minus is null ? literalValue.Expression :
+                            new BoundUnary("-", literalValue.Expression), literalValue.Type);
+                    case NamePatternSyntax name:
+                        if (locals.ContainsKey(name.Name.Text))
+                            Fail("DS2006", name.Name, "A pattern binding cannot shadow a visible local or parameter.");
+                        if (unions.ContainsKey(expected) && cases.ContainsKey(name.Name.Text))
+                        {
+                            var selected = BareCase(name.Name);
+                            return BindCasePattern(selected.Union, selected.Case, name.Name, Array.Empty<PatternSyntax>(), expected, introduced);
+                        }
+                        locals.Add(name.Name.Text, (0, expected));
+                        introduced.Add(name.Name.Text);
+                        return new BoundBindingPattern(name.Name.Text, expected);
+                    case CasePatternSyntax casePattern:
+                        UnionDeclarationSyntax union;
+                        UnionCaseSyntax unionCase;
+                        if (casePattern.Qualifier is { } qualifier)
+                        {
+                            if (locals.ContainsKey(qualifier.Text))
+                                Fail("DS2019", qualifier, "A local value cannot qualify a union case pattern.");
+                            if (!unions.TryGetValue(qualifier.Text, out var qualified))
+                                Fail("DS2019", qualifier, "Unknown union type in pattern.");
+                            union = qualified!;
+                            unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == casePattern.Name.Text)!;
+                            if (unionCase is null) Fail("DS2019", casePattern.Name, "Unknown union case in pattern.");
+                        }
+                        else
+                        {
+                            if (locals.ContainsKey(casePattern.Name.Text))
+                                Fail("DS2019", casePattern.Name, "A local value cannot be used as a case pattern.");
+                            if (!cases.ContainsKey(casePattern.Name.Text))
+                                Fail("DS2019", casePattern.Name, "Unknown union case in pattern.");
+                            (union, unionCase) = BareCase(casePattern.Name);
+                        }
+                        return BindCasePattern(union, unionCase!, casePattern.Name, casePattern.Arguments, expected, introduced);
+                    default: throw new InvalidOperationException("Unknown pattern syntax.");
+                }
+            }
+            BoundPattern BindCasePattern(UnionDeclarationSyntax union, UnionCaseSyntax unionCase,
+                Token name, IReadOnlyList<PatternSyntax> arguments, string expected, List<string> introduced)
+            {
+                if (union.Name.Text != expected) Fail("DS2019", name, $"Case belongs to {union.Name.Text}, not {expected}.");
+                if (unionCase.PayloadTypes.Count != arguments.Count) Fail("DS2019", name, "Incorrect number of case patterns.");
+                var argumentsBound = new List<BoundPattern>();
+                for (var i = 0; i < arguments.Count; i++)
+                    argumentsBound.Add(BindPattern(arguments[i], unionCase.PayloadTypes[i].Text, introduced));
+                return new BoundCasePattern(union.Name.Text, unionCase.Name.Text, argumentsBound);
+            }
             (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression)
             {
                 switch (expression)
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
+                    case MatchSyntax match:
+                        var scrutinee = BindExpression(match.Scrutinee);
+                        var scrutineeType = scrutinee.Type == "<never>" ? KnownType(scrutinee.Expression) : scrutinee.Type;
+                        if (scrutineeType is null || !SupportedType(scrutineeType))
+                            Fail("DS2019", match.Scrutinee.Token, "Cannot determine the type being matched.");
+                        var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
+                        string? matchResultType = null;
+                        foreach (var arm in match.Arms)
+                        {
+                            var introduced = new List<string>();
+                            try
+                            {
+                                var pattern = BindPattern(arm.Pattern, scrutineeType!, introduced);
+                                BoundExpression? guard = null;
+                                var guardNever = false;
+                                if (arm.Guard is not null)
+                                {
+                                    var boundGuard = BindExpression(arm.Guard);
+                                    Require(arm.Guard, boundGuard.Type, "bool");
+                                    guard = Coerce(boundGuard.Expression, "bool", boundGuard.Type);
+                                    guardNever = boundGuard.Type == "<never>";
+                                }
+                                var value = BindExpression(arm.Value);
+                                if (!guardNever && value.Type != "<never>")
+                                {
+                                    if (matchResultType is null) matchResultType = value.Type;
+                                    else Require(arm.Value, value.Type, matchResultType);
+                                }
+                                boundArms.Add((pattern, guard, value.Expression, value.Type, guardNever));
+                            }
+                            finally
+                            {
+                                foreach (var name in introduced) locals.Remove(name);
+                            }
+                        }
+                        var coverageUnions = syntax.Unions.Select(union => new BoundUnionDeclaration(union.Name.Text,
+                            union.Cases.Select(unionCase => new BoundUnionCase(unionCase.Name.Text,
+                                unionCase.PayloadTypes.Select(type => type.Text).ToArray())).ToArray())).ToArray();
+                        if (!MatchCoverage.IsExhaustive(scrutineeType!,
+                            boundArms.Where(arm => arm.Guard is null).Select(arm => arm.Pattern).ToArray(), coverageUnions))
+                            Fail("DS2020", match.Match, "Match patterns are not exhaustive.");
+                        var emittedMatchType = matchResultType ?? "Unit";
+                        var arms = boundArms.Select(arm => new BoundMatchArm(arm.Pattern, arm.Guard,
+                            arm.GuardNever ? arm.Value : Coerce(arm.Value, emittedMatchType, arm.Type), arm.GuardNever)).ToArray();
+                        return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType),
+                            scrutinee.Type == "<never>" || boundArms.All(arm => arm.GuardNever || arm.Type == "<never>") ? "<never>" : emittedMatchType);
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
                         Require(conditional.Condition, condition.Type, "bool");
@@ -1099,6 +1297,55 @@ public static class CSharpEmitter
             var localCount = 0;
             var conditionalCount = 0;
             var updateCount = 0;
+            var matchCount = 0;
+            string PatternItem(BoundCasePattern pattern, int item, string value)
+            {
+                var union = module.Unions.Single(candidate => candidate.Name == pattern.Union);
+                var caseIndex = union.Cases.ToList().FindIndex(candidate => candidate.Name == pattern.Case);
+                return "(" + value + ").__dsharp_case_" + caseIndex.ToString(CultureInfo.InvariantCulture) +
+                    "_item_" + item.ToString(CultureInfo.InvariantCulture);
+            }
+            string PatternCondition(BoundPattern pattern, string value)
+            {
+                switch (pattern)
+                {
+                    case BoundWildcardPattern or BoundBindingPattern:
+                        // A nonconstant true expression keeps later arms and the
+                        // defensive fallback reachable under C# warnings-as-errors.
+                        return "global::System.Object.ReferenceEquals(null, null)";
+                    case BoundLiteralPattern literal:
+                        if (literal.Type == "Unit") return "global::System.Object.ReferenceEquals(null, null)";
+                        var expected = EmitExpression(literal.Value);
+                        return literal.Type == "string"
+                            ? "global::System.String.Equals(" + value + ", " + expected + ", global::System.StringComparison.Ordinal)"
+                            : "(" + value + " == " + expected + ")";
+                    case BoundCasePattern unionCase:
+                        var union = module.Unions.Single(candidate => candidate.Name == unionCase.Union);
+                        var caseIndex = union.Cases.ToList().FindIndex(candidate => candidate.Name == unionCase.Case);
+                        var conditions = new List<string> { "(" + value + ").__dsharp_tag == " + caseIndex.ToString(CultureInfo.InvariantCulture) };
+                        for (var i = 0; i < unionCase.Arguments.Count; i++)
+                            conditions.Add(PatternCondition(unionCase.Arguments[i], PatternItem(unionCase, i, value)));
+                        return "(" + string.Join(" && ", conditions) + ")";
+                    default: throw new InvalidOperationException("Unknown bound pattern.");
+                }
+            }
+            void EmitPatternBindings(BoundPattern pattern, string value, List<string> names)
+            {
+                switch (pattern)
+                {
+                    case BoundBindingPattern binding:
+                        var name = "__dsharp_local_" + (localCount++).ToString(CultureInfo.InvariantCulture);
+                        output.Append("            ").Append(CType(binding.Type)).Append(" ").Append(name).Append(" = ").Append(value).Append(";\n")
+                            .Append("            _ = ").Append(name).Append(";\n");
+                        localNames.Add(binding.Name, name);
+                        names.Add(binding.Name);
+                        break;
+                    case BoundCasePattern unionCase:
+                        for (var i = 0; i < unionCase.Arguments.Count; i++)
+                            EmitPatternBindings(unionCase.Arguments[i], PatternItem(unionCase, i, value), names);
+                        break;
+                }
+            }
             string EmitExpression(BoundExpression expression)
             {
                 switch (expression)
@@ -1127,6 +1374,42 @@ public static class CSharpEmitter
                         EmitBlock(conditional.Else, conditional.Type);
                         output.Append("            }\n            }\n");
                         return helper + "()";
+                    case BoundMatch match:
+                        var matchId = (matchCount++).ToString(CultureInfo.InvariantCulture);
+                        var matchHelper = "__dsharp_match_" + matchId;
+                        var matchValue = "__dsharp_match_value_" + matchId;
+                        output.Append("            ").Append(CType(match.Type)).Append(" ").Append(matchHelper).Append("()\n            {\n");
+                        var scrutinee = EmitExpression(match.Scrutinee);
+                        output.Append("            ").Append(CType(match.ScrutineeType)).Append(" ").Append(matchValue).Append(" = ").Append(scrutinee).Append(";\n")
+                            .Append("            _ = ").Append(matchValue).Append(";\n");
+                        foreach (var arm in match.Arms)
+                        {
+                            var patternTest = PatternCondition(arm.Pattern, matchValue);
+                            output.Append("            if (").Append(patternTest).Append(")\n            {\n");
+                            var armNames = new List<string>();
+                            EmitPatternBindings(arm.Pattern, matchValue, armNames);
+                            if (arm.GuardNever)
+                            {
+                                var neverGuard = EmitExpression(arm.Guard!);
+                                output.Append("            _ = ").Append(neverGuard).Append(";\n")
+                                    .Append("            throw new global::System.InvalidOperationException(\"Noncompleting guard completed.\");\n");
+                            }
+                            else
+                            {
+                                if (arm.Guard is not null)
+                                {
+                                    var guard = EmitExpression(arm.Guard);
+                                    output.Append("            if (").Append(guard).Append(")\n            {\n");
+                                }
+                                var armValue = EmitExpression(arm.Value);
+                                output.Append("            return ").Append(armValue).Append(";\n");
+                                if (arm.Guard is not null) output.Append("            }\n");
+                            }
+                            output.Append("            }\n");
+                            foreach (var armName in armNames) localNames.Remove(armName);
+                        }
+                        output.Append("            throw new global::System.InvalidOperationException(\"Exhaustive match had no matching arm.\");\n            }\n");
+                        return matchHelper + "()";
                     case BoundText text:
                         if (text.IsChar)
                         {
