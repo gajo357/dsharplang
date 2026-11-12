@@ -81,4 +81,8 @@ git diff --check
 
 ## PR
 
-Pending review and merge.
+Draft PR: https://github.com/gajo357/dsharplang/pull/112
+
+User reviews and merges after required checks pass. Explicit maintainer adoption
+of the contract is a separate gate before dependent implementation. Fix any
+PR/CI failures on this branch.
