@@ -1,0 +1,32 @@
+module Demo
+
+type Invoice {
+    total: int
+}
+
+/// The result of looking up an invoice.
+type Lookup {
+    | Found(Invoice)
+    | Missing
+    | Failed(string)
+}
+
+type InvoiceId {
+    | InvoiceId(int)
+}
+
+fn lookup(): Lookup {
+    Lookup.Found(Invoice { total = 42 })
+}
+
+fn foundInvoice(): bool {
+    lookup() == Lookup.Found(Invoice { total = 42 })
+}
+
+fn missingInvoice(): Lookup {
+    Lookup.Missing
+}
+
+fn sameId(): bool {
+    InvoiceId(7) == InvoiceId.InvoiceId(7)
+}
