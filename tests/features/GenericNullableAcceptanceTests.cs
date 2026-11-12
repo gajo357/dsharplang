@@ -123,6 +123,46 @@ public sealed class GenericNullableAcceptance
         await NullableAcceptanceRuntime.WithGenerated(source, type => Assert.Equal(true, NullableAcceptanceRuntime.Invoke(type, "run")));
     }
 
+    [Fact(DisplayName = "Generic nullable/contextual constructor inference")]
+    public async Task FreshConstructorsJoinNullableEvidenceWithoutChangingExistingValues()
+    {
+        const string source = """
+            module Demo
+            type Box<T> { value: T }
+            fn first<T>(left: T, right: T): T { left }
+            fn pick(flag: bool): int? {
+                let value = first(Box { value = if flag { null } else { 42 } }, Box { value = 42 })
+                value.value
+            }
+            fn reverse(flag: bool): int? {
+                let value = first(Box { value = 42 }, Box { value = if flag { null } else { 42 } })
+                value.value
+            }
+            fn run(): bool {
+                (pick(true) == null) && (pick(false) == 42) &&
+                (reverse(true) == 42) && (reverse(false) == 42)
+            }
+            """;
+        await NullableAcceptanceRuntime.WithGenerated(source, type => Assert.Equal(true, NullableAcceptanceRuntime.Invoke(type, "run")));
+
+        foreach (var arguments in new[] { "existing, nullable", "nullable, existing",
+                     "existing, Box { value = if true { null } else { 42 } }",
+                     "Box { value = if true { null } else { 42 } }, existing" })
+        {
+            var invalid = """
+                module Demo
+                type Box<T> { value: T }
+                fn first<T>(left: T, right: T): T { left }
+                fn run(): int? {
+                    let existing: Box<int> = Box { value = 42 }
+                    let nullable: Box<int?> = Box { value = null }
+                """ + $"\n    let value = first({arguments})\n    value.value\n}}";
+            var result = DSharpCompiler.Compile(invalid, "nullable-invariance.ds");
+            Assert.Null(result.CSharp);
+            Assert.NotEmpty(result.Diagnostics);
+        }
+    }
+
     [Theory(DisplayName = "Generic nullable/invalid")]
     [InlineData("unresolved", 0, 1)]
     [InlineData("mismatch", 2, 4)]

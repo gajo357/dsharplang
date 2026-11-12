@@ -1298,7 +1298,50 @@ public static class Binder
                             continue;
                         }
                         if (typeParameters.Count > 0 && !GenericTypes.TryUnify(formalTypes[i].Text, value.Type, parameters, substitutions, fixedParameters))
-                            Fail("DS2023", arguments[i].Token, "Conflicting generic type arguments.");
+                        {
+                            // Fresh constructors can be rebound with the eventual
+                            // context, so join nullable evidence before rejecting a
+                            // nominal type mismatch. Existing values are still
+                            // checked invariantly in the final rebind below.
+                            var candidate = new Dictionary<string, string>(substitutions, StringComparer.Ordinal);
+                            if (GenericTypes.TryParse(formalTypes[i].Text, out var formal) &&
+                                !formal.IsNullable && formal.Arguments.Count == 0 && parameters.Contains(formal.Name) &&
+                                !fixedParameters.Contains(formal.Name) && candidate.TryGetValue(formal.Name, out var prior) &&
+                                GenericTypes.TryParse(prior, out var priorShape) && GenericTypes.TryParse(value.Type, out var valueShape))
+                            {
+                                TypeShape? JoinNullable(TypeShape first, TypeShape second)
+                                {
+                                    if (first.Name != second.Name || first.Arguments.Count != second.Arguments.Count) return null;
+                                    var joined = new List<TypeShape>();
+                                    for (var index = 0; index < first.Arguments.Count; index++)
+                                    {
+                                        var child = JoinNullable(first.Arguments[index], second.Arguments[index]);
+                                        if (child is null) return null;
+                                        joined.Add(child);
+                                    }
+                                    return first with { IsNullable = first.IsNullable || second.IsNullable, Arguments = joined };
+                                }
+                                var joined = JoinNullable(priorShape, valueShape);
+                                if (joined is not null) candidate[formal.Name] = joined.ToString();
+                            }
+                            var contextual = false;
+                            if (candidate.Count == typeParameters.Count)
+                            {
+                                var expected = Substitute(formalTypes[i].Text, candidate, formalTypes[i]);
+                                try
+                                {
+                                    var rebound = BindExpression(arguments[i], expected);
+                                    if (Convertible(rebound.Type, expected))
+                                    {
+                                        value = rebound;
+                                        foreach (var entry in candidate) substitutions[entry.Key] = entry.Value;
+                                        contextual = true;
+                                    }
+                                }
+                                catch (SourceError) { /* Report the original conflicting evidence below. */ }
+                            }
+                            if (!contextual) Fail("DS2023", arguments[i].Token, "Conflicting generic type arguments.");
+                        }
                         bound[i] = value; remaining--; progress = true;
                     }
                     foreach (var parameter in nullableRequired)

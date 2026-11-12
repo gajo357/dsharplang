@@ -67,9 +67,11 @@ contract. Standard Option is a separate generated union with a tag and payload.
 ## Progress and evidence
 
 - The original compiler acceptance suite passed 18 tests; the feature suite
-  passed 347 tests, including generated C# execution with nullable warnings as
+  passed 348 tests, including generated C# execution with nullable warnings as
   errors. Two former rejection cases for newly valid nullable generic behavior
-  were replaced by positive acceptance tests.
+  were replaced by positive acceptance tests. Fresh record constructors join
+  nullable inference evidence in either argument order, while previously bound
+  generic values remain invariant.
 - `bash .github/ai/bootstrap.sh`, `bash scripts/verify-compiler.sh`, the CLI
   `check` and `compile` commands on `examples/generics.ds`, documentation
   validation and `git diff --check` passed locally.
