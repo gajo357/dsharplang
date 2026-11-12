@@ -4,6 +4,12 @@ namespace DSharp.Compiler;
 // syntax and bound model constructors continue to expose their existing strings.
 internal sealed record TypeShape(string Name, IReadOnlyList<TypeShape> Arguments, bool IsNullable)
 {
+    // Impossible in source identifiers and distinct from scoped `$N` symbols.
+    // Function arguments are parameters in order followed by the result.
+    public const string FunctionName = "$fn";
+    public bool IsFunction => Name == FunctionName;
+    public bool ContainsFunction => IsFunction || Arguments.Any(argument => argument.ContainsFunction);
+
     public override string ToString() => Name +
         (Arguments.Count == 0 ? "" : "<" + string.Join(",", Arguments) + ">") +
         (IsNullable ? "?" : "");
@@ -11,23 +17,67 @@ internal sealed record TypeShape(string Name, IReadOnlyList<TypeShape> Arguments
 
 internal static class GenericTypes
 {
-    // Parse a canonical supported nominal type. A syntactically valid tuple or
-    // function type may still be rejected here until those features are added.
+    // Parse source function syntax or the compiler's canonical function marker.
+    // Tuple types remain unsupported. Function types canonicalize to $fn<...>,
+    // so a nullable return cannot be confused with a nullable function itself.
     public static bool TryParse(string text, out TypeShape shape)
     {
         var position = 0;
         TypeShape? Parse()
         {
             if (position >= text.Length) return null;
+            if (text[position] == '(')
+            {
+                position++;
+                var parts = new List<TypeShape>();
+                if (position < text.Length && text[position] != ')')
+                {
+                    while (true)
+                    {
+                        var part = Parse();
+                        if (part is null) return null;
+                        parts.Add(part);
+                        if (position >= text.Length || text[position] != ',') break;
+                        position++;
+                    }
+                }
+                if (position >= text.Length || text[position++] != ')') return null;
+                if (position + 1 < text.Length && text[position] == '-' && text[position + 1] == '>')
+                {
+                    position += 2;
+                    var result = Parse();
+                    if (result is null) return null;
+                    parts.Add(result);
+                    return new TypeShape(TypeShape.FunctionName, parts, false);
+                }
+                // Parentheses may group one type, but cannot manufacture Unit or
+                // tuple types. A suffix applies to the grouped type as a whole.
+                if (parts.Count != 1) return null;
+                var grouped = parts[0];
+                if (position < text.Length && text[position] == '?')
+                {
+                    position++;
+                    grouped = grouped with { IsNullable = true };
+                }
+                return grouped;
+            }
             var start = position;
             if (text[position] == '$')
             {
                 // The source lexer rejects '$'; these identifiers exist only
                 // inside the binder to distinguish lexical type parameters.
                 position++;
-                var digitStart = position;
-                while (position < text.Length && char.IsAsciiDigit(text[position])) position++;
-                if (position == digitStart) return null;
+                if (position + 1 < text.Length && text[position] == 'f' && text[position + 1] == 'n')
+                {
+                    position += 2;
+                    if (position >= text.Length || text[position] != '<') return null;
+                }
+                else
+                {
+                    var digitStart = position;
+                    while (position < text.Length && char.IsAsciiDigit(text[position])) position++;
+                    if (position == digitStart) return null;
+                }
             }
             else
             {
@@ -58,6 +108,7 @@ internal static class GenericTypes
             }
             var nullable = position < text.Length && text[position] == '?';
             if (nullable) position++;
+            if (name == TypeShape.FunctionName && arguments.Count == 0) return null;
             return new TypeShape(name, arguments, nullable);
         }
         var parsed = Parse();
@@ -73,6 +124,7 @@ internal static class GenericTypes
         if (!TryParse(text, out var shape)) return false;
         bool Valid(TypeShape value)
         {
+            if (value.IsFunction) return value.Arguments.Count > 0 && value.Arguments.All(Valid);
             if (parameters.Contains(value.Name)) return value.Arguments.Count == 0;
             return arities.TryGetValue(value.Name, out var arity) && arity == value.Arguments.Count &&
                 value.Arguments.All(Valid);
@@ -148,8 +200,11 @@ internal static class GenericTypes
                     if (prior == name) return true;
                     if (fixedParameters?.Contains(expected.Name) == true)
                         return allowLift && prior == name + "?";
-                    if (name == prior + "?") { pending[expected.Name] = name; return true; }
-                    return allowLift && prior == name + "?";
+                    if (TryParse(prior, out var priorValue) &&
+                        name == (priorValue with { IsNullable = true }).ToString())
+                    { pending[expected.Name] = name; return true; }
+                    return allowLift && TryParse(name, out var nameValue) &&
+                        prior == (nameValue with { IsNullable = true }).ToString();
                 }
                 pending.Add(expected.Name, name);
                 return true;

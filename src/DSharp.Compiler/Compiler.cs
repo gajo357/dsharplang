@@ -30,6 +30,9 @@ public sealed record IfSyntax(Token If, ExpressionSyntax Condition, BlockSyntax 
 }
 public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
 public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
+public sealed record LambdaParameterSyntax(Token Name, Token? Type);
+public sealed record LambdaSyntax(Token Start, IReadOnlyList<LambdaParameterSyntax> Parameters, BlockSyntax Body) : ExpressionSyntax(Start);
+public sealed record InvokeSyntax(ExpressionSyntax Receiver, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(OpenParen);
 public sealed record CallSyntax(Token Name, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(Name)
 {
     public IReadOnlyList<Token> TypeArguments { get; init; } = Array.Empty<Token>();
@@ -94,9 +97,12 @@ public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
+public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList<string> ParameterTypes, string Type, string ReturnType, BoundBlock Body, bool HasReturn) : BoundExpression;
+public sealed record BoundInvoke(BoundExpression Receiver, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression
 {
     public IReadOnlyList<string> TypeArguments { get; init; } = Array.Empty<string>();
+    public Token? Location { get; init; }
 }
 public sealed record BoundRecordField(string Name, string Type);
 public sealed record BoundRecordDeclaration(string Name, IReadOnlyList<BoundRecordField> Fields)
@@ -473,13 +479,53 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         return false;
     }
-    private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0, bool stopAtBlock = false)
+    private bool HasLambdaHead()
+    {
+        if (Current.Text != "(")
+            return position + 1 < tokens.Count && tokens[position + 1].Text == "=>" &&
+                Current.Text.Length > 0 && (char.IsAsciiLetter(Current.Text[0]) || Current.Text[0] == '_') && !Reserved.Contains(Current.Text);
+        var depth = 0;
+        for (var cursor = position; cursor < tokens.Count; cursor++)
+        {
+            if (tokens[cursor].Text == "(") depth++;
+            else if (tokens[cursor].Text == ")" && --depth == 0)
+                return cursor + 1 < tokens.Count && tokens[cursor + 1].Text == "=>";
+        }
+        return false;
+    }
+    private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0, bool stopAtBlock = false, bool stopAtMatchArrow = false)
     {
         ExpressionSyntax left;
         if (Current.IsDocumentation) throw Error("Expected an expression.");
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
-        if (Current.Text == "null")
+        if (!stopAtMatchArrow && HasLambdaHead())
+        {
+            var start = Current;
+            var lambdaParameters = new List<LambdaParameterSyntax>();
+            if (Current.Text == "(")
+            {
+                Take();
+                if (Current.Text != ")")
+                {
+                    do
+                    {
+                        var name = Identifier();
+                        Token? annotation = null;
+                        if (Current.Text == ":") { Take(); annotation = TypeToken(); }
+                        lambdaParameters.Add(new(name, annotation));
+                        if (Current.Text != ",") break;
+                        Take();
+                    } while (true);
+                }
+                Expect(")");
+            }
+            else lambdaParameters.Add(new(Identifier(), null));
+            Expect("=>");
+            var body = Current.Text == "{" ? Block() : new BlockSyntax(Array.Empty<LetBindingSyntax>(), Expression(line is null ? null : Current.Span.Line));
+            left = new LambdaSyntax(start, lambdaParameters, body);
+        }
+        else if (Current.Text == "null")
         {
             left = new NullSyntax(Take());
         }
@@ -496,7 +542,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 if (Current.Text == "when")
                 {
                     Take();
-                    guard = Expression(Current.Span.Line);
+                    guard = Expression(Current.Span.Line, stopAtMatchArrow: true);
                 }
                 Expect("=>");
                 var value = Expression(Current.Span.Line);
@@ -523,7 +569,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         else if (Current.Text is "-" or "!")
         {
             var op = Take();
-            left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 7, stopAtBlock));
+            left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 7, stopAtBlock, stopAtMatchArrow));
         }
         else if (Current.Text == "(")
         {
@@ -564,6 +610,23 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (true)
         {
+            if (Current.Text == "(" && (line is null || Current.Span.Line == tokens[position - 1].Span.Line))
+            {
+                var open = Take();
+                var args = new List<ExpressionSyntax>();
+                if (Current.Text != ")")
+                {
+                    do
+                    {
+                        args.Add(Expression());
+                        if (Current.Text != ",") break;
+                        Take();
+                    } while (true);
+                }
+                Expect(")");
+                left = new InvokeSyntax(left, open, args);
+                continue;
+            }
             // A leading member operator continues across a newline.
             if (Current.Text == "?.")
             {
@@ -616,7 +679,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (precedence < minimumPrecedence) break;
             var op = Take();
             var rightLine = line is not null ? Current.Span.Line : line;
-            var right = Expression(rightLine, op.Text == "??" ? precedence : precedence + 1, stopAtBlock);
+            var right = Expression(rightLine, op.Text == "??" ? precedence : precedence + 1, stopAtBlock, stopAtMatchArrow);
             static bool Comparison(ExpressionSyntax expr) => expr is BinarySyntax binary &&
                 binary.Operator.Text is "==" or "!=" or "<" or "<=" or ">" or ">=";
             if (precedence is 3 or 4 && (Comparison(left) || Comparison(right)))
@@ -627,7 +690,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or CoalesceSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -1005,8 +1068,15 @@ public static class Binder
         bool SupportedType(string type, IReadOnlySet<string>? parameters = null)
         {
             var scope = parameters ?? emptyParameters;
-            return GenericTypes.TryValidate(type, arities, scope);
+            if (!GenericTypes.TryValidate(type, arities, scope) || !GenericTypes.TryParse(type, out var shape)) return false;
+            bool ExecutionTypesOnly(TypeShape value)
+            {
+                if (!value.IsFunction && value.Arguments.Any(argument => argument.ContainsFunction)) return false;
+                return value.Arguments.All(ExecutionTypesOnly);
+            }
+            return ExecutionTypesOnly(shape);
         }
+        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction;
         foreach (var record in syntax.Records)
         {
             var typeParameters = Parameters(record.TypeParameters);
@@ -1014,7 +1084,7 @@ public static class Binder
             foreach (var field in record.Fields)
             {
                 if (!fields.Add(field.Name.Text)) Fail("DS2015", field.Name, "Duplicate record field.");
-                if (!SupportedType(field.Type.Text, typeParameters)) Fail("DS2015", field.Type, "Unsupported record field type or unconstrained nullable type parameter.");
+                if (!SupportedType(field.Type.Text, typeParameters) || !DataType(field.Type.Text)) Fail("DS2015", field.Type, "Unsupported record field type or function value in data.");
             }
         }
         var cases = new Dictionary<string, List<(UnionDeclarationSyntax Union, UnionCaseSyntax Case)>>(StringComparer.Ordinal);
@@ -1026,7 +1096,7 @@ public static class Binder
             {
                 if (!caseNames.Add(unionCase.Name.Text)) Fail("DS2017", unionCase.Name, "Duplicate union case.");
                 foreach (var type in unionCase.PayloadTypes)
-                    if (!SupportedType(type.Text, typeParameters)) Fail("DS2017", type, "Unsupported union payload type or unconstrained nullable type parameter.");
+                    if (!SupportedType(type.Text, typeParameters) || !DataType(type.Text)) Fail("DS2017", type, "Unsupported union payload type or function value in data.");
                 // Standard cases are a prelude; current-module declarations
                 // take precedence before those names are considered.
                 if (union.Name.Text == resultSymbol || union.Name.Text == optionSymbol) continue;
@@ -1064,8 +1134,11 @@ public static class Binder
             var activeTypeParameters = Parameters(function.TypeParameters);
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
+            var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var boundLocals = new List<BoundLocal>();
             bool hasReturn = false;
+            string? currentReturnType = function.ReturnType.Text;
+            List<string>? inferredReturns = null;
             bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected ||
                 (IsNullable(expected) && (actual == "<null>" || actual == expected[..^1]));
             string? CommonType(string left, string right)
@@ -1158,6 +1231,7 @@ public static class Binder
                     MatchSyntax match => NeverExpression(match.Scrutinee) || match.Arms.All(arm =>
                         arm.Guard is not null && NeverExpression(arm.Guard) || NeverExpression(arm.Value)),
                     CallSyntax call => call.Arguments.Any(NeverExpression),
+                    InvokeSyntax invocation => NeverExpression(invocation.Receiver) || invocation.Arguments.Any(NeverExpression),
                     MemberCallSyntax member => NeverExpression(member.Receiver) || member.Arguments.Any(NeverExpression),
                     RecordConstructionSyntax record => record.Fields.Any(field => NeverExpression(field.Value)),
                     RecordUpdateSyntax update => NeverExpression(update.Receiver) || update.Fields.Any(field => NeverExpression(field.Value)),
@@ -1301,10 +1375,14 @@ public static class Binder
                         var hint = substitutions.Count == typeParameters.Count &&
                             (fixedParameters.Count == typeParameters.Count || allowInferredHints)
                             ? Substitute(formalTypes[i].Text, substitutions, formalTypes[i]) : null;
+                        if (arguments[i] is LambdaSyntax && GenericTypes.TrySubstitute(formalTypes[i].Text, substitutions, out var partial) &&
+                            GenericTypes.TryParse(partial, out var partialShape) && partialShape.IsFunction)
+                            hint = partial;
                         (BoundExpression Expression, string Type) value;
                         try { value = BindExpression(arguments[i], hint); }
-                        catch (SourceError error) when (typeParameters.Count > 0 && hint is null &&
-                            error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.")
+                        catch (SourceError error) when (typeParameters.Count > 0 &&
+                            ((hint is null && error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.") ||
+                             (arguments[i] is LambdaSyntax && error.Diagnostic.Code == "DS2026")))
                         {
                             deferred ??= error;
                             continue;
@@ -1385,6 +1463,8 @@ public static class Binder
                 for (var i = 0; i < bound.Length; i++)
                 {
                     var expected = Substitute(formalTypes[i].Text, substitutions, formalTypes[i]);
+                    if (!SupportedType(expected, activeTypeParameters))
+                        Fail("DS2026", arguments[i].Token, "Function values cannot be stored in data types.");
                     // Rebind with the final context: earlier inferred constructors
                     // may need a nullable type discovered by a later argument.
                     var value = typeParameters.Count == 0 ? bound[i]!.Value : BindExpression(arguments[i], expected);
@@ -1397,6 +1477,8 @@ public static class Binder
             // Preserve it when checking unreachable code and chained record operations.
             string? KnownType(BoundExpression expression) => expression switch
             {
+                BoundLambda lambda => lambda.Type,
+                BoundInvoke invocation => invocation.Type,
                 BoundRecordConstruction construction => construction.Type,
                 BoundRecordUpdate update => update.Type,
                 BoundUnionConstruction construction => construction.Type,
@@ -1438,6 +1520,7 @@ public static class Binder
                     initializers.Select(initializer => initializer.Value).ToArray(), location,
                     GenericPattern(record.Name.Text, record.TypeParameters), knownType);
                 var type = Substitute(GenericPattern(record.Name.Text, record.TypeParameters), resolved.Substitutions, location);
+                if (!SupportedType(type, activeTypeParameters)) Fail("DS2026", location, "Function values cannot be stored in records.");
                 var bound = initializers.Select((item, index) => new BoundRecordInitializer(item.Name.Text, resolved.Values[index])).ToArray();
                 return (bound, resolved.Never, type);
             }
@@ -1470,6 +1553,7 @@ public static class Binder
                 var resolved = BindGenericArguments(union.TypeParameters, explicitTypes ?? Array.Empty<Token>(),
                     unionCase.PayloadTypes, arguments, name, GenericPattern(union.Name.Text, union.TypeParameters), expectedResult);
                 var type = Substitute(GenericPattern(union.Name.Text, union.TypeParameters), resolved.Substitutions, name);
+                if (!SupportedType(type, activeTypeParameters)) Fail("DS2026", name, "Function values cannot be stored in union payloads.");
                 return (new BoundUnionConstruction(type, unionCase.Name.Text, resolved.Values), resolved.Never ? "<never>" : type);
             }
             (BoundExpression Expression, string Type) BindQualifiedCase(UnionDeclarationSyntax union,
@@ -1507,7 +1591,7 @@ public static class Binder
                         return new BoundLiteralPattern(literal.Minus is null ? literalValue.Expression :
                             new BoundUnary("-", literalValue.Expression), literalValue.Type);
                     case NamePatternSyntax name:
-                        if (locals.ContainsKey(name.Name.Text))
+                        if (locals.ContainsKey(name.Name.Text) || inaccessibleCaptures.Contains(name.Name.Text))
                             Fail("DS2006", name.Name, "A pattern binding cannot shadow a visible local or parameter.");
                         if (unions.ContainsKey(Nominal(expected)) && cases.TryGetValue(name.Name.Text, out var patternCases) &&
                             patternCases.Any(candidate => candidate.Union.Name.Text == Nominal(expected) ||
@@ -1524,7 +1608,7 @@ public static class Binder
                         UnionCaseSyntax unionCase;
                         if (casePattern.Qualifier is { } qualifier)
                         {
-                            if (locals.ContainsKey(qualifier.Text))
+                            if (locals.ContainsKey(qualifier.Text) || inaccessibleCaptures.Contains(qualifier.Text))
                                 Fail("DS2019", qualifier, "A local value cannot qualify a union case pattern.");
                             if (functionTypeScope.ContainsKey(qualifier.Text))
                                 Fail("DS2019", qualifier, "An unconstrained type parameter cannot qualify a union case pattern.");
@@ -1536,7 +1620,7 @@ public static class Binder
                         }
                         else
                         {
-                            if (locals.ContainsKey(casePattern.Name.Text))
+                            if (locals.ContainsKey(casePattern.Name.Text) || inaccessibleCaptures.Contains(casePattern.Name.Text))
                                 Fail("DS2019", casePattern.Name, "A local value cannot be used as a case pattern.");
                             if (!cases.ContainsKey(casePattern.Name.Text))
                                 Fail("DS2019", casePattern.Name, "Unknown union case in pattern.");
@@ -1578,8 +1662,12 @@ public static class Binder
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
                     case NullSyntax: return (new BoundNull("<null>"), "<null>");
+                    case LambdaSyntax lambda:
+                        return BindLambda(lambda, expectedResult);
+                    case InvokeSyntax invocation:
+                        return BindInvocation(invocation.Receiver, invocation.OpenParen, invocation.Arguments);
                     case PropagateSyntax propagation:
-                        if (!GenericTypes.TryParse(function.ReturnType.Text, out var outerResult) ||
+                        if (currentReturnType is null || !GenericTypes.TryParse(currentReturnType, out var outerResult) ||
                             outerResult.Name != resultSymbol || outerResult.IsNullable || outerResult.Arguments.Count != 2)
                             Fail("DS2025", propagation.Operator, "Result propagation requires an enclosing function returning Result.");
                         // Preserve the type of an already-bound Result. Supply a
@@ -1633,7 +1721,7 @@ public static class Binder
                         hasReturn = true;
                         resultUsed = true;
                         var successType = operandShape.Arguments[0].ToString();
-                        return (new BoundPropagation(propagated.Expression, propagatedType!, successType, function.ReturnType.Text),
+                        return (new BoundPropagation(propagated.Expression, propagatedType!, successType, currentReturnType!),
                             propagated.Type == "<never>" ? "<never>" : successType);
                     case MatchSyntax match:
                         var scrutinee = BindExpression(match.Scrutinee);
@@ -1742,6 +1830,7 @@ public static class Binder
                             Coerce(fallback.Expression, resultType, fallback.Type), containedType, resultType),
                             nullableLeft.Type == "<never>" || nullableLeft.Type == "<null>" && fallback.Type == "<never>" ? "<never>" : resultType);
                     case RecordConstructionSyntax construction:
+                        if (inaccessibleCaptures.Contains(construction.Name.Text)) Fail("DS2026", construction.Name, "Lambda capture is not supported.");
                         if (locals.ContainsKey(construction.Name.Text)) Fail("DS2016", construction.Name, "A local value is not a record constructor.");
                         if (functionTypeScope.ContainsKey(construction.Name.Text))
                             Fail("DS2023", construction.Name, "An unconstrained type parameter is not a record constructor.");
@@ -1767,6 +1856,8 @@ public static class Binder
                         return (new BoundConditionalFieldAccess(Coerce(optionalReceiver.Expression, recordType! + "?", optionalReceiver.Type),
                             recordType!, optionalAccess.Field.Text, optionalResultType) { FieldType = optionalFieldType }, optionalReceiver.Type == "<never>" ? "<never>" : optionalResultType);
                     case FieldAccessSyntax access:
+                        if (access.Receiver is ValueSyntax capturedFieldQualifier && inaccessibleCaptures.Contains(capturedFieldQualifier.Value.Text))
+                            Fail("DS2026", capturedFieldQualifier.Value, "Lambda capture is not supported.");
                         if (access.Receiver is ValueSyntax typeQualifier && !locals.ContainsKey(typeQualifier.Value.Text) &&
                             functionTypeScope.ContainsKey(typeQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeQualifier.Value.Text)))
                             Fail("DS2018", typeQualifier.Value, "An unconstrained type parameter cannot qualify a union case.");
@@ -1812,6 +1903,8 @@ public static class Binder
                                 Fail("DS2004", token, "Integer literal is outside the int range.");
                             return (new BoundInt(literal), "int");
                         }
+                        if (!locals.ContainsKey(token.Text) && inaccessibleCaptures.Contains(token.Text))
+                            Fail("DS2026", token, "Lambda capture is not supported.");
                         if (!locals.TryGetValue(token.Text, out var local) && cases.ContainsKey(token.Text))
                         {
                             var selected = BareCase(token);
@@ -1821,7 +1914,13 @@ public static class Binder
                             Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
                         return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
-                        if (locals.ContainsKey(call.Name.Text)) Fail("DS1002", call.OpenParen, "Local values are not callable.");
+                        if (!locals.ContainsKey(call.Name.Text) && inaccessibleCaptures.Contains(call.Name.Text))
+                            Fail("DS2026", call.Name, "Lambda capture is not supported.");
+                        if (locals.ContainsKey(call.Name.Text))
+                        {
+                            if (call.TypeArguments.Count > 0) Fail("DS2026", call.Name, "Function values do not accept explicit type arguments.");
+                            return BindInvocation(new ValueSyntax(call.Name), call.OpenParen, call.Arguments);
+                        }
                         if (cases.ContainsKey(call.Name.Text))
                         {
                             var selected = BareCase(call.Name);
@@ -1834,11 +1933,15 @@ public static class Binder
                             target.Parameters.Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name,
                             target.ReturnType.Text, expectedResult);
                         var callResultType = Substitute(target.ReturnType.Text, resolvedCall.Substitutions, target.ReturnType);
+                        if (!SupportedType(callResultType, activeTypeParameters)) Fail("DS2026", call.Name, "Function values cannot be stored in data types.");
                         return (new BoundCall(call.Name.Text, resolvedCall.Values)
                         {
-                            TypeArguments = target.TypeParameters.Select(parameter => resolvedCall.Substitutions[parameter.Text]).ToArray()
+                            TypeArguments = target.TypeParameters.Select(parameter => resolvedCall.Substitutions[parameter.Text]).ToArray(),
+                            Location = call.Name
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
+                        if (member.Receiver is ValueSyntax capturedMemberQualifier && inaccessibleCaptures.Contains(capturedMemberQualifier.Value.Text))
+                            Fail("DS2026", capturedMemberQualifier.Value, "Lambda capture is not supported.");
                         if (member.Receiver is ValueSyntax typeMemberQualifier && !locals.ContainsKey(typeMemberQualifier.Value.Text) &&
                             functionTypeScope.ContainsKey(typeMemberQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeMemberQualifier.Value.Text)))
                             Fail("DS2018", typeMemberQualifier.Value, "An unconstrained type parameter cannot qualify a union case.");
@@ -1876,6 +1979,9 @@ public static class Binder
                             if (operandType == "<never>") operandType = "int";
                             if (operandType == "<null>") Fail("DS2021", binary.Left.Token, "Cannot infer a type for null equality.");
                             if (operandType is null) Fail("DS2002", binary.Right.Token, "Equality operands have incompatible types.");
+                            if (operandType is not null && GenericTypes.TryParse(operandType, out var equalityShape) && equalityShape.IsFunction &&
+                                !(equalityShape.IsNullable && (left.Type == "<null>" || right.Type == "<null>")))
+                                Fail("DS2026", binary.Operator, "Function value equality is not supported; nullable functions may be compared with null.");
                             if (operandType is not null && IsNullable(operandType) && !SupportedType(operandType, activeTypeParameters))
                                 Fail("DS2023", binary.Operator, "Nullable unconstrained type parameters are not supported.");
                             if (operandType == "Unit") Fail("DS2002", binary.Operator, "Unit equality is not supported.");
@@ -1948,7 +2054,7 @@ public static class Binder
                         {
                             case LetStatementSyntax declaration:
                                 var binding = declaration.Binding;
-                                if (locals.ContainsKey(binding.Name.Text)) Fail("DS2006", binding.Name, "Duplicate local binding.");
+                                if (locals.ContainsKey(binding.Name.Text) || inaccessibleCaptures.Contains(binding.Name.Text)) Fail("DS2006", binding.Name, "Duplicate or shadowed local binding.");
                                 var annotation = binding.Annotation is null ? null : ScopedType(binding.Annotation, functionTypeScope);
                                 if (annotation is not null && !SupportedType(annotation.Text, activeTypeParameters)) Fail("DS2008", annotation, "Unsupported local annotation.");
                                 var initSyntax = binding.Expression ?? new ValueSyntax(binding.Initializer);
@@ -1973,9 +2079,17 @@ public static class Binder
                                 if (reachable && init.Type == "<never>") reachable = false;
                                 break;
                             case ReturnStatementSyntax ret:
-                                var returned = BindExpression(ret.Value, function.ReturnType.Text);
-                                Require(ret.Value, returned.Type, function.ReturnType.Text);
-                                boundStatements.Add(new BoundReturnStatement(Coerce(returned.Expression, function.ReturnType.Text, returned.Type)));
+                                var returned = BindExpression(ret.Value, currentReturnType);
+                                if (currentReturnType is null)
+                                {
+                                    if (returned.Type != "<never>") inferredReturns!.Add(returned.Type);
+                                    boundStatements.Add(new BoundReturnStatement(returned.Expression));
+                                }
+                                else
+                                {
+                                    Require(ret.Value, returned.Type, currentReturnType);
+                                    boundStatements.Add(new BoundReturnStatement(Coerce(returned.Expression, currentReturnType, returned.Type)));
+                                }
                                 hasReturn = true; reachable = false; break;
                             case ExpressionStatementSyntax exprStatement:
                                 var expr = BindExpression(exprStatement.Expression);
@@ -1992,6 +2106,94 @@ public static class Binder
                     return (new BoundBlock(boundLocalsInBlock, final.Expression) { Statements = boundStatements, CanComplete = type != "<never>", EvaluateResult = reachable, ResultType = final.Type }, type);
                 }
                 finally { if (!keepLocals) foreach (var name in introduced) locals.Remove(name); }
+            }
+            (BoundExpression Expression, string Type) BindInvocation(ExpressionSyntax receiverSyntax, Token location, IReadOnlyList<ExpressionSyntax> arguments)
+            {
+                var receiver = BindExpression(receiverSyntax);
+                var type = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
+                if (type is null || !GenericTypes.TryParse(type, out var shape) || !shape.IsFunction)
+                    Fail("DS1002", location, "Only function values are callable.");
+                if (shape!.IsNullable)
+                    Fail("DS2026", location, "Invocation requires a non-nullable function value.");
+                var functionShape = shape!;
+                var formal = functionShape.Arguments.Take(functionShape.Arguments.Count - 1)
+                    .Select(argument => new Token(argument.ToString(), location.Span)).ToArray();
+                var values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), formal, arguments, location);
+                var resultType = functionShape.Arguments[^1].ToString();
+                return (new BoundInvoke(receiver.Expression, values.Values, resultType),
+                    receiver.Type == "<never>" || values.Never ? "<never>" : resultType);
+            }
+            (BoundExpression Expression, string Type) BindLambda(LambdaSyntax lambda, string? expectedType)
+            {
+                TypeShape? expected = null;
+                if (expectedType is not null && GenericTypes.TryParse(expectedType, out var parsedExpected) && parsedExpected.IsFunction)
+                    expected = parsedExpected;
+                if (expected is not null && expected.Arguments.Count != lambda.Parameters.Count + 1)
+                    Fail("DS2026", lambda.Start, "Lambda parameter count does not match the expected function type.");
+                var savedLocals = locals;
+                var savedCaptures = inaccessibleCaptures;
+                var savedReturnType = currentReturnType;
+                var savedReturns = inferredReturns;
+                var savedHasReturn = hasReturn;
+                var parameterTypes = new List<string>();
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var (parameter, index) in lambda.Parameters.Select((parameter, index) => (parameter, index)))
+                {
+                    if (!names.Add(parameter.Name.Text) || savedLocals.ContainsKey(parameter.Name.Text) || savedCaptures.Contains(parameter.Name.Text))
+                        Fail("DS2006", parameter.Name, "Lambda parameters cannot duplicate or shadow a visible local.");
+                    var expectedParameter = expected is null ? null : expected.Arguments[index].ToString();
+                    var annotation = parameter.Type is null ? null : ScopedType(parameter.Type, functionTypeScope);
+                    if (annotation is not null && !SupportedType(annotation.Text, activeTypeParameters))
+                        Fail("DS2026", annotation, "Unsupported lambda parameter type.");
+                    var usableExpected = expectedParameter is not null && SupportedType(expectedParameter, activeTypeParameters) ? expectedParameter : null;
+                    if (annotation is not null && usableExpected is not null && annotation.Text != usableExpected)
+                        Fail("DS2026", annotation, "Lambda parameter type does not match the expected type.");
+                    var parameterType = annotation?.Text ?? usableExpected;
+                    if (parameterType is null) Fail("DS2026", parameter.Name, "Cannot infer lambda parameter type.");
+                    parameterTypes.Add(parameterType!);
+                }
+                var expectedReturn = expected?.Arguments[^1].ToString();
+                if (expectedReturn is not null && !SupportedType(expectedReturn, activeTypeParameters)) expectedReturn = null;
+                try
+                {
+                    inaccessibleCaptures = new HashSet<string>(savedCaptures, StringComparer.Ordinal);
+                    inaccessibleCaptures.UnionWith(savedLocals.Keys);
+                    (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns)
+                    {
+                        locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
+                        for (var i = 0; i < lambda.Parameters.Count; i++) locals.Add(lambda.Parameters[i].Name.Text, (0, parameterTypes[i]));
+                        currentReturnType = resultType;
+                        inferredReturns = returns;
+                        hasReturn = false;
+                        return BindBlock(lambda.Body, true, resultType);
+                    }
+                    var returns = new List<string>();
+                    var body = BindBody(expectedReturn, expectedReturn is null ? returns : null);
+                    var returnType = expectedReturn;
+                    if (returnType is null)
+                    {
+                        if (body.Type != "<never>") returnType = body.Type;
+                        foreach (var returnedType in returns)
+                            returnType = returnType is null ? returnedType : CommonType(returnType, returnedType) ?? "<invalid>";
+                        if (returnType is null || returnType is "<null>" or "<never>" or "<invalid>" || !SupportedType(returnType, activeTypeParameters))
+                            Fail("DS2026", lambda.Start, "Cannot infer a unique lambda return type.");
+                        body = BindBody(returnType, null);
+                    }
+                    Require(lambda.Body.Result, body.Type, returnType!);
+                    var boundBody = body.Block with { Result = Coerce(body.Block.Result, returnType!, body.Type) };
+                    var shapes = parameterTypes.Append(returnType!).Select(type => { GenericTypes.TryParse(type, out var shape); return shape; }).ToArray();
+                    var lambdaType = new TypeShape(TypeShape.FunctionName, shapes, false).ToString();
+                    return (new BoundLambda(lambda.Parameters.Select(parameter => parameter.Name.Text).ToArray(), parameterTypes,
+                        lambdaType, returnType!, boundBody, hasReturn), lambdaType);
+                }
+                finally
+                {
+                    locals = savedLocals;
+                    inaccessibleCaptures = savedCaptures;
+                    currentReturnType = savedReturnType;
+                    inferredReturns = savedReturns;
+                    hasReturn = savedHasReturn;
+                }
             }
             var sourceBody = function.Body ?? new BlockSyntax(function.Bindings, function.Expression ?? new ValueSyntax(function.Literal));
             var body = BindBlock(sourceBody, true, function.ReturnType.Text);
@@ -2014,6 +2216,75 @@ public static class Binder
                 TypeParameters = function.TypeParameters.Select(parameter => parameter.Text).ToArray()
             });
         }
+        // Generic parameters used in data positions must remain data-safe at
+        // every call, even when the function returns Unit or forwards through
+        // several generic helpers. Discover those requirements to a fixed point.
+        var dataRequirements = functions.ToDictionary(item => item.Name,
+            _ => new HashSet<string>(StringComparer.Ordinal), StringComparer.Ordinal);
+        var boundFunctions = functions.ToDictionary(item => item.Name, StringComparer.Ordinal);
+        bool requirementsChanged;
+        do
+        {
+            requirementsChanged = false;
+            foreach (var owner in functions)
+            {
+                var ownerParameters = owner.TypeParameters.ToHashSet(StringComparer.Ordinal);
+                var required = dataRequirements[owner.Name];
+                void Need(TypeShape shape)
+                {
+                    if (shape.Arguments.Count == 0 && ownerParameters.Contains(shape.Name) && required.Add(shape.Name))
+                        requirementsChanged = true;
+                    foreach (var argument in shape.Arguments) Need(argument);
+                }
+                void Scan(TypeShape shape, bool inData = false)
+                {
+                    if (inData && shape.Arguments.Count == 0 && ownerParameters.Contains(shape.Name) && required.Add(shape.Name))
+                        requirementsChanged = true;
+                    var childData = inData || (!shape.IsFunction && shape.Arguments.Count > 0);
+                    foreach (var argument in shape.Arguments) Scan(argument, childData);
+                }
+                void Visit(object? node)
+                {
+                    if (node is null) return;
+                    if (node is string text)
+                    {
+                        if (GenericTypes.TryParse(text, out var shape)) Scan(shape);
+                        return;
+                    }
+                    if (node is BoundBinary { Operator: "==" or "!=" } equality &&
+                        equality.Left is not BoundNull && equality.Right is not BoundNull &&
+                        GenericTypes.TryParse(equality.OperandType, out var equalityType) && equalityType.IsNullable &&
+                        equalityType.Arguments.Count == 0 && ownerParameters.Contains(equalityType.Name) && required.Add(equalityType.Name))
+                        requirementsChanged = true;
+                    if (node is BoundCall call && boundFunctions.TryGetValue(call.Name, out var callee))
+                    {
+                        for (var i = 0; i < Math.Min(call.TypeArguments.Count, callee.TypeParameters.Count); i++)
+                        {
+                            if (!dataRequirements[callee.Name].Contains(callee.TypeParameters[i]) ||
+                                !GenericTypes.TryParse(call.TypeArguments[i], out var argument)) continue;
+                            if (argument.ContainsFunction)
+                                Fail("DS2026", call.Location ?? new Token(call.Name, syntheticSpan), "Function type is not valid for this generic operation.");
+                            Need(argument);
+                        }
+                    }
+                    if (node is System.Collections.IEnumerable sequence)
+                    {
+                        foreach (var item in sequence) Visit(item);
+                        return;
+                    }
+                    var nodeType = node.GetType();
+                    if (!nodeType.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
+                    foreach (var property in nodeType.GetProperties())
+                    {
+                        if (property.GetIndexParameters().Length != 0) continue;
+                        var value = property.GetValue(node);
+                        if (value is string && !property.Name.EndsWith("Type", StringComparison.Ordinal) && property.Name != "Union") continue;
+                        Visit(value);
+                    }
+                }
+                Visit(owner);
+            }
+        } while (requirementsChanged);
         return new(syntax.Name.Text, functions)
         {
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
@@ -2050,6 +2321,16 @@ public static class CSharpEmitter
         {
             while (!globalNames.Add(proposal)) proposal += "_";
             return proposal;
+        }
+        var delegateNames = new Dictionary<int, string>();
+        string DelegateName(int arity)
+        {
+            if (!delegateNames.TryGetValue(arity, out var name))
+            {
+                name = UniqueGlobal("__DSharp_Function_" + arity.ToString(CultureInfo.InvariantCulture));
+                delegateNames.Add(arity, name);
+            }
+            return name;
         }
         var recordTypes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var record in module.Records)
@@ -2156,6 +2437,8 @@ public static class CSharpEmitter
             {
                 if (current.Arguments.Count == 0 && current.IsNullable && nullableParameterNames.TryGetValue(current.Name, out var nullableParameter))
                     return nullableParameter;
+                if (current.IsFunction)
+                    return DelegateName(current.Arguments.Count - 1) + "<" + string.Join(", ", current.Arguments.Select(ConvertShape)) + ">";
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
                     current.Name == "Unit" ? unitType : recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
                 if (current.Arguments.Count > 0)
@@ -2276,7 +2559,21 @@ public static class CSharpEmitter
         output.Append("public sealed class @").Append(module.Name).Append(" : ").Append(container)
             .Append("\n{\n    private @").Append(module.Name).Append("() {}\n}\n\npublic abstract class ")
             .Append(container).Append("\n{\n");
-        if (module.Functions.Any(f => f.HasReturn))
+        bool NeedsLambdaReturn(object? node)
+        {
+            if (node is null || node is string) return false;
+            if (node is BoundLambda { HasReturn: true }) return true;
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) if (NeedsLambdaReturn(item)) return true;
+                return false;
+            }
+            var type = node.GetType();
+            return type.Name.StartsWith("Bound", StringComparison.Ordinal) && type.GetProperties()
+                .Where(property => property.GetIndexParameters().Length == 0)
+                .Any(property => NeedsLambdaReturn(property.GetValue(node)));
+        }
+        if (module.Functions.Any(f => f.HasReturn || NeedsLambdaReturn(f)))
         {
             output.Append("    private sealed class ").Append(signalType).Append("<T> : global::System.Exception\n")
                 .Append("    {\n        public T Value { get; }\n        public ").Append(signalType).Append("(T value) { Value = value; }\n    }\n")
@@ -2318,6 +2615,8 @@ public static class CSharpEmitter
             var matchCount = 0;
             var nullableOperationCount = 0;
             var propagationCount = 0;
+            var lambdaCount = 0;
+            var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
                 var union = module.Unions.Single(candidate => candidate.Name == Nominal(pattern.Union));
@@ -2383,6 +2682,34 @@ public static class CSharpEmitter
                 {
                     case BoundUnit: return "default(" + unitType + ")";
                     case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
+                    case BoundLambda lambda:
+                        var lambdaId = (lambdaCount++).ToString(CultureInfo.InvariantCulture);
+                        var lambdaName = "__dsharp_lambda_" + lambdaId;
+                        output.Append("            static ").Append(CType(lambda.ReturnType)).Append(" ").Append(lambdaName).Append("(");
+                        for (var i = 0; i < lambda.Parameters.Count; i++)
+                        {
+                            if (i != 0) output.Append(", ");
+                            output.Append(CType(lambda.ParameterTypes[i])).Append(" __dsharp_lambda_param_").Append(lambdaId).Append("_").Append(i.ToString(CultureInfo.InvariantCulture));
+                        }
+                        output.Append(")\n            {\n");
+                        var savedNames = localNames;
+                        var savedEmitterReturnType = emitterReturnType;
+                        localNames = new Dictionary<string, string>(StringComparer.Ordinal);
+                        for (var i = 0; i < lambda.Parameters.Count; i++)
+                            localNames.Add(lambda.Parameters[i], "__dsharp_lambda_param_" + lambdaId + "_" + i.ToString(CultureInfo.InvariantCulture));
+                        emitterReturnType = lambda.ReturnType;
+                        if (lambda.HasReturn) output.Append("            try\n            {\n");
+                        EmitBlock(lambda.Body, lambda.ReturnType);
+                        if (lambda.HasReturn)
+                            output.Append("            }\n            catch (").Append(signalType).Append("<").Append(CType(lambda.ReturnType)).Append("> __dsharp_lambda_return_").Append(lambdaId).Append(")\n            {\n                return __dsharp_lambda_return_").Append(lambdaId).Append(".Value;\n            }\n");
+                        output.Append("            }\n");
+                        localNames = savedNames;
+                        emitterReturnType = savedEmitterReturnType;
+                        return "((" + CType(lambda.Type) + ")" + lambdaName + ")";
+                    case BoundInvoke invocation:
+                        var callable = EmitExpression(invocation.Receiver);
+                        var invocationArguments = invocation.Arguments.Select(EmitExpression).ToArray();
+                        return "(" + callable + ").Invoke(" + string.Join(", ", invocationArguments) + ")";
                     case BoundPropagation propagation:
                         var propagationId = (propagationCount++).ToString(CultureInfo.InvariantCulture);
                         var propagationHelper = "__dsharp_propagate_" + propagationId;
@@ -2562,7 +2889,7 @@ public static class CSharpEmitter
                             binary.OperandType == "string" || IsNominal(binary.OperandType) || IsTypeParameter(binary.OperandType)))
                         {
                             var equals = EqualValue(binary.OperandType, left, right);
-                            return binary.Operator == "!=" ? "(!" + equals + ")" : equals;
+                            return binary.Operator == "!=" ? "(!(" + equals + "))" : equals;
                         }
                         return "(" + left + " " + binary.Operator + " " + right + ")";
                     default: throw new InvalidOperationException("Unknown bound expression.");
@@ -2591,7 +2918,7 @@ public static class CSharpEmitter
                             EmitLocals(new[] { declaration.Local }); break;
                         case BoundReturnStatement ret:
                             var returned = EmitExpression(ret.Value);
-                            output.Append("            _ = ").Append(raiseMethod).Append("<").Append(CType(function.ReturnType)).Append(">(").Append(returned).Append(");\n");
+                            output.Append("            _ = ").Append(raiseMethod).Append("<").Append(CType(emitterReturnType)).Append(">(").Append(returned).Append(");\n");
                             break;
                         case BoundExpressionStatement expr:
                             var value = EmitExpression(expr.Expression);
@@ -2633,7 +2960,16 @@ public static class CSharpEmitter
                 output.Append("        }\n        catch (").Append(signalType).Append("<").Append(CType(function.ReturnType)).Append("> __dsharp_return)\n        {\n            return __dsharp_return.Value;\n        }\n");
             output.Append("    }\n");
         }
-        return output.Append("}\n").ToString();
+        output.Append("}\n");
+        foreach (var entry in delegateNames.OrderBy(pair => pair.Key))
+        {
+            var parameters = Enumerable.Range(0, entry.Key).Select(index => "T" + index.ToString(CultureInfo.InvariantCulture)).ToArray();
+            output.Append("\npublic delegate TReturn ").Append(entry.Value).Append("<")
+                .Append(string.Join(", ", parameters.Append("TReturn"))).Append(">(")
+                .Append(string.Join(", ", parameters.Select((parameter, index) => parameter + " value" + index.ToString(CultureInfo.InvariantCulture))))
+                .Append(");\n");
+        }
+        return output.ToString();
     }
 }
 
