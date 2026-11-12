@@ -6,7 +6,12 @@ namespace DSharp.Compiler;
 public sealed record SourceSpan(int Start, int Length, int Line, int Column);
 public sealed record Diagnostic(string Code, string Path, SourceSpan Span, string Message);
 public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics);
-public sealed record Token(string Text, SourceSpan Span);
+public sealed record Token(string Text, SourceSpan Span)
+{
+    public bool IsDocumentation { get; init; }
+    public bool HasInterveningComment { get; init; }
+    public bool HasCodeBeforeOnLine { get; init; }
+}
 public abstract record ExpressionSyntax(Token Token);
 public abstract record StatementSyntax;
 public sealed record LetStatementSyntax(LetBindingSyntax Binding) : StatementSyntax;
@@ -63,10 +68,14 @@ public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
     // the first token of the final expression. Expression carries the full tree.
     public ExpressionSyntax? Expression { get; init; }
     public BlockSyntax? Body { get; init; }
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<ParameterSyntax> Parameters { get; init; } = Array.Empty<ParameterSyntax>();
     public IReadOnlyList<LetBindingSyntax> Bindings { get; init; } = Array.Empty<LetBindingSyntax>();
 }
-public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions);
+public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
 public sealed record BoundLocal(string Name, int Value, string? InitializerLocal)
 {
     public string Type { get; init; } = "int";
@@ -96,12 +105,50 @@ public static class Lexer
     {
         var tokens = new List<Token>();
         int i = 0, line = 1, column = 1;
-        void Advance() { if (source[i++] == '\n') { line++; column = 1; } else column++; }
+        var hasInterveningComment = false;
+        var pendingDocumentation = false;
+        void Advance()
+        {
+            var c = source[i++];
+            if (c == '\n' || (c == '\r' && (i == source.Length || source[i] != '\n'))) { line++; column = 1; }
+            else column++;
+        }
         while (i < source.Length)
         {
             if (char.IsWhiteSpace(source[i])) { Advance(); continue; }
             if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '/')
-            { while (i < source.Length && source[i] != '\n') Advance(); continue; }
+            {
+                var isDoc = i + 2 < source.Length && source[i + 2] == '/';
+                var commentStart = i; var commentLine = line; var commentColumn = column;
+                var codeBefore = tokens.Count > 0 && tokens[^1].Span.Line == line;
+                while (i < source.Length && source[i] is not ('\n' or '\r')) Advance();
+                if (isDoc)
+                {
+                    tokens.Add(new(source[commentStart..i], new(commentStart, i - commentStart, commentLine, commentColumn))
+                    {
+                        IsDocumentation = true, HasInterveningComment = hasInterveningComment,
+                        HasCodeBeforeOnLine = codeBefore
+                    });
+                    hasInterveningComment = false;
+                    pendingDocumentation = true;
+                }
+                else hasInterveningComment |= pendingDocumentation;
+                continue;
+            }
+            if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '*')
+            {
+                var commentStart = i; var commentLine = line; var commentColumn = column;
+                Advance(); Advance();
+                while (i < source.Length && !(source[i] == '*' && i + 1 < source.Length && source[i + 1] == '/'))
+                {
+                    if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '*')
+                        throw new SourceError(new("DS1003", path, new(i, 2, line, column), "Nested block comments are not supported."));
+                    Advance();
+                }
+                if (i == source.Length)
+                    throw new SourceError(new("DS1003", path, new(commentStart, 2, commentLine, commentColumn), "Unterminated block comment."));
+                Advance(); Advance(); hasInterveningComment |= pendingDocumentation; continue;
+            }
             int start = i, startLine = line, startColumn = column;
             char c = source[i];
             if (c is '\"' or '\'')
@@ -130,9 +177,11 @@ public static class Lexer
             else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||")) { Advance(); Advance(); }
             else if ("(),:{}=+-*/%!<>".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
-            tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)));
+            tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)) { HasInterveningComment = hasInterveningComment });
+            hasInterveningComment = false;
+            pendingDocumentation = false;
         }
-        tokens.Add(new("", new(i, 0, line, column)));
+        tokens.Add(new("", new(i, 0, line, column)) { HasInterveningComment = hasInterveningComment });
         return tokens;
     }
 }
@@ -142,7 +191,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private int position;
     private Token Current => tokens[position];
     private Token Take() => tokens[position++];
-    private SourceError Error(string message) => new(new("DS1002", path, Current.Span, message));
+    private SourceError Error(string message) => Current.IsDocumentation
+        ? new(new("DS1004", path, Current.Span, "Documentation must immediately precede a declaration."))
+        : new(new("DS1002", path, Current.Span, message));
     private Token Expect(string text)
     {
         if (Current.Text != text) throw Error($"Expected '{text}', found '{Current.Text}'. Only supported expressions and local let bindings are accepted.");
@@ -160,12 +211,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private ExpressionSyntax Expression(int? line = null, int minimumPrecedence = 0)
     {
         ExpressionSyntax left;
+        if (Current.IsDocumentation) throw Error("Expected an expression.");
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
         if (Current.Text == "if")
         {
             var keyword = Take();
-            var condition = Expression();
+            var condition = Expression(Current.Span.Line);
             var thenBlock = Block();
             var hasElse = Current.Text == "else";
             var missing = Current;
@@ -176,13 +228,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         else if (Current.Text is "-" or "!")
         {
             var op = Take();
-            left = new UnarySyntax(op, Expression(line, 7));
+            left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 7));
         }
         else if (Current.Text == "(")
         {
             var open = Take();
             if (Current.Text == ")") { var close = Take(); left = new UnitSyntax(close); }
-            else { var inner = Expression(line); Expect(")"); left = new GroupSyntax(open, inner); }
+            else { var inner = Expression(); Expect(")"); left = new GroupSyntax(open, inner); }
         }
         else
         {
@@ -191,20 +243,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 ((char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))))
                 throw new SourceError(new("DS2002", path, Current.Span, "Expected a supported literal, local or parenthesized expression."));
             var name = Take();
-            if (name.Text[0] is not ('"' or '\'') && name.Text is not ("true" or "false") && Current.Text == "(" && (line is null || Current.Span.Line == line))
+            if (name.Text[0] is not ('"' or '\'') && name.Text is not ("true" or "false") && Current.Text == "(" && (line is null || Current.Span.Line == name.Span.Line))
             {
                 var open = Take();
                 var args = new List<ExpressionSyntax>();
-                var argumentLine = line;
                 if (Current.Text != ")")
                 {
                     do
                     {
-                        var argument = Expression(argumentLine);
-                        args.Add(argument);
+                        args.Add(Expression());
                         if (Current.Text != ",") break;
-                        if (argumentLine is not null && HasIf(argument) && Current.Span.Line == tokens[position - 1].Span.Line)
-                            argumentLine = Current.Span.Line;
                         Take();
                     } while (true);
                 }
@@ -213,14 +261,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             }
             else left = new ValueSyntax(name);
         }
-        while (line is null || Current.Span.Line == line ||
-            (HasIf(left) && Current.Span.Line == tokens[position - 1].Span.Line))
+        while (line is null || Current.Span.Line == tokens[position - 1].Span.Line)
         {
             var precedence = Current.Text switch { "||" => 1, "&&" => 2, "==" or "!=" => 3,
                 "<" or "<=" or ">" or ">=" => 4, "+" or "-" => 5, "*" or "/" or "%" => 6, _ => 0 };
             if (precedence == 0 || precedence < minimumPrecedence) break;
             var op = Take();
-            var rightLine = line is not null && HasIf(left) ? op.Span.Line : line;
+            var rightLine = line is not null ? Current.Span.Line : line;
             var right = Expression(rightLine, precedence + 1);
             static bool Comparison(ExpressionSyntax expr) => expr is BinarySyntax binary &&
                 binary.Operator.Text is "==" or "!=" or "<" or "<=" or ">" or ">=";
@@ -230,15 +277,28 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         return left;
     }
-    private static bool HasIf(ExpressionSyntax expression) => expression switch
+    private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax => true,
-        GroupSyntax group => HasIf(group.Inner),
-        UnarySyntax unary => HasIf(unary.Operand),
-        BinarySyntax binary => HasIf(binary.Left) || HasIf(binary.Right),
-        CallSyntax call => call.Arguments.Any(HasIf),
+        IfSyntax or GroupSyntax or CallSyntax or BinarySyntax => true,
+        UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
+    private IReadOnlyList<Token> Documentation(string declaration)
+    {
+        if (!Current.IsDocumentation) return Array.Empty<Token>();
+        var comments = new List<Token>();
+        while (Current.IsDocumentation)
+        {
+            var current = Current;
+            if (current.HasCodeBeforeOnLine || (comments.Count > 0 &&
+                (current.HasInterveningComment || current.Span.Line != comments[^1].Span.Line + 1)))
+                throw new SourceError(new("DS1004", path, comments.Count > 0 ? comments[^1].Span : current.Span, "Documentation must be a contiguous group on separate lines."));
+            comments.Add(Take());
+        }
+        if (Current.HasInterveningComment || Current.Span.Line != comments[^1].Span.Line + 1 || Current.Text != declaration)
+            throw new SourceError(new("DS1004", path, comments[^1].Span, "Documentation must immediately precede a declaration."));
+        return comments;
+    }
     private BlockSyntax Block()
     {
         Expect("{");
@@ -251,9 +311,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             {
                 var keyword = Take(); var local = Identifier(); Token? annotation = null;
                 if (Current.Text == ":") { Take(); if (Current.Text == "") throw Error("Expected a local type annotation."); annotation = Take(); }
-                Expect("="); var first = Current; var value = Expression(keyword.Span.Line);
+                var equals = Expect("=");
+                if (equals.Span.Line != keyword.Span.Line)
+                    throw new SourceError(new("DS1002", path, equals.Span, "A binding header must be on one line."));
+                var first = Current; var value = Expression(first.Span.Line);
                 var end = tokens[position - 1];
-                if (end.Span.Line != keyword.Span.Line && !HasIf(value)) throw new SourceError(new("DS1002", path, end.Span, "Write each let binding on one line."));
+                if (end.Span.Line != keyword.Span.Line && first.Span.Line == keyword.Span.Line && !AllowsContinuation(value)) throw new SourceError(new("DS1002", path, end.Span, "Write each let binding on one line."));
                 if (Current.Span.Line == end.Span.Line) throw Error("A let binding must be followed by a newline and a final expression or another binding.");
                 var binding = new LetBindingSyntax(local, annotation, first) { Expression = value };
                 bindings.Add(binding); statements.Add(new LetStatementSyntax(binding)); continue;
@@ -267,7 +330,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 if (Current.Text != "}" && Current.Span.Line == end.Span.Line) throw Error("Expected a newline after return.");
                 statements.Add(new ReturnStatementSyntax(keyword, value)); continue;
             }
-            var expression = Expression();
+            var expression = Expression(Current.Span.Line);
             if (Current.Text == "=") throw new SourceError(new("DS2005", path, expression.Token.Span, "Local bindings cannot be reassigned."));
             if (Current.Text == "}") { result = expression; break; }
             var last = tokens[position - 1];
@@ -280,10 +343,12 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     public ModuleSyntax Parse()
     {
+        var moduleDocs = Documentation("module");
         Expect("module"); var name = Identifier();
         var functions = new List<FunctionSyntax>();
         while (Current.Text != "")
         {
+            var functionDocs = Documentation("fn");
             Expect("fn"); var function = Identifier(); Expect("(");
             var parameters = new List<ParameterSyntax>();
             if (Current.Text != ")")
@@ -305,10 +370,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "}" && type.Text == "int" && body.Result is UnitSyntax missing &&
                 body.Statements.All(statement => statement is LetStatementSyntax))
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
-            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings });
+            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = functionDocs, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings });
         }
         if (functions.Count == 0) throw Error("Expected at least one function.");
-        return new(name, functions);
+        return new(name, functions) { DocumentationComments = moduleDocs };
     }
 }
 

@@ -1,16 +1,16 @@
 # DEC-02 — Advanced grammar and symbol resolution
 
-**Status: proposed; maintainer adoption required.**
+**Status: adopted as proposed on 12 November 2026 by the project maintainer.**
 **Issue:** [#12](https://github.com/gajo357/dsharplang/issues/12)
 **Baseline inspected:** main `7d487df` (compiler through #24)
 **Scope:** grammar, lexical boundaries and static name resolution only.
 
-This document proposes one bounded contract for review. It does not itself adopt
-that contract, change the language baseline, authorize implementation or claim
-that its fixtures currently compile. Merging a proposal is not adoption: a
-maintainer must explicitly approve the contract (or its identified amendments)
-before dependent implementation begins. Resolve differences before dispatch;
-record accepted examples, allowed paths and verification in each dependent issue.
+The project maintainer explicitly adopted this bounded contract as proposed on
+12 November 2026. References to “proposed” in the historical sections below
+refer to those adopted choices; their fixtures do not claim current compiler
+implementation. Implementation remains incremental and scoped to individual
+issues. Resolve any inconsistencies before dispatch and record accepted examples,
+allowed paths and verification in each dependent issue.
 
 ## Sources and current boundary
 
@@ -21,11 +21,11 @@ record accepted examples, allowed paths and verification in each dependent issue
 - [P02 sequence](DSharp_Implementation_Sequence.md) places this decision before
   [comments #55](https://github.com/gajo357/dsharplang/issues/55) and
   [generics #30](https://github.com/gajo357/dsharplang/issues/30).
-- Current main implements int/bool/string/char/Unit functions, local bindings,
+- At adoption, main implemented int/bool/string/char/Unit functions, local bindings,
   same-module calls, arithmetic, comparisons, conditionals and explicit return.
-  It accepts whitespace and `//` comments. It does **not** implement block/doc
-  comments, imports, generics, lambdas, function types or extensions. Its current
-  binding-line handling is narrower than the newline proposal below.
+  It accepted whitespace and `//` comments, but did not implement block/doc
+  comments, imports, generics, lambdas, function types or extensions. Its
+  binding-line handling was narrower than the adopted newline rules below.
 
 Settled constraints retained here: public-only declarations; braces delimit
 blocks; no required or accepted semicolon; immutable bindings with no general
@@ -268,7 +268,7 @@ Inside a string/char, comment markers are literal text. A contiguous group of
 `///` lines immediately preceding a declaration attaches to that declaration;
 an ordinary comment or blank line breaks attachment. An unattached documentation
 comment is diagnosed rather than silently attached to a later declaration.
-These attachment details are a proposal for #55 review.
+These adopted attachment details are implemented incrementally by #55.
 
 | Fixture | Proposed outcome |
 | --- | --- |
@@ -288,10 +288,10 @@ These attachment details are a proposal for #55 review.
 
 ## Review and adoption gates
 
-Before implementing any dependent issue, a maintainer must explicitly adopt the
-reviewed decisions, particularly the generic-call ambiguity, import lookup and
-extension-conflict rules, newline continuation and documentation attachment.
-If a choice changes, update the decision and its fixtures before dispatch; do not
+The maintainer explicitly adopted the reviewed decisions, including generic-call
+ambiguity, import lookup and extension-conflict rules, newline continuation and
+documentation attachment. If a choice changes, update the decision and its
+fixtures before dispatch; do not
 silently choose in an implementation PR. Review the exact slice in each issue:
 [#55](https://github.com/gajo357/dsharplang/issues/55) comments,
 [#30](https://github.com/gajo357/dsharplang/issues/30) generics,

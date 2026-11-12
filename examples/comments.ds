@@ -1,0 +1,16 @@
+/// Demonstrates comments without changing the program's result.
+module Demo
+
+/* A block comment may span
+   multiple lines. */
+/// Returns 42 using a continued expression.
+/// Documentation attaches to this function.
+fn answer(): int {
+    let result = 20 + // Continue after the operator.
+        22
+    result
+}
+
+fn commentText(): string {
+    "/* This is text, not a comment. */"
+}
