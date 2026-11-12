@@ -69,20 +69,33 @@ internal static class MatchCoverage
                 return Covers(tailTypes, matching);
             }
 
-            if (definitions.TryGetValue(types[0], out var union))
+            if (GenericTypes.TryParse(types[0], out var unionType) &&
+                definitions.TryGetValue(unionType.Name, out var union) &&
+                union.TypeParameters.Count == unionType.Arguments.Count)
             {
+                var substitutions = new Dictionary<string, string>(StringComparer.Ordinal);
+                for (var index = 0; index < union.TypeParameters.Count; index++)
+                    substitutions.Add(union.TypeParameters[index], unionType.Arguments[index].ToString());
                 foreach (var unionCase in union.Cases)
                 {
-                    var caseTypes = unionCase.PayloadTypes.Concat(tailTypes).ToArray();
+                    var payloadTypes = new List<string>();
+                    foreach (var payload in unionCase.PayloadTypes)
+                    {
+                        // An invalid substitution is not evidence of coverage;
+                        // the binder diagnoses it at the source type location.
+                        if (!GenericTypes.TrySubstitute(payload, substitutions, out var substituted)) return false;
+                        payloadTypes.Add(substituted);
+                    }
+                    var caseTypes = payloadTypes.Concat(tailTypes).ToArray();
                     var matching = new List<BoundPattern[]>();
                     foreach (var row in candidates)
                     {
                         if (Any(row[0], types[0]))
                         {
-                            var wildcards = unionCase.PayloadTypes.Select(_ => (BoundPattern)new BoundWildcardPattern());
+                            var wildcards = payloadTypes.Select(_ => (BoundPattern)new BoundWildcardPattern());
                             matching.Add(wildcards.Concat(row.Skip(1)).ToArray());
                         }
-                        else if (row[0] is BoundCasePattern pattern && pattern.Union == union.Name && pattern.Case == unionCase.Name)
+                        else if (row[0] is BoundCasePattern pattern && pattern.Union == types[0] && pattern.Case == unionCase.Name)
                             matching.Add(pattern.Arguments.Concat(row.Skip(1)).ToArray());
                     }
                     if (!Covers(caseTypes, matching)) return false;

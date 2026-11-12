@@ -1,0 +1,20 @@
+module Demo
+
+type Box<T> {
+    value: T
+}
+
+type Outcome<T> {
+    | Found(T)
+    | Missing
+}
+
+fn identity<T>(value: T): T { value }
+
+fn answer(): int {
+    let result: Outcome<Box<int>> = Outcome.Found(Box { value = identity(42) })
+    match result {
+        Outcome.Found(box) => box.value
+        Outcome.Missing => 0
+    }
+}
