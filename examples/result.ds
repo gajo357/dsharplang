@@ -1,0 +1,19 @@
+module Demo
+
+type Invoice { total: int }
+type StoreError { | Unavailable }
+
+fn lookup(found: bool): Result<Invoice?, StoreError> {
+    if found { Success(Invoice { total = 42 }) }
+    else { Success(null) }
+}
+
+fn amount(found: bool): int {
+    match lookup(found) {
+        Success(invoice) => invoice.total
+        Success(null) => 0
+        Error(_) => 0
+    }
+}
+
+fn answer(): int { amount(true) }
