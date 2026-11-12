@@ -1,0 +1,20 @@
+module Demo
+
+type Fault { | Missing }
+
+fn lookup(found: bool): Result<int?, Fault> {
+    if found { Success(42) } else { Error(Fault.Missing) }
+}
+
+fn load(found: bool): Result<int?, Fault> {
+    let value = lookup(found)?
+    Success(value)
+}
+
+fn answer(): int {
+    match load(true) {
+        Success(value) => value
+        Success(null) => 0
+        Error(_) => 0
+    }
+}

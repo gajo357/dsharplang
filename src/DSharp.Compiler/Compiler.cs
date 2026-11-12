@@ -59,6 +59,7 @@ public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public sealed record CoalesceSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
+public sealed record PropagateSyntax(ExpressionSyntax Operand, Token Operator) : ExpressionSyntax(Operator);
 public abstract record PatternSyntax(Token Token);
 public sealed record WildcardPatternSyntax(Token Wildcard) : PatternSyntax(Wildcard);
 public sealed record LiteralPatternSyntax(Token Literal, Token? Minus = null) : PatternSyntax(Minus ?? Literal);
@@ -76,6 +77,7 @@ public sealed record BoundReturnStatement(BoundExpression Value) : BoundStatemen
 public sealed record BoundExpressionStatement(BoundExpression Expression) : BoundStatement;
 public sealed record BoundUnit : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
+public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
 // Keep this conversion explicit rather than relying on C#'s generic T? rules.
 public sealed record BoundNullableLift(BoundExpression Expression, string Type) : BoundExpression;
@@ -125,7 +127,10 @@ public sealed record BoundLiteralPattern(BoundExpression Value, string Type) : B
 public sealed record BoundCasePattern(string Union, string Case, IReadOnlyList<BoundPattern> Arguments) : BoundPattern;
 public sealed record BoundMatchArm(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, bool GuardNever);
 public sealed record BoundMatch(BoundExpression Scrutinee, string ScrutineeType,
-    IReadOnlyList<BoundMatchArm> Arms, string Type) : BoundExpression;
+    IReadOnlyList<BoundMatchArm> Arms, string Type) : BoundExpression
+{
+    public bool HasCompletingArm { get; init; } = true;
+}
 public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
 public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression
 {
@@ -462,7 +467,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             else if (tokens[index].Text == "}" && --depth == 0)
             {
                 if (index + 1 == tokens.Count) return false;
-                return tokens[index + 1].Text is "." or "?." or "with" or "{" or
+                return tokens[index + 1].Text is "." or "?." or "?" or "with" or "{" or
                     "??" or "||" or "&&" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "+" or "-" or "*" or "/" or "%";
             }
         }
@@ -595,6 +600,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 continue;
             }
             if (line is not null && Current.Span.Line != tokens[position - 1].Span.Line) break;
+            if (Current.Text == "?")
+            {
+                left = new PropagateSyntax(left, Take());
+                continue;
+            }
             if (Current.Text == "with")
             {
                 var with = Take();
@@ -617,7 +627,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or CoalesceSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or CoalesceSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -1055,6 +1065,7 @@ public static class Binder
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             var boundLocals = new List<BoundLocal>();
+            bool hasReturn = false;
             bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected ||
                 (IsNullable(expected) && (actual == "<null>" || actual == expected[..^1]));
             string? CommonType(string left, string right)
@@ -1141,6 +1152,7 @@ public static class Binder
                 bool NeverExpression(ExpressionSyntax expression) => expression switch
                 {
                     GroupSyntax group => NeverExpression(group.Inner),
+                    PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
                         conditional.HasElse && NeverBlock(conditional.Then) && NeverBlock(conditional.Else),
                     MatchSyntax match => NeverExpression(match.Scrutinee) || match.Arms.All(arm =>
@@ -1389,6 +1401,7 @@ public static class Binder
                 BoundRecordUpdate update => update.Type,
                 BoundUnionConstruction construction => construction.Type,
                 BoundNull value => value.Type,
+                BoundPropagation propagation => propagation.Type,
                 BoundCoalesce coalesce => coalesce.Type,
                 BoundConditionalFieldAccess access => access.Type,
                 BoundFieldAccess access when records.TryGetValue(Nominal(access.ReceiverType), out var record) =>
@@ -1565,6 +1578,63 @@ public static class Binder
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
                     case NullSyntax: return (new BoundNull("<null>"), "<null>");
+                    case PropagateSyntax propagation:
+                        if (!GenericTypes.TryParse(function.ReturnType.Text, out var outerResult) ||
+                            outerResult.Name != resultSymbol || outerResult.IsNullable || outerResult.Arguments.Count != 2)
+                            Fail("DS2025", propagation.Operator, "Result propagation requires an enclosing function returning Result.");
+                        // Preserve the type of an already-bound Result. Supply a
+                        // context only if ordinary inference cannot determine it;
+                        // otherwise a surrounding nullable expectation could
+                        // change an existing Result<int,E> into Result<int?,E>.
+                        (BoundExpression Expression, string Type) propagated;
+                        try { propagated = BindExpression(propagation.Operand); }
+                        catch (SourceError error) when (error.Diagnostic.Code is "DS2023" or "DS2018")
+                        {
+                            var successHint = expectedResult is not null && SupportedType(expectedResult, activeTypeParameters)
+                                ? expectedResult : null;
+                            var sourceOperand = propagation.Operand;
+                            while (sourceOperand is GroupSyntax grouped) sourceOperand = grouped.Inner;
+                            IReadOnlyList<ExpressionSyntax>? successArguments = null;
+                            if (sourceOperand is CallSyntax call && call.Name.Text == "Success" &&
+                                !locals.ContainsKey(call.Name.Text) && !signatures.ContainsKey(call.Name.Text) &&
+                                !records.ContainsKey(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                                candidates.Count == 1 && candidates[0].Union.Name.Text == resultSymbol)
+                                successArguments = call.Arguments;
+                            else if (sourceOperand is MemberCallSyntax member && member.Receiver is ValueSyntax resultQualifier &&
+                                resultQualifier.Value.Text == "Result" && member.Member.Text == "Success" && !userResultType &&
+                                !locals.ContainsKey(resultQualifier.Value.Text) && !functionTypeScope.ContainsKey(resultQualifier.Value.Text))
+                                successArguments = member.Arguments;
+                            if (successHint is null && successArguments is { Count: 0 }) successHint = "Unit";
+                            if (successHint is null && successArguments is { Count: 1 })
+                            {
+                                var payload = BindExpression(successArguments[0]);
+                                if (SupportedType(payload.Type, activeTypeParameters)) successHint = payload.Type;
+                            }
+                            if (successHint is null) throw;
+                            var operandHint = resultSymbol + "<" + successHint + "," + outerResult!.Arguments[1] + ">";
+                            propagated = BindExpression(propagation.Operand, operandHint);
+                        }
+                        // An if/match with no completing branch has no operand
+                        // value to inspect. It is bottom-typed, so it may inhabit
+                        // the required Result context. Keep evaluating it, so its
+                        // enclosing-function return still occurs. A typed call
+                        // whose argument does not complete retains its declared
+                        // type and must still be checked below.
+                        if (propagated.Type == "<never>" &&
+                            (propagated.Expression is BoundIf { Then.CanComplete: false, Else.CanComplete: false } ||
+                             propagated.Expression is BoundMatch { HasCompletingArm: false }))
+                            return (propagated.Expression, "<never>");
+                        var propagatedType = propagated.Type == "<never>" ? KnownType(propagated.Expression) : propagated.Type;
+                        if (propagatedType is null || !GenericTypes.TryParse(propagatedType, out var operandShape) ||
+                            operandShape.Name != resultSymbol || operandShape.IsNullable || operandShape.Arguments.Count != 2)
+                            Fail("DS2025", propagation.Operator, "Postfix ? requires a non-nullable Result value.");
+                        if (operandShape!.Arguments[1].ToString() != outerResult!.Arguments[1].ToString())
+                            Fail("DS2025", propagation.Operator, "The propagated error type must match the enclosing Result error type.");
+                        hasReturn = true;
+                        resultUsed = true;
+                        var successType = operandShape.Arguments[0].ToString();
+                        return (new BoundPropagation(propagated.Expression, propagatedType!, successType, function.ReturnType.Text),
+                            propagated.Type == "<never>" ? "<never>" : successType);
                     case MatchSyntax match:
                         var scrutinee = BindExpression(match.Scrutinee);
                         var scrutineeType = scrutinee.Type == "<never>" ? KnownType(scrutinee.Expression) : scrutinee.Type;
@@ -1618,7 +1688,8 @@ public static class Binder
                         var arms = boundArms.Select(arm => new BoundMatchArm(arm.Pattern, arm.Guard,
                             arm.GuardNever ? arm.Value : emittedMatchType == "<null>" && arm.Type == "<never>"
                                 ? new BoundNever(arm.Value, "<null>") : Coerce(arm.Value, emittedMatchType, arm.Type), arm.GuardNever)).ToArray();
-                        return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType),
+                        return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType)
+                            { HasCompletingArm = boundArms.Any(arm => !arm.GuardNever && arm.Type != "<never>") },
                             scrutinee.Type == "<never>" || boundArms.All(arm => arm.GuardNever || arm.Type == "<never>") ? "<never>" : emittedMatchType);
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
@@ -1864,7 +1935,6 @@ public static class Binder
             BoundBlock CoerceBlock(BoundBlock block, string expected) => block.EvaluateResult
                 ? block with { Result = Coerce(block.Result, expected, block.ResultType), ResultType = expected }
                 : block;
-            bool hasReturn = false;
             (BoundBlock Block, string Type) BindBlock(BlockSyntax block, bool keepLocals = false, string? expectedResultType = null)
             {
                 var introduced = new List<string>(); var boundStatements = new List<BoundStatement>();
@@ -2247,6 +2317,7 @@ public static class CSharpEmitter
             var updateCount = 0;
             var matchCount = 0;
             var nullableOperationCount = 0;
+            var propagationCount = 0;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
                 var union = module.Unions.Single(candidate => candidate.Name == Nominal(pattern.Union));
@@ -2312,6 +2383,18 @@ public static class CSharpEmitter
                 {
                     case BoundUnit: return "default(" + unitType + ")";
                     case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
+                    case BoundPropagation propagation:
+                        var propagationId = (propagationCount++).ToString(CultureInfo.InvariantCulture);
+                        var propagationHelper = "__dsharp_propagate_" + propagationId;
+                        var propagationValue = "__dsharp_propagate_value_" + propagationId;
+                        output.Append("            ").Append(CType(propagation.Type)).Append(" ").Append(propagationHelper).Append("()\n            {\n");
+                        var propagationOperand = EmitExpression(propagation.Operand);
+                        output.Append("            ").Append(CType(propagation.OperandType)).Append(" ").Append(propagationValue).Append(" = ").Append(propagationOperand).Append(";\n")
+                            .Append("            if (").Append(propagationValue).Append(".__dsharp_tag == 1)\n")
+                            .Append("                _ = ").Append(raiseMethod).Append("<").Append(CType(propagation.ReturnType)).Append(">(")
+                            .Append(CType(propagation.ReturnType)).Append(".__dsharp_case_1(").Append(propagationValue).Append(".__dsharp_case_1_item_0));\n")
+                            .Append("            return ").Append(propagationValue).Append(".__dsharp_case_0_item_0;\n            }\n");
+                        return propagationHelper + "()";
                     case BoundNullableLift lift: return "(" + CType(lift.Type) + ")(object)(" + EmitExpression(lift.Expression) + ")";
                     case BoundInt literal:
                         // C# constant overflow/division errors must instead be D#

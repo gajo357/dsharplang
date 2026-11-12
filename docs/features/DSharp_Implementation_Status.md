@@ -19,6 +19,7 @@ This status describes tested implementation, not the full syntax draft.
 | Generic data and functions (partial) | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record fields and union payloads preserve null for value and reference types |
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
+| Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -133,8 +134,7 @@ and [implementation plan](implementation/issue-28-plan.md).
 [Issue #29](https://github.com/gajo357/dsharplang/issues/29) adds lazy,
 right-associative `??` and conditional record-field access via `?.`. A conditional
 field read returns a nullable value, flattening an already-nullable field; chained
-reads preserve absence. Conditional method calls and postfix Result propagation
-remain unsupported. See [the example](../../examples/nullable-operators.ds) and
+reads preserve absence. Conditional method calls remain unsupported. See [the example](../../examples/nullable-operators.ds) and
 [implementation plan](implementation/issue-29-plan.md).
 [Issue #30](https://github.com/gajo357/dsharplang/issues/30) is partially implemented with generic
 records, unions and functions, including explicit type arguments and
@@ -163,9 +163,18 @@ in the [implementation plan](implementation/nullable-option-plan.md).
 Nullable success values match directly as `Success(value)` or `Success(null)`;
 both outcomes must be handled and a Result expression statement cannot be
 discarded. Standard names are implicitly available after current-module names,
-which retain precedence. Postfix Result propagation remains separate work.
+which retain precedence.
 See [the example](../../examples/result.ds) and
 [implementation plan](implementation/issue-31-plan.md).
+[Issue #32](https://github.com/gajo357/dsharplang/issues/32) adds postfix `?`
+for the standard Result. It evaluates the operand once, yields the Success
+payload, or returns the same Error payload from the nearest enclosing function.
+The enclosing function must return a non-nullable Result with the identical error
+type; there is no automatic error conversion. Nullable, generic, Unit and Option
+success payloads retain their types. Nullable values and user-defined types named
+`Result` are not implicitly unwrapped. Lambda and async forms remain unsupported.
+See [the example](../../examples/result-propagation.ds) and
+[implementation plan](implementation/issue-32-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
