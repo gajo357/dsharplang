@@ -1,0 +1,30 @@
+module Demo
+
+/// An immutable address value.
+type Address {
+    city: string
+}
+
+type Invoice {
+    total: int
+    address: Address
+}
+
+fn original(): Invoice {
+    Invoice {
+        total = 40
+        address = Address { city = "Berlin" }
+    }
+}
+
+fn revisedTotal(): int {
+    let invoice = original()
+    let revised = invoice with { total = 42 }
+    revised.total
+}
+
+fn originalIsUnchanged(): bool {
+    let invoice = original()
+    let revised = invoice with { total = 42 }
+    invoice.total == 40 && revised.address == invoice.address
+}

@@ -11,10 +11,11 @@ This status describes tested implementation, not the full syntax draft.
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
 | Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
+| Immutable records | Named construction, public fields, nested records, copy updates, structural equality and source diagnostics | Copies preserve the original; field expressions evaluate in source order |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
-| Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module/function declarations | Comments preserve source locations and do not change execution |
+| Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function and record declarations | Comments preserve source locations and do not change execution |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
 | Remaining language syntax | Unsupported, explicit diagnostics | Not implemented |
@@ -86,14 +87,24 @@ is Unit. Returns target the nearest function, including from nested conditionals
 reachable non-Unit paths still require a matching value. Unit never becomes an
 implicit `Success()`. See [the example](../../examples/unit-return.ds) and
 [implementation plan](implementation/issue-24-plan.md).
+[Issue #25](https://github.com/gajo357/dsharplang/issues/25) adds immutable
+record declarations, named construction and field access, including nested record
+and supported scalar fields. Copy updates preserve unspecified fields and leave
+the original unchanged. Equality compares fields structurally, including nested
+records and ordinal strings. Missing, duplicate, unknown or incompatible fields
+and attempted field reassignment produce source diagnostics. Record documentation
+attaches to type declarations. The generated CLR layout and its external equality
+API are implementation details; the tested equality contract is D# `==`/`!=`.
+See [the example](../../examples/records.ds) and
+[implementation plan](implementation/issue-25-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
 are diagnosed with source spans. Comments do not change execution; comment markers
 inside literals remain text. See [the example](../../examples/comments.ds) and
 [implementation plan](implementation/issue-55-plan.md). Newline support is
-incremental: declaration headers and features such as leading-dot member access
-are not yet fully checked against DEC-02.
+incremental: declaration-header handling is not yet fully checked against DEC-02;
+supported record field access accepts a leading dot.
 Additional primitives and runtime features remain unsupported.
 Instruction reconciliation in #8 does not add language behavior. Issue creation,
 approval labels and planning PRs are not implementation evidence; update the matrix
