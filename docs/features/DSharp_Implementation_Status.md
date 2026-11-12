@@ -12,10 +12,11 @@ This status describes tested implementation, not the full syntax draft.
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
 | Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
 | Immutable records | Named construction, public fields, nested records, copy updates, structural equality and source diagnostics | Copies preserve the original; field expressions evaluate in source order |
+| Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
-| Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function and record declarations | Comments preserve source locations and do not change execution |
+| Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function, record and union declarations | Comments preserve source locations and do not change execution |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
 | Remaining language syntax | Unsupported, explicit diagnostics | Not implemented |
@@ -97,6 +98,16 @@ attaches to type declarations. The generated CLR layout and its external equalit
 API are implementation details; the tested equality contract is D# `==`/`!=`.
 See [the example](../../examples/records.ds) and
 [implementation plan](implementation/issue-25-plan.md).
+[Issue #26](https://github.com/gajo357/dsharplang/issues/26) adds immutable
+union cases, positional scalar, Unit, record and union payloads, and distinct
+single-case wrapper types. Construction checks payload types and arity; equality
+compares the active case and its payloads structurally. Bare case names must be
+unambiguous even when an expected type is known; `Union.Case` qualifies a case.
+If a case and record constructor share a name, both are ambiguous unqualified;
+the current subset has no module-qualified record construction, so that record
+constructor needs a different name until module qualification is implemented.
+Pattern matching remains a separate issue. See [the example](../../examples/unions.ds)
+and [implementation plan](implementation/issue-26-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
