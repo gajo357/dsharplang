@@ -15,6 +15,7 @@ This status describes tested implementation, not the full syntax draft.
 | Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
 | Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
+| Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -123,9 +124,15 @@ See [the example](../../examples/match.ds) and
 values and direct `null`/present matching. A named pattern for `T?` matches only
 a present value and binds it as `T`; `_` also covers null. Coverage handles
 nested nullable union and record payloads. Direct nullable field access remains
-invalid, and comparing with `null` does not narrow. `?.`, `??`, nullable defaults
-and Result remain separate work. See [the example](../../examples/nullable.ds)
+invalid, and comparing with `null` does not narrow. Nullable defaults and Result
+remain separate work. See [the example](../../examples/nullable.ds)
 and [implementation plan](implementation/issue-28-plan.md).
+[Issue #29](https://github.com/gajo357/dsharplang/issues/29) adds lazy,
+right-associative `??` and conditional record-field access via `?.`. A conditional
+field read returns a nullable value, flattening an already-nullable field; chained
+reads preserve absence. Conditional method calls and postfix Result propagation
+remain unsupported. See [the example](../../examples/nullable-operators.ds) and
+[implementation plan](implementation/issue-29-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
