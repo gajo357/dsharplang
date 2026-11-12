@@ -1,0 +1,20 @@
+module Demo
+
+type Address {
+    city: string?
+}
+
+type Customer {
+    address: Address?
+}
+
+fn city(customer: Customer?): string {
+    customer?.address?.city ?? "Unknown"
+}
+
+fn answer(): string {
+    let customer: Customer? = Customer {
+        address = Address { city = "Berlin" }
+    }
+    city(customer)
+}

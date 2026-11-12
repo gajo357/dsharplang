@@ -40,6 +40,7 @@ public sealed record RecordDeclarationSyntax(Token Name, IReadOnlyList<RecordFie
 public sealed record RecordInitializerSyntax(Token Name, ExpressionSyntax Value);
 public sealed record RecordConstructionSyntax(Token Name, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(Name);
 public sealed record FieldAccessSyntax(ExpressionSyntax Receiver, Token Field) : ExpressionSyntax(Field);
+public sealed record ConditionalFieldAccessSyntax(ExpressionSyntax Receiver, Token Operator, Token Field) : ExpressionSyntax(Operator);
 public sealed record RecordUpdateSyntax(ExpressionSyntax Receiver, Token With, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(With);
 public sealed record UnionCaseSyntax(Token Name, IReadOnlyList<Token> PayloadTypes);
 public sealed record UnionDeclarationSyntax(Token Name, IReadOnlyList<UnionCaseSyntax> Cases)
@@ -49,6 +50,7 @@ public sealed record UnionDeclarationSyntax(Token Name, IReadOnlyList<UnionCaseS
 public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
+public sealed record CoalesceSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public abstract record PatternSyntax(Token Token);
 public sealed record WildcardPatternSyntax(Token Wildcard) : PatternSyntax(Wildcard);
 public sealed record LiteralPatternSyntax(Token Literal, Token? Minus = null) : PatternSyntax(Minus ?? Literal);
@@ -85,6 +87,8 @@ public sealed record BoundRecordDeclaration(string Name, IReadOnlyList<BoundReco
 public sealed record BoundRecordInitializer(string Name, BoundExpression Value);
 public sealed record BoundRecordConstruction(string Type, IReadOnlyList<BoundRecordInitializer> Fields) : BoundExpression;
 public sealed record BoundFieldAccess(BoundExpression Receiver, string ReceiverType, string Field) : BoundExpression;
+public sealed record BoundConditionalFieldAccess(BoundExpression Receiver, string ReceiverType, string Field, string Type) : BoundExpression;
+public sealed record BoundCoalesce(BoundExpression Left, BoundExpression Right, string ContainedType, string Type) : BoundExpression;
 public sealed record BoundRecordUpdate(BoundExpression Receiver, string Type, IReadOnlyList<BoundRecordInitializer> Fields) : BoundExpression;
 public sealed record BoundUnionCase(string Name, IReadOnlyList<string> PayloadTypes);
 public sealed record BoundUnionDeclaration(string Name, IReadOnlyList<BoundUnionCase> Cases);
@@ -288,8 +292,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             else if (tokens[index].Text == "}" && --depth == 0)
             {
                 if (index + 1 == tokens.Count) return false;
-                return tokens[index + 1].Text is "." or "with" or "{" or
-                    "||" or "&&" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "+" or "-" or "*" or "/" or "%";
+                return tokens[index + 1].Text is "." or "?." or "with" or "{" or
+                    "??" or "||" or "&&" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "+" or "-" or "*" or "/" or "%";
             }
         }
         return false;
@@ -382,7 +386,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (true)
         {
-            // DEC-02 permits a leading dot across a newline, even outside grouping.
+            // A leading member operator continues across a newline.
+            if (Current.Text == "?.")
+            {
+                var optionalOperator = Take();
+                var field = Identifier();
+                if (Current.Text == "(" && (line is null || Current.Span.Line == field.Span.Line))
+                    throw new SourceError(new("DS1002", path, optionalOperator.Span, "Conditional method calls are not supported."));
+                left = new ConditionalFieldAccessSyntax(left, optionalOperator, field);
+                continue;
+            }
             if (Current.Text == ".")
             {
                 Take();
@@ -413,23 +426,23 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 left = new RecordUpdateSyntax(left, with, RecordInitializers());
                 continue;
             }
-            var precedence = Current.Text switch { "||" => 1, "&&" => 2, "==" or "!=" => 3,
-                "<" or "<=" or ">" or ">=" => 4, "+" or "-" => 5, "*" or "/" or "%" => 6, _ => 0 };
-            if (precedence == 0 || precedence < minimumPrecedence) break;
+            var precedence = Current.Text switch { "??" => 0, "||" => 1, "&&" => 2, "==" or "!=" => 3,
+                "<" or "<=" or ">" or ">=" => 4, "+" or "-" => 5, "*" or "/" or "%" => 6, _ => -1 };
+            if (precedence < minimumPrecedence) break;
             var op = Take();
             var rightLine = line is not null ? Current.Span.Line : line;
-            var right = Expression(rightLine, precedence + 1, stopAtBlock);
+            var right = Expression(rightLine, op.Text == "??" ? precedence : precedence + 1, stopAtBlock);
             static bool Comparison(ExpressionSyntax expr) => expr is BinarySyntax binary &&
                 binary.Operator.Text is "==" or "!=" or "<" or "<=" or ">" or ">=";
             if (precedence is 3 or 4 && (Comparison(left) || Comparison(right)))
                 throw new SourceError(new("DS2013", path, op.Span, "Chained comparisons require explicit grouping."));
-            left = new BinarySyntax(left, op, right);
+            left = op.Text == "??" ? new CoalesceSyntax(left, op, right) : new BinarySyntax(left, op, right);
         }
         return left;
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or RecordConstructionSyntax or FieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or BinarySyntax or CoalesceSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -759,6 +772,8 @@ public static class Binder
                 BoundRecordUpdate update => update.Type,
                 BoundUnionConstruction construction => construction.Type,
                 BoundNull value => value.Type,
+                BoundCoalesce coalesce => coalesce.Type,
+                BoundConditionalFieldAccess access => access.Type,
                 BoundFieldAccess access when records.TryGetValue(access.ReceiverType, out var record) =>
                     record.Fields.FirstOrDefault(field => field.Name.Text == access.Field)?.Type.Text,
                 BoundCall call when signatures.TryGetValue(call.Name, out var target) => target.ReturnType.Text,
@@ -969,6 +984,34 @@ public static class Binder
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
                     case GroupSyntax group: return BindExpression(group.Inner);
+                    case CoalesceSyntax coalesce:
+                        var nullableLeft = BindExpression(coalesce.Left);
+                        var fallback = BindExpression(coalesce.Right);
+                        var leftType = nullableLeft.Type == "<never>" ? KnownType(nullableLeft.Expression) : nullableLeft.Type;
+                        if (nullableLeft.Type == "<never>" && (leftType is null || !IsNullable(leftType))) leftType = "<null>";
+                        if (leftType != "<null>" && (leftType is null || !IsNullable(leftType)))
+                            Fail("DS2022", coalesce.Left.Token, "The left operand of ?? must be nullable.");
+                        if (leftType == "<null>" && fallback.Type == "<null>" && nullableLeft.Type != "<never>")
+                            return (new BoundCoalesce(nullableLeft.Expression, fallback.Expression, "<null>", "<null>"), "<null>");
+                        string containedType;
+                        string resultType;
+                        if (leftType == "<null>")
+                        {
+                            var inferred = fallback.Type == "<never>" ? KnownType(fallback.Expression) : fallback.Type;
+                            if (inferred is null || inferred == "<null>" || inferred == "<never>" || !SupportedType(inferred)) inferred = "Unit";
+                            containedType = IsNullable(inferred) ? inferred[..^1] : inferred;
+                            resultType = IsNullable(inferred) || fallback.Type == "<null>" ? containedType + "?" : containedType;
+                            leftType = containedType + "?";
+                        }
+                        else
+                        {
+                            containedType = leftType![..^1];
+                            resultType = fallback.Type == "<null>" || fallback.Type == leftType ? leftType! : containedType;
+                        }
+                        Require(coalesce.Right, fallback.Type, resultType);
+                        return (new BoundCoalesce(Coerce(nullableLeft.Expression, leftType!, nullableLeft.Type),
+                            Coerce(fallback.Expression, resultType, fallback.Type), containedType, resultType),
+                            nullableLeft.Type == "<never>" || nullableLeft.Type == "<null>" && fallback.Type == "<never>" ? "<never>" : resultType);
                     case RecordConstructionSyntax construction:
                         if (locals.ContainsKey(construction.Name.Text)) Fail("DS2016", construction.Name, "A local value is not a record constructor.");
                         if (records.ContainsKey(construction.Name.Text) && cases.ContainsKey(construction.Name.Text))
@@ -976,6 +1019,17 @@ public static class Binder
                         if (!records.TryGetValue(construction.Name.Text, out var record)) Fail("DS2016", construction.Name, "Unknown record type.");
                         var constructed = BindRecordFields(record!, construction.Fields, construction.Name, true);
                         return (new BoundRecordConstruction(construction.Name.Text, constructed.Fields), constructed.Never ? "<never>" : construction.Name.Text);
+                    case ConditionalFieldAccessSyntax optionalAccess:
+                        var optionalReceiver = BindExpression(optionalAccess.Receiver);
+                        var optionalType = optionalReceiver.Type == "<never>" ? KnownType(optionalReceiver.Expression) : optionalReceiver.Type;
+                        var recordType = optionalType is not null && IsNullable(optionalType) ? optionalType[..^1] : optionalType;
+                        if (!records.TryGetValue(recordType ?? "", out var optionalRecord))
+                            Fail("DS2022", optionalAccess.Field, "Conditional field access requires a record value.");
+                        var optionalField = optionalRecord!.Fields.FirstOrDefault(field => field.Name.Text == optionalAccess.Field.Text);
+                        if (optionalField is null) Fail("DS2022", optionalAccess.Field, "Unknown record field.");
+                        var optionalResultType = IsNullable(optionalField!.Type.Text) ? optionalField.Type.Text : optionalField.Type.Text + "?";
+                        return (new BoundConditionalFieldAccess(Coerce(optionalReceiver.Expression, recordType! + "?", optionalReceiver.Type),
+                            recordType!, optionalAccess.Field.Text, optionalResultType), optionalReceiver.Type == "<never>" ? "<never>" : optionalResultType);
                     case FieldAccessSyntax access:
                         if (access.Receiver is ValueSyntax qualifier && !locals.ContainsKey(qualifier.Value.Text) &&
                             unions.TryGetValue(qualifier.Value.Text, out var qualifiedUnion))
@@ -1090,18 +1144,24 @@ public static class Binder
                 if (expected == "<null>") return expression;
                 if (actual == "<never>")
                 {
-                    if (expression is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundNever)
+                    if (expression is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundCoalesce { Type: "<null>" } or BoundNever)
                         expression = Coerce(expression, expected);
                     return new BoundNever(expression, expected);
                 }
                 if (expression is BoundNever never)
                 {
                     var inner = never.Expression;
-                    if (inner is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundNever)
+                    if (inner is BoundIf { Type: "<null>" } or BoundMatch { Type: "<null>" } or BoundCoalesce { Type: "<null>" } or BoundNever)
                         inner = Coerce(inner, expected);
                     return never with { Expression = inner, Type = expected };
                 }
                 if (expression is BoundNull) return new BoundNull(expected);
+                if (expression is BoundCoalesce { Type: "<null>" } pending)
+                {
+                    var contained = IsNullable(expected) ? expected[..^1] : expected;
+                    return pending with { Left = Coerce(pending.Left, contained + "?"), Right = Coerce(pending.Right, expected),
+                        ContainedType = contained, Type = expected };
+                }
                 if (expression is BoundIf conditional)
                     return conditional with { Type = expected, Then = CoerceBlock(conditional.Then, expected), Else = CoerceBlock(conditional.Else, expected) };
                 if (expression is BoundMatch match)
@@ -1396,6 +1456,7 @@ public static class CSharpEmitter
             var conditionalCount = 0;
             var updateCount = 0;
             var matchCount = 0;
+            var nullableOperationCount = 0;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
                 var union = module.Unions.Single(candidate => candidate.Name == pattern.Union);
@@ -1536,6 +1597,29 @@ public static class CSharpEmitter
                             .Append(boolean.Value ? "true" : "false").Append(";\n");
                         return boolName;
                     case BoundReference reference: return localNames[reference.Name];
+                    case BoundCoalesce coalesce:
+                        var coalesceId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
+                        var coalesceHelper = "__dsharp_nullable_" + coalesceId;
+                        var coalesceValue = "__dsharp_nullable_value_" + coalesceId;
+                        output.Append("            ").Append(CType(coalesce.Type)).Append(" ").Append(coalesceHelper).Append("()\n            {\n");
+                        var coalesceLeft = EmitExpression(coalesce.Left);
+                        output.Append("            ").Append(CType(coalesce.ContainedType + "?")).Append(" ").Append(coalesceValue).Append(" = ").Append(coalesceLeft).Append(";\n");
+                        var coalescePresent = IsValueType(coalesce.ContainedType) ? coalesceValue + ".HasValue" :
+                            "!global::System.Object.ReferenceEquals(" + coalesceValue + ", null)";
+                        output.Append("            if (").Append(coalescePresent).Append(") return ").Append(PresentValue(coalesce.ContainedType, coalesceValue)).Append(";\n");
+                        var coalesceFallback = EmitExpression(coalesce.Right);
+                        output.Append("            return ").Append(coalesceFallback).Append(";\n            }\n");
+                        return coalesceHelper + "()";
+                    case BoundConditionalFieldAccess optionalField:
+                        var optionalId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
+                        var optionalHelper = "__dsharp_nullable_" + optionalId;
+                        var optionalValue = "__dsharp_nullable_value_" + optionalId;
+                        output.Append("            ").Append(CType(optionalField.Type)).Append(" ").Append(optionalHelper).Append("()\n            {\n");
+                        var optionalReceiver = EmitExpression(optionalField.Receiver);
+                        output.Append("            ").Append(CType(optionalField.ReceiverType)).Append(" ").Append(optionalValue).Append(" = ").Append(optionalReceiver).Append(";\n")
+                            .Append("            if (global::System.Object.ReferenceEquals(").Append(optionalValue).Append(", null)) return default(").Append(CType(optionalField.Type)).Append(");\n")
+                            .Append("            return ").Append(optionalValue).Append(".@").Append(optionalField.Field).Append(";\n            }\n");
+                        return optionalHelper + "()";
                     case BoundRecordConstruction construction:
                         var definition = module.Records.Single(record => record.Name == construction.Type);
                         var fields = construction.Fields.Select(field =>
