@@ -17,6 +17,7 @@ This status describes tested implementation, not the full syntax draft.
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
 | Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
 | Generic data and functions (partial) | Type parameters, explicit calls, structural inference and nested record/union substitution; open `T?` unsupported | Generic functions and data execute with nominal types and structural data equality |
+| Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -145,6 +146,14 @@ have distinct lexical identities even when their source names overlap other
 types. Generic constraints, variance and type aliases remain unsupported. See
 [the example](../../examples/generics.ds) and
 [implementation plan](implementation/issue-30-plan.md).
+[Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
+`Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
+Nullable success values match directly as `Success(value)` or `Success(null)`;
+both outcomes must be handled and a Result expression statement cannot be
+discarded. Standard names are implicitly available after current-module names,
+which retain precedence. Postfix Result propagation remains separate work.
+See [the example](../../examples/result.ds) and
+[implementation plan](implementation/issue-31-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

@@ -855,6 +855,12 @@ public static class Binder
         // lexer cannot produce '$', so these symbols cannot capture a source
         // type, even when a type parameter shadows a nominal type or Unit.
         var nextTypeSymbol = 0;
+        var userTypeSymbolCount = syntax.Records.Sum(record => record.TypeParameters.Count) +
+            syntax.Unions.Sum(union => union.TypeParameters.Count) + syntax.Functions.Sum(function => function.TypeParameters.Count);
+        var resultSymbol = "$" + userTypeSymbolCount.ToString(CultureInfo.InvariantCulture);
+        var resultUsed = false;
+        var userResultType = syntax.Records.Any(record => record.Name.Text == "Result") ||
+            syntax.Unions.Any(union => union.Name.Text == "Result");
         var typeSymbolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionTypeScopes = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         Dictionary<string, string> TypeScope(IReadOnlyList<Token> parameters)
@@ -872,11 +878,13 @@ public static class Binder
         Token ScopedType(Token token, IReadOnlyDictionary<string, string> scope)
         {
             if (!GenericTypes.TryParse(token.Text, out var shape)) return token;
-            TypeShape Rebind(TypeShape value) => value with
+            TypeShape Rebind(TypeShape value)
             {
-                Name = scope.TryGetValue(value.Name, out var symbol) ? symbol : value.Name,
-                Arguments = value.Arguments.Select(Rebind).ToArray()
-            };
+                var name = value.Name;
+                if (scope.TryGetValue(name, out var symbol)) name = symbol;
+                else if (name == "Result" && !userResultType) { name = resultSymbol; resultUsed = true; }
+                return value with { Name = name, Arguments = value.Arguments.Select(Rebind).ToArray() };
+            }
             return token with { Text = Rebind(shape).ToString() };
         }
         Token ScopedParameter(Token token, IReadOnlyDictionary<string, string> scope) => token with { Text = scope[token.Text] };
@@ -912,13 +920,23 @@ public static class Binder
                 ReturnType = ScopedType(function.ReturnType, scope)
             };
         }).ToArray();
+        nextTypeSymbol++; // Reserve the intrinsic nominal identity after source symbols.
+        var syntheticSpan = new SourceSpan(0, 0, 1, 1);
+        var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
+        var resultScope = TypeScope(resultTypeTokens);
+        var standardResult = new UnionDeclarationSyntax(new Token(resultSymbol, syntheticSpan), new[]
+        {
+            new UnionCaseSyntax(new Token("Success", syntheticSpan), new[] { ScopedType(resultTypeTokens[0], resultScope) }),
+            new UnionCaseSyntax(new Token("Error", syntheticSpan), new[] { ScopedType(resultTypeTokens[1], resultScope) })
+        }) { TypeParameters = resultTypeTokens.Select(parameter => ScopedParameter(parameter, resultScope)).ToArray() };
+        scopedUnions = scopedUnions.Append(standardResult).ToArray();
         syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions };
         string DisplayType(string type, bool labelParameters = false)
         {
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -983,6 +1001,9 @@ public static class Binder
                 if (!caseNames.Add(unionCase.Name.Text)) Fail("DS2017", unionCase.Name, "Duplicate union case.");
                 foreach (var type in unionCase.PayloadTypes)
                     if (!SupportedType(type.Text, typeParameters)) Fail("DS2017", type, "Unsupported union payload type or unconstrained nullable type parameter.");
+                // Standard cases are a prelude; current-module declarations
+                // take precedence before those names are considered.
+                if (union.Name.Text == resultSymbol) continue;
                 if (!cases.TryGetValue(unionCase.Name.Text, out var candidates))
                     cases.Add(unionCase.Name.Text, candidates = new());
                 candidates.Add((union, unionCase));
@@ -1004,6 +1025,9 @@ public static class Binder
                 if (!SupportedType(parameter.Type.Text, typeParameters)) Fail("DS2011", parameter.Type, "Unsupported parameter type or unconstrained nullable type parameter.");
             }
         }
+        foreach (var unionCase in standardResult.Cases)
+            if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
+                cases.Add(unionCase.Name.Text, new() { (standardResult, unionCase) });
         var functions = new List<BoundFunction>();
         foreach (var function in syntax.Functions)
         {
@@ -1040,6 +1064,7 @@ public static class Binder
                 }
             }
             string Nominal(string type) => GenericTypes.TryParse(type, out var shape) ? shape.Name : type;
+            string UnionQualifier(string name) => name == "Result" && !userResultType ? resultSymbol : name;
             string GenericPattern(string name, IReadOnlyList<Token> parameters) => parameters.Count == 0 ? name :
                 name + "<" + string.Join(",", parameters.Select(parameter => parameter.Text)) + ">";
             string Substitute(string type, IReadOnlyDictionary<string, string> substitutions, Token location)
@@ -1158,7 +1183,7 @@ public static class Binder
                         candidates.Count == 1 && !signatures.ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text))
                     { caseName = call.Name; payloads = call.Arguments; }
                     else if (expression is MemberCallSyntax member && member.Receiver is ValueSyntax qualifier &&
-                        qualifier.Value.Text == union.Name.Text && !locals.ContainsKey(qualifier.Value.Text))
+                        UnionQualifier(qualifier.Value.Text) == union.Name.Text && !locals.ContainsKey(qualifier.Value.Text))
                     { caseName = member.Member; payloads = member.Arguments; }
                     if (caseName is null || payloads is null) return;
                     var unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == caseName.Text);
@@ -1211,7 +1236,7 @@ public static class Binder
                         candidates.Count == 1 && !signatures.ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text))
                     { caseName = call.Name; payloads = call.Arguments; }
                     else if (expression is MemberCallSyntax member && member.Receiver is ValueSyntax qualifier &&
-                        qualifier.Value.Text == union.Name.Text && !locals.ContainsKey(qualifier.Value.Text))
+                        UnionQualifier(qualifier.Value.Text) == union.Name.Text && !locals.ContainsKey(qualifier.Value.Text))
                     { caseName = member.Member; payloads = member.Arguments; }
                     if (caseName is null || payloads is null) return type;
                     var unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == caseName.Text);
@@ -1349,8 +1374,19 @@ public static class Binder
             }
             (BoundExpression Expression, string Type) BindCase(UnionDeclarationSyntax union,
                 UnionCaseSyntax unionCase, Token name, IReadOnlyList<ExpressionSyntax> arguments,
-                IReadOnlyList<Token>? explicitTypes = null, string? expectedResult = null)
+                IReadOnlyList<Token>? explicitTypes = null, string? expectedResult = null, bool called = false)
             {
+                if (union.Name.Text == resultSymbol) resultUsed = true;
+                if (called && union.Name.Text == resultSymbol && unionCase.Name.Text == "Success" && arguments.Count == 0)
+                {
+                    var unitExpected = explicitTypes is { Count: > 0 }
+                        ? explicitTypes.Count == 2 && explicitTypes[0].Text == "Unit"
+                        : expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedShape) &&
+                            expectedShape.Name == resultSymbol && expectedShape.Arguments.Count == 2 &&
+                            expectedShape.Arguments[0].ToString() == "Unit";
+                    if (!unitExpected) Fail("DS2018", name, "Success() requires a Unit success type.");
+                    arguments = new ExpressionSyntax[] { new UnitSyntax(name) };
+                }
                 if (unionCase.PayloadTypes.Count != arguments.Count)
                     Fail("DS2018", name, "Incorrect number of union case payloads.");
                 if (expectedResult is not null && IsNullable(expectedResult)) expectedResult = expectedResult[..^1];
@@ -1360,11 +1396,12 @@ public static class Binder
                 return (new BoundUnionConstruction(type, unionCase.Name.Text, resolved.Values), resolved.Never ? "<never>" : type);
             }
             (BoundExpression Expression, string Type) BindQualifiedCase(UnionDeclarationSyntax union,
-                Token name, IReadOnlyList<ExpressionSyntax> arguments, IReadOnlyList<Token>? explicitTypes = null, string? expectedResult = null)
+                Token name, IReadOnlyList<ExpressionSyntax> arguments, IReadOnlyList<Token>? explicitTypes = null,
+                string? expectedResult = null, bool called = false)
             {
                 var unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == name.Text);
                 if (unionCase is null) Fail("DS2018", name, "Unknown union case.");
-                return BindCase(union, unionCase!, name, arguments, explicitTypes, expectedResult);
+                return BindCase(union, unionCase!, name, arguments, explicitTypes, expectedResult, called);
             }
             BoundPattern BindPattern(PatternSyntax pattern, string expected, List<string> introduced)
             {
@@ -1395,7 +1432,8 @@ public static class Binder
                     case NamePatternSyntax name:
                         if (locals.ContainsKey(name.Name.Text))
                             Fail("DS2006", name.Name, "A pattern binding cannot shadow a visible local or parameter.");
-                        if (unions.ContainsKey(Nominal(expected)) && cases.ContainsKey(name.Name.Text))
+                        if (unions.ContainsKey(Nominal(expected)) && cases.TryGetValue(name.Name.Text, out var patternCases) &&
+                            (Nominal(expected) == resultSymbol || patternCases.Any(candidate => candidate.Union.Name.Text != resultSymbol)))
                         {
                             var selected = BareCase(name.Name);
                             return BindCasePattern(selected.Union, selected.Case, name.Name, Array.Empty<PatternSyntax>(), expected, introduced);
@@ -1412,7 +1450,7 @@ public static class Binder
                                 Fail("DS2019", qualifier, "A local value cannot qualify a union case pattern.");
                             if (functionTypeScope.ContainsKey(qualifier.Text))
                                 Fail("DS2019", qualifier, "An unconstrained type parameter cannot qualify a union case pattern.");
-                            if (!unions.TryGetValue(qualifier.Text, out var qualified))
+                            if (!unions.TryGetValue(UnionQualifier(qualifier.Text), out var qualified))
                                 Fail("DS2019", qualifier, "Unknown union type in pattern.");
                             union = qualified!;
                             unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == casePattern.Name.Text)!;
@@ -1433,12 +1471,19 @@ public static class Binder
             BoundPattern BindCasePattern(UnionDeclarationSyntax union, UnionCaseSyntax unionCase,
                 Token name, IReadOnlyList<PatternSyntax> arguments, string expected, List<string> introduced)
             {
+                if (union.Name.Text == resultSymbol) resultUsed = true;
                 var substitutions = SubstitutionsFor(expected, union.Name.Text, union.TypeParameters);
                 if (substitutions is null)
                 {
                     var expectedName = DisplayType(expected);
-                    if (expected != union.Name.Text && expectedName == union.Name.Text) expectedName = DisplayType(expected, true);
-                    Fail("DS2019", name, $"Case belongs to {union.Name.Text}, not {expectedName}.");
+                    var unionName = DisplayType(union.Name.Text);
+                    if (expected != union.Name.Text && expectedName == unionName)
+                    {
+                        if (union.Name.Text == resultSymbol) unionName = "standard Result";
+                        else if (Nominal(expected) == resultSymbol) expectedName = "standard Result";
+                        else expectedName = DisplayType(expected, true);
+                    }
+                    Fail("DS2019", name, $"Case belongs to {unionName}, not {expectedName}.");
                 }
                 if (unionCase.PayloadTypes.Count != arguments.Count) Fail("DS2019", name, "Incorrect number of case patterns.");
                 var argumentsBound = new List<BoundPattern>();
@@ -1584,10 +1629,10 @@ public static class Binder
                             recordType!, optionalAccess.Field.Text, optionalResultType), optionalReceiver.Type == "<never>" ? "<never>" : optionalResultType);
                     case FieldAccessSyntax access:
                         if (access.Receiver is ValueSyntax typeQualifier && !locals.ContainsKey(typeQualifier.Value.Text) &&
-                            functionTypeScope.ContainsKey(typeQualifier.Value.Text) && unions.ContainsKey(typeQualifier.Value.Text))
+                            functionTypeScope.ContainsKey(typeQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeQualifier.Value.Text)))
                             Fail("DS2018", typeQualifier.Value, "An unconstrained type parameter cannot qualify a union case.");
                         if (access.Receiver is ValueSyntax qualifier && !locals.ContainsKey(qualifier.Value.Text) &&
-                            unions.TryGetValue(qualifier.Value.Text, out var qualifiedUnion))
+                            unions.TryGetValue(UnionQualifier(qualifier.Value.Text), out var qualifiedUnion))
                             return BindQualifiedCase(qualifiedUnion, access.Field, Array.Empty<ExpressionSyntax>(), expectedResult: expectedResult);
                         var receiver = BindExpression(access.Receiver);
                         var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
@@ -1642,7 +1687,7 @@ public static class Binder
                         {
                             var selected = BareCase(call.Name);
                             return BindCase(selected.Union, selected.Case, call.Name, call.Arguments,
-                                call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult);
+                                call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         }
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
                         var resolvedCall = BindGenericArguments(target!.TypeParameters,
@@ -1656,12 +1701,12 @@ public static class Binder
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
                         if (member.Receiver is ValueSyntax typeMemberQualifier && !locals.ContainsKey(typeMemberQualifier.Value.Text) &&
-                            functionTypeScope.ContainsKey(typeMemberQualifier.Value.Text) && unions.ContainsKey(typeMemberQualifier.Value.Text))
+                            functionTypeScope.ContainsKey(typeMemberQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeMemberQualifier.Value.Text)))
                             Fail("DS2018", typeMemberQualifier.Value, "An unconstrained type parameter cannot qualify a union case.");
                         if (member.Receiver is ValueSyntax memberQualifier && !locals.ContainsKey(memberQualifier.Value.Text) &&
-                            unions.TryGetValue(memberQualifier.Value.Text, out var memberUnion))
+                            unions.TryGetValue(UnionQualifier(memberQualifier.Value.Text), out var memberUnion))
                             return BindQualifiedCase(memberUnion, member.Member, member.Arguments,
-                                member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult);
+                                member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         BindExpression(member.Receiver);
                         Fail("DS2018", member.Member, "Only qualified union cases are callable through a member.");
                         throw new InvalidOperationException("Unreachable after source error.");
@@ -1786,6 +1831,8 @@ public static class Binder
                                 hasReturn = true; reachable = false; break;
                             case ExpressionStatementSyntax exprStatement:
                                 var expr = BindExpression(exprStatement.Expression);
+                                if (GenericTypes.TryParse(expr.Type, out var discardedType) && discardedType.Name == resultSymbol)
+                                    Fail("DS2024", exprStatement.Expression.Token, "A Result value cannot be discarded.");
                                 Require(exprStatement.Expression, expr.Type, "Unit");
                                 boundStatements.Add(new BoundExpressionStatement(Coerce(expr.Expression, "Unit", expr.Type)));
                                 if (reachable && expr.Type == "<never>") reachable = false;
@@ -1824,7 +1871,7 @@ public static class Binder
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
-            Unions = syntax.Unions.Select(union => new BoundUnionDeclaration(union.Name.Text,
+            Unions = syntax.Unions.Where(union => union.Name.Text != resultSymbol || resultUsed).Select(union => new BoundUnionDeclaration(union.Name.Text,
                 union.Cases.Select(unionCase => new BoundUnionCase(unionCase.Name.Text,
                     unionCase.PayloadTypes.Select(type => type.Text).ToArray())).ToArray())
                 { TypeParameters = union.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray()
