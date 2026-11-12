@@ -65,7 +65,7 @@ public sealed class LetBindingTests
     [InlineData("let |@invalid = 42\n42", "DS1001", 1)]
     [InlineData("let value = 42 |let copy = value\ncopy", "DS1002", 3)]
     [InlineData("let value = 42 |value", "DS1002", 5)]
-    [InlineData("let value =\n|42\nvalue", "DS1002", 2)]
+    [InlineData("let value =\n|else\nvalue", "DS2002", 4)]
     [InlineData("let value = 42\n|}", "DS2002", 1)]
     [InlineData("let value = 42|;\nvalue", "DS1001", 1)]
     [InlineData("let value = 1 |^ 2\nvalue", "DS1001", 1)]

@@ -68,7 +68,7 @@ public sealed class ArithmeticTests
     [InlineData("1 |^ 2", "DS1001", 1)]
     [InlineData("-|2147483648", "DS2004", 10)]
     [InlineData("1 + |2147483648", "DS2004", 10)]
-    [InlineData("let value = 1 +\n|2\nvalue", "DS1002", 1)]
+    [InlineData("let value = 1\nvalue |2", "DS1002", 1)]
     [InlineData("let value = 1\nlet next = value + |later\nlet later = 2\nnext", "DS2007", 5)]
     public void MalformedAndInvalidOperandsHaveDSharpSpans(string markedBody, string code, int length)
     {
