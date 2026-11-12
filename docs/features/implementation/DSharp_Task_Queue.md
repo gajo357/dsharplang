@@ -2,7 +2,7 @@
 
 Source: [Implementation sequence](https://github.com/gajo357/dsharplang/blob/main/docs/features/implementation/DSharp_Implementation_Sequence.md).
 
-These 94 task briefs reuse existing GitHub issues. They are prepared prompts, not launched Codex tasks. Launch one foundational implementation task at a time. Check current main, existing tasks/PRs and merged prerequisites before each launch. Follow the source sequence for dependency gates and parent issue splits. The default next candidate is #8; no open PRs were found when preparing this queue. A task or unmerged implementation may still exist outside GitHub.
+These historical task briefs reuse existing GitHub issues; [#121](https://github.com/gajo357/dsharplang/issues/121) tracks explicit Option<T> separately from [#30](https://github.com/gajo357/dsharplang/issues/30), which remains open until generated nullable-generic behavior works through calls and stored data. They are prepared prompts, not launched Codex tasks. Launch one foundational implementation task at a time. Check current main, existing tasks/PRs and merged prerequisites before each launch. Follow the source sequence for dependency gates and parent issue splits. The default next candidate is #8; no open PRs were found when preparing this queue. A task or unmerged implementation may still exist outside GitHub.
 
 ## P00 — Align the repository with Codex web
 
@@ -553,6 +553,12 @@ If publishing the PR is unavailable, say so explicitly.
 
 Do not merge, deploy or start another issue.
 ```
+
+### #121 — Explicit Option<T>
+
+Issue: https://github.com/gajo357/dsharplang/issues/121
+
+Implement `None` and `Some(T)` as distinct tagged cases, with exhaustive matching and equality. Reject `Some(null)` for non-nullable `T`; preserve `Some(null)` for nullable `T` and preserve nested options. Do not implicitly convert between `Option<T>` and `T?`, or expose `None` as a default value. Verify calls and stored data; alias declarations and collection support are future work where not implemented. JSON serialization and HTTP binding are not decided.
 
 ### #31 — LANG-14: Implement Result and Success/Error constructors
 
