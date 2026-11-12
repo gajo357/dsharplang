@@ -97,7 +97,11 @@ public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
-public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList<string> ParameterTypes, string Type, string ReturnType, BoundBlock Body, bool HasReturn) : BoundExpression;
+public sealed record BoundCapture(string Name, string Type);
+public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList<string> ParameterTypes, string Type, string ReturnType, BoundBlock Body, bool HasReturn) : BoundExpression
+{
+    public IReadOnlyList<BoundCapture> Captures { get; init; } = Array.Empty<BoundCapture>();
+}
 public sealed record BoundInvoke(BoundExpression Receiver, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression
 {
@@ -1856,7 +1860,7 @@ public static class Binder
                         return (new BoundConditionalFieldAccess(Coerce(optionalReceiver.Expression, recordType! + "?", optionalReceiver.Type),
                             recordType!, optionalAccess.Field.Text, optionalResultType) { FieldType = optionalFieldType }, optionalReceiver.Type == "<never>" ? "<never>" : optionalResultType);
                     case FieldAccessSyntax access:
-                        if (access.Receiver is ValueSyntax capturedFieldQualifier && inaccessibleCaptures.Contains(capturedFieldQualifier.Value.Text))
+                        if (access.Receiver is ValueSyntax capturedFieldQualifier && !locals.ContainsKey(capturedFieldQualifier.Value.Text) && inaccessibleCaptures.Contains(capturedFieldQualifier.Value.Text))
                             Fail("DS2026", capturedFieldQualifier.Value, "Lambda capture is not supported.");
                         if (access.Receiver is ValueSyntax typeQualifier && !locals.ContainsKey(typeQualifier.Value.Text) &&
                             functionTypeScope.ContainsKey(typeQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeQualifier.Value.Text)))
@@ -1940,7 +1944,7 @@ public static class Binder
                             Location = call.Name
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
-                        if (member.Receiver is ValueSyntax capturedMemberQualifier && inaccessibleCaptures.Contains(capturedMemberQualifier.Value.Text))
+                        if (member.Receiver is ValueSyntax capturedMemberQualifier && !locals.ContainsKey(capturedMemberQualifier.Value.Text) && inaccessibleCaptures.Contains(capturedMemberQualifier.Value.Text))
                             Fail("DS2026", capturedMemberQualifier.Value, "Lambda capture is not supported.");
                         if (member.Receiver is ValueSyntax typeMemberQualifier && !locals.ContainsKey(typeMemberQualifier.Value.Text) &&
                             functionTypeScope.ContainsKey(typeMemberQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeMemberQualifier.Value.Text)))
@@ -2160,7 +2164,10 @@ public static class Binder
                     inaccessibleCaptures.UnionWith(savedLocals.Keys);
                     (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns)
                     {
-                        locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
+                        // The lambda sees its lexical ancestors while binding. Its
+                        // actual immutable captures are computed from the final
+                        // bound body after any contextual inference/rebinding.
+                        locals = new Dictionary<string, (int Value, string Type)>(savedLocals, StringComparer.Ordinal);
                         for (var i = 0; i < lambda.Parameters.Count; i++) locals.Add(lambda.Parameters[i].Name.Text, (0, parameterTypes[i]));
                         currentReturnType = resultType;
                         inferredReturns = returns;
@@ -2183,8 +2190,32 @@ public static class Binder
                     var boundBody = body.Block with { Result = Coerce(body.Block.Result, returnType!, body.Type) };
                     var shapes = parameterTypes.Append(returnType!).Select(type => { GenericTypes.TryParse(type, out var shape); return shape; }).ToArray();
                     var lambdaType = new TypeShape(TypeShape.FunctionName, shapes, false).ToString();
+                    // Include references made solely by nested lambdas: the
+                    // intermediate environment must carry them to the point at
+                    // which the nested closure is created. No-shadowing makes
+                    // name identity unambiguous within this lexical ancestry.
+                    var referenced = new HashSet<string>(StringComparer.Ordinal);
+                    void CollectReferences(object? node)
+                    {
+                        if (node is null || node is string) return;
+                        if (node is BoundReference reference) referenced.Add(reference.Name);
+                        if (node is System.Collections.IEnumerable sequence)
+                        {
+                            foreach (var item in sequence) CollectReferences(item);
+                            return;
+                        }
+                        var nodeType = node.GetType();
+                        if (!nodeType.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
+                        foreach (var property in nodeType.GetProperties())
+                            if (property.GetIndexParameters().Length == 0) CollectReferences(property.GetValue(node));
+                    }
+                    CollectReferences(boundBody);
+                    var captures = savedLocals.Where(entry => referenced.Contains(entry.Key))
+                        .Select(entry => new BoundCapture(entry.Key, entry.Value.Type)).ToArray();
+                    foreach (var capture in captures)
+                        if (!DataType(capture.Type)) Fail("DS2026", lambda.Start, "Only immutable data values can be captured.");
                     return (new BoundLambda(lambda.Parameters.Select(parameter => parameter.Name.Text).ToArray(), parameterTypes,
-                        lambdaType, returnType!, boundBody, hasReturn), lambdaType);
+                        lambdaType, returnType!, boundBody, hasReturn) { Captures = captures }, lambdaType);
                 }
                 finally
                 {
@@ -2246,6 +2277,9 @@ public static class Binder
                 void Visit(object? node)
                 {
                     if (node is null) return;
+                    if (node is BoundLambda closure)
+                        foreach (var capture in closure.Captures)
+                            if (GenericTypes.TryParse(capture.Type, out var captureType)) Need(captureType);
                     if (node is string text)
                     {
                         if (GenericTypes.TryParse(text, out var shape)) Scan(shape);
@@ -2349,6 +2383,8 @@ public static class CSharpEmitter
         var memberNames = new HashSet<string>(module.Functions.Select(f => f.Name), StringComparer.Ordinal) { signalType, raiseMethod };
         var equalityDispatcher = "__DSharp_StructuralEquals";
         while (!memberNames.Add(equalityDispatcher)) equalityDispatcher += "_";
+        var closureDefinitions = new List<string>();
+        var closureCount = 0;
         // CLR's unconstrained T? does not lift value-type instantiations. Add an
         // associated CLR type parameter for each nullable projection actually
         // needed by a declaration, propagating requirements through its uses.
@@ -2685,6 +2721,57 @@ public static class CSharpEmitter
                     case BoundLambda lambda:
                         var lambdaId = (lambdaCount++).ToString(CultureInfo.InvariantCulture);
                         var lambdaName = "__dsharp_lambda_" + lambdaId;
+                        if (lambda.Captures.Count > 0)
+                        {
+                            // Explicit environments avoid Roslyn's mutable
+                            // display-class fields. Construct at the expression
+                            // site so conditional and short-circuit behavior is
+                            // preserved and each evaluation owns its snapshot.
+                            var closureName = "__DSharp_Closure_" + (closureCount++).ToString(CultureInfo.InvariantCulture);
+                            while (!memberNames.Add(closureName)) closureName += "_";
+                            var genericArguments = TypeParameterList(function.TypeParameters);
+                            var captureValues = lambda.Captures.Select(capture => localNames[capture.Name]).ToArray();
+                            var outerOutput = output;
+                            output = new StringBuilder();
+                            output.Append("    private sealed class ").Append(closureName).Append(genericArguments).Append("\n    {\n");
+                            for (var i = 0; i < lambda.Captures.Count; i++)
+                                output.Append("        private readonly ").Append(CType(lambda.Captures[i].Type)).Append(" __capture_").Append(i.ToString(CultureInfo.InvariantCulture)).Append(";\n");
+                            output.Append("        public ").Append(closureName).Append("(");
+                            for (var i = 0; i < lambda.Captures.Count; i++)
+                            {
+                                if (i != 0) output.Append(", ");
+                                output.Append(CType(lambda.Captures[i].Type)).Append(" value").Append(i.ToString(CultureInfo.InvariantCulture));
+                            }
+                            output.Append(")\n        {\n");
+                            for (var i = 0; i < lambda.Captures.Count; i++)
+                                output.Append("            __capture_").Append(i.ToString(CultureInfo.InvariantCulture)).Append(" = value").Append(i.ToString(CultureInfo.InvariantCulture)).Append(";\n");
+                            output.Append("        }\n        public ").Append(CType(lambda.ReturnType)).Append(" Invoke(");
+                            for (var i = 0; i < lambda.Parameters.Count; i++)
+                            {
+                                if (i != 0) output.Append(", ");
+                                output.Append(CType(lambda.ParameterTypes[i])).Append(" __dsharp_lambda_param_").Append(lambdaId).Append("_").Append(i.ToString(CultureInfo.InvariantCulture));
+                            }
+                            output.Append(")\n        {\n");
+                            var capturedNames = localNames;
+                            var capturedReturnType = emitterReturnType;
+                            localNames = new Dictionary<string, string>(StringComparer.Ordinal);
+                            for (var i = 0; i < lambda.Captures.Count; i++)
+                                localNames.Add(lambda.Captures[i].Name, "this.__capture_" + i.ToString(CultureInfo.InvariantCulture));
+                            for (var i = 0; i < lambda.Parameters.Count; i++)
+                                localNames.Add(lambda.Parameters[i], "__dsharp_lambda_param_" + lambdaId + "_" + i.ToString(CultureInfo.InvariantCulture));
+                            emitterReturnType = lambda.ReturnType;
+                            if (lambda.HasReturn) output.Append("            try\n            {\n");
+                            EmitBlock(lambda.Body, lambda.ReturnType);
+                            if (lambda.HasReturn)
+                                output.Append("            }\n            catch (").Append(signalType).Append("<").Append(CType(lambda.ReturnType)).Append("> __dsharp_lambda_return_").Append(lambdaId).Append(")\n            {\n                return __dsharp_lambda_return_").Append(lambdaId).Append(".Value;\n            }\n");
+                            output.Append("        }\n    }\n");
+                            localNames = capturedNames;
+                            emitterReturnType = capturedReturnType;
+                            var closureDefinition = output.ToString();
+                            output = outerOutput;
+                            closureDefinitions.Add(closureDefinition);
+                            return "((" + CType(lambda.Type) + ")new " + closureName + genericArguments + "(" + string.Join(", ", captureValues) + ").Invoke)";
+                        }
                         output.Append("            static ").Append(CType(lambda.ReturnType)).Append(" ").Append(lambdaName).Append("(");
                         for (var i = 0; i < lambda.Parameters.Count; i++)
                         {
@@ -2960,6 +3047,7 @@ public static class CSharpEmitter
                 output.Append("        }\n        catch (").Append(signalType).Append("<").Append(CType(function.ReturnType)).Append("> __dsharp_return)\n        {\n            return __dsharp_return.Value;\n        }\n");
             output.Append("    }\n");
         }
+        foreach (var definition in closureDefinitions) output.Append(definition);
         output.Append("}\n");
         foreach (var entry in delegateNames.OrderBy(pair => pair.Key))
         {

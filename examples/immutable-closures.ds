@@ -1,0 +1,11 @@
+module Demo
+
+fn multiplier(factor: int): (int) -> int {
+    value => factor * value
+}
+
+fn answer(): int {
+    let triple = multiplier(3)
+    let double = multiplier(2)
+    if triple(14) == double(21) { triple(14) } else { 0 }
+}
