@@ -1,0 +1,10 @@
+module Demo
+
+fn clampNegative(value: int): int {
+    if value < 0 { return 0 }
+    value
+}
+
+fn completed(): Unit {
+    if true { () }
+}
