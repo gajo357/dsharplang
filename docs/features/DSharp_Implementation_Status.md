@@ -16,6 +16,7 @@ This status describes tested implementation, not the full syntax draft.
 | Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
 | Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
+| Generic data and functions (partial) | Type parameters, explicit calls, structural inference and nested record/union substitution; open `T?` unsupported | Generic functions and data execute with nominal types and structural data equality |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -133,6 +134,17 @@ field read returns a nullable value, flattening an already-nullable field; chain
 reads preserve absence. Conditional method calls and postfix Result propagation
 remain unsupported. See [the example](../../examples/nullable-operators.ds) and
 [implementation plan](implementation/issue-29-plan.md).
+[Issue #30](https://github.com/gajo357/dsharplang/issues/30) is partially implemented with generic
+records, unions and functions, including explicit type arguments and
+unambiguous inference through supported argument and result types. Generic call
+disambiguation follows DEC-02. Closed nullable type arguments such as
+`Box<int?>` are supported. An unconstrained open `T?` and operations that would
+synthesize it are diagnosed because this slice does not yet represent that
+combination safely for both value and reference types. Generic type parameters
+have distinct lexical identities even when their source names overlap other
+types. Generic constraints, variance and type aliases remain unsupported. See
+[the example](../../examples/generics.ds) and
+[implementation plan](implementation/issue-30-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
