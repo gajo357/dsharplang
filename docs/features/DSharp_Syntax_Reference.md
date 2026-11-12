@@ -180,7 +180,7 @@ let nickname: string? = null
 let age: int? = 40
 ```
 
-`T?` means a value of `T` or `null`. The notation applies equally to scalars and records. There are no optional wrapper types or present-value constructors in the language surface.
+`T?` means a value of `T` or `null`. The notation applies equally to scalars and records. It is distinct from the explicit `Option<T>` choice described below.
 
 ### 5.1 Construction
 
@@ -189,7 +189,9 @@ let first: string? = "Gavrilo"
 let second: string? = null
 ```
 
-A `T` may be assigned to `T?`; the reverse requires explicit handling. `null` cannot be assigned to a non-nullable type. A bare `let value = null` is rejected when no contained type can be inferred. Nested shorthand such as `string??` is excluded. The compiler chooses an appropriate runtime representation without exposing wrapper syntax.
+A `T` may be assigned to `T?`; the reverse requires explicit handling. `null` cannot be assigned to a non-nullable type. A bare `let value = null` is rejected when no contained type can be inferred. Literal repeated shorthand such as `string??` is excluded. Semantically, nullability is idempotent: making an already-nullable type nullable leaves it unchanged, including after generic substitution and eventual alias resolution.
+
+For unconstrained `T`, `T?` genuinely admits null when instantiated with a value type as well as a reference type: `T = int` or `int?` yields `int?`, and `T = string` or `string?` yields `string?`. Generated C# must preserve this behavior in generic calls, returns and stored data; directly emitting unconstrained C# `T?` is not sufficient by itself. Existing closed nullable arguments such as `Box<int?>` remain valid. This behavior is tracked in [#30](https://github.com/gajo357/dsharplang/issues/30); accepting the syntax alone does not complete it. Alias declarations and collections remain future work where not implemented, and must preserve the same normalization and values when introduced.
 
 ### 5.2 Value-or-null matching
 
@@ -240,7 +242,13 @@ type Customer {
 
 A field without a declared default must be supplied at construction, even if nullable. A default of `null` explicitly permits omission.
 
-Proposed JSON decoding: non-nullable required fields reject missing/null input; nullable fields accept missing/null as absence; present values must decode as `T`. PATCH contracts that distinguish an omitted property from an explicit null need a separate union, for example `Unchanged | Clear | Set(T)`.
+`Option<string?>` can express an update in which `None` leaves a name unchanged, `Some(null)` clears it and `Some("Alice")` replaces it. This is a value-level example; JSON serialization and HTTP binding rules are not decided and future integrations must preserve these distinctions explicitly.
+
+### 5.4.1 Explicit options
+
+`Option<T>` is a tagged union with cases `None` and `Some(T)`, tracked separately in [#121](https://github.com/gajo357/dsharplang/issues/121). `None` means no value was supplied. `Some(value)` means a value was supplied; `Some(null)` is valid only when `T` allows null. Construction, exhaustive matching and equality distinguish `None` from `Some(null)`. Access requires matching or an explicit operation; `None` must never silently become `default(T)`.
+
+Options are not nullable types and there is no implicit conversion that loses their distinctions. Nested options do not flatten: `None`, `Some(None)` and `Some(Some(42))` are different `Option<Option<int>>` values. When collections are implemented, elements must retain all of these distinctions.
 
 ### 5.5 Question-mark forms
 
@@ -1147,7 +1155,7 @@ Only workers are directly callable here. Queue submission uses the separate API 
 ### 21.2 Established choices in this revision
 
 - Public-only declarations, without visibility keywords.
-- Native `T?` with direct present-value/null matching and `Success(value)` construction.
+- Native `T?` with direct present-value/null matching and `Success(value)` construction; explicit `Option<T>` with distinct `None` and `Some(T)` cases.
 - Default bodies for individual interface methods, not default service selection.
 - Immutable data properties and method-local mutable collection builders with non-escape restrictions.
 - Callable workers separated from queued agents; queue acceptance does not expose handler completion.

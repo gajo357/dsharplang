@@ -80,9 +80,9 @@ internal static class GenericTypes
         return Valid(shape);
     }
 
-    // Substitute one lexical parameter scope. A nullable parameter cannot be
-    // instantiated with an already-nullable type: T? with T=int? would create
-    // the unsupported nested nullable spelling int??.
+    // Substitute one lexical parameter scope. Nullability is idempotent:
+    // substituting an already-nullable type for T in T? retains one nullable
+    // layer. This does not make repeated nullable suffixes valid source syntax.
     public static bool TrySubstitute(string text, IReadOnlyDictionary<string, string> substitutions, out string result)
     {
         result = "";
@@ -91,7 +91,7 @@ internal static class GenericTypes
         {
             if (value.Arguments.Count == 0 && substitutions.TryGetValue(value.Name, out var replacement))
             {
-                if (!TryParse(replacement, out var resolved) || (value.IsNullable && resolved.IsNullable)) return null;
+                if (!TryParse(replacement, out var resolved)) return null;
                 return resolved with { IsNullable = value.IsNullable || resolved.IsNullable };
             }
             var arguments = new List<TypeShape>();
@@ -128,18 +128,26 @@ internal static class GenericTypes
         {
             if (parameters.Contains(expected.Name) && expected.Arguments.Count == 0)
             {
-                if (expected.IsNullable && !received.IsNullable && !allowLift) return false;
-                var evidence = received;
-                if (expected.IsNullable && received.IsNullable) evidence = received with { IsNullable = false };
-                var name = evidence.ToString();
+                if (expected.IsNullable)
+                {
+                    // nullable(T) is idempotent, so a nullable argument alone
+                    // does not distinguish T=int from T=int?. Defer binding T
+                    // until another argument, an explicit type argument, or the
+                    // result context provides unambiguous evidence. The caller
+                    // revalidates all arguments after inference.
+                    if (!pending.TryGetValue(expected.Name, out var priorNullable))
+                        return allowLift || received.IsNullable;
+                    if (!TryParse(priorNullable, out var priorShape)) return false;
+                    var required = (priorShape with { IsNullable = true }).ToString();
+                    return required == received.ToString() ||
+                        (allowLift && !received.IsNullable && required == (received with { IsNullable = true }).ToString());
+                }
+                var name = received.ToString();
                 if (pending.TryGetValue(expected.Name, out var prior))
                 {
-                    // T? cannot be substituted with an already-nullable T.
-                    if (expected.IsNullable && prior.EndsWith("?", StringComparison.Ordinal)) return false;
                     if (prior == name) return true;
                     if (fixedParameters?.Contains(expected.Name) == true)
-                        return allowLift && !expected.IsNullable && prior == name + "?";
-                    if (expected.IsNullable) return false;
+                        return allowLift && prior == name + "?";
                     if (name == prior + "?") { pending[expected.Name] = name; return true; }
                     return allowLift && prior == name + "?";
                 }

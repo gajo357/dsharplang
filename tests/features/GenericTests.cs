@@ -386,8 +386,6 @@ public sealed class GenericTests
     [InlineData("fn equal<T>(a: T, b: T): bool { a == b }\nfn f(): int { 0 }")]
     [InlineData("fn isNull<T>(value: T): bool { value == null }\nfn f(): int { 0 }")]
     [InlineData("fn add<T>(a: T, b: T): T { a + b }\nfn f(): int { 0 }")]
-    [InlineData("fn lift<T>(value: T): T? { value }\nfn f(): int { 0 }")]
-    [InlineData("type Box<T> { value: T }\nfn isMissing<T>(box: Box<T>?): bool { let value = box?.value\n value == null }\nfn f(): int { 0 }")]
     [InlineData("fn choose<T>(a: T, b: T): T { b }\nfn f(value: int?): int { choose<int>(value, 42) }")]
     [InlineData("fn choose<T>(a: T, b: T): T { b }\nfn f(): int { choose<int>(null, 42) }")]
     [InlineData("fn choose<T>(a: T, b: T): T { b }\nfn f(): int { let value = choose(null, null)\n 42 }")]

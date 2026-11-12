@@ -16,7 +16,8 @@ This status describes tested implementation, not the full syntax draft.
 | Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
 | Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
-| Generic data and functions (partial) | Type parameters, explicit calls, structural inference and nested record/union substitution; open `T?` unsupported | Generic functions and data execute with nominal types and structural data equality |
+| Generic data and functions (partial) | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record fields and union payloads preserve null for value and reference types |
+| Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
@@ -139,13 +140,24 @@ remain unsupported. See [the example](../../examples/nullable-operators.ds) and
 records, unions and functions, including explicit type arguments and
 unambiguous inference through supported argument and result types. Generic call
 disambiguation follows DEC-02. Closed nullable type arguments such as
-`Box<int?>` are supported. An unconstrained open `T?` and operations that would
-synthesize it are diagnosed because this slice does not yet represent that
-combination safely for both value and reference types. Generic type parameters
-have distinct lexical identities even when their source names overlap other
-types. Generic constraints, variance and type aliases remain unsupported. See
+`Box<int?>` are supported. Nullable substitution is idempotent, including when
+an unconstrained `T?` is instantiated with an already-nullable type. Generated
+calls and data preserve null for value, reference and Unit arguments. The C#
+backend supplies an associated nullable CLR type argument for an unconstrained
+parameter when needed, propagating that requirement through generic calls and
+data. These extra arguments are an implementation detail and external C# callers
+must not assume the compiler enforces a relationship between arbitrary CLR type
+arguments. Generic type parameters have distinct lexical identities even when
+their source names overlap other types. Generic constraints, variance, type
+aliases and native collections remain unsupported; alias and collection tests
+remain pending. Issue #30 stays open for its complete acceptance criteria. See
 [the example](../../examples/generics.ds) and
 [implementation plan](implementation/issue-30-plan.md).
+[Issue #121](https://github.com/gajo357/dsharplang/issues/121) tracks standard
+`Option<T>`, a distinct tagged choice with `None` and `Some(T)`. `Some(null)`
+requires a nullable payload type; nested options retain each case. JSON and
+HTTP mappings remain undecided. The nullable and Option changes are documented
+in the [implementation plan](implementation/nullable-option-plan.md).
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;

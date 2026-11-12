@@ -73,7 +73,7 @@ qualified names, nested type arguments, parenthesized/tuple types, function
 types and one nullable suffix; semantic availability and nullable eligibility
 are checked separately. `Unit` is a named type, while `()` in an expression is
 the Unit value. Tuple types have at least two elements. A repeated nullable
-suffix such as `T??` is not a nested nullable type.
+suffix such as `T??` is not a nested nullable type and remains excluded. Semantic nullability is idempotent: substitution or eventual alias resolution that makes an already-nullable type nullable leaves it unchanged. Unconstrained `T?` admits null when `T` is a value type as well as a reference type; [#30](https://github.com/gajo357/dsharplang/issues/30) tracks implementing this through generated calls and stored data. Alias declaration syntax is future work.
 
 Function types associate to the right: `(A) -> (B) -> C` is
 `(A) -> ((B) -> C)`. Parenthesized multiple entries are separate arguments;
