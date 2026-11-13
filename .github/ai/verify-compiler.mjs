@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { compilerResults, files } from '../../scripts/validation.mjs';
+import { stagePreludeResource } from './prelude-resource.mjs';
 
 const trusted = fileURLToPath(new URL('../..', import.meta.url));
 const candidate = resolve(process.argv[2]);
@@ -37,6 +38,7 @@ try {
   for (const folder of ['src', 'tests']) for (const source of files(join(trusted, folder))) copy(source, join(stage, relative(trusted, source)));
   for (const source of files(join(stage, 'src')).filter(p => p.endsWith('.cs'))) unlinkSync(source);
   for (const folder of ['src', 'tests/features']) for (const source of files(join(candidate, folder)).filter(p => p.endsWith('.cs'))) copy(source, join(stage, relative(candidate, source)));
+  stagePreludeResource(candidate, stage);
   const features = files(join(stage, 'tests/features')).some(p => p.endsWith('.cs'));
   // Operator-only local override; workflows always use the reviewed image pin.
   const image = process.env.AI_COMPILER_IMAGE || readFileSync(join(trusted, '.github/ai/compiler-image.txt'), 'utf8').trim();
