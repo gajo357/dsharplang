@@ -6,8 +6,9 @@ This status describes tested implementation, not the full syntax draft.
 
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
 is a target addition tracked in #129–#136. Issue #135 implements the ordinary
-function partial-application slice below. Result helpers, callable HTTP
-preprocessing, Logger and the remaining #129 integrations remain future work.
+function partial-application slice below. Issue #136 adds synchronous Result
+helpers; their async overloads, callable HTTP preprocessing, Logger and the
+remaining #129 integrations remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
 | Feature | Parse/type-check | Generated execution |
@@ -25,6 +26,7 @@ The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 | Generic data and functions (partial) | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record fields and union payloads preserve null for value and reference types |
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
+| Synchronous Result composition | `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary generic functions | Applicable callbacks execute once; typed errors and nullable/Option payloads remain distinct |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
@@ -216,6 +218,12 @@ and dynamic receivers are evaluated once when a partial is formed; calls run
 only when saturated. Pipes can supply the first remaining parameter. Async and
 service/interface/extension integrations remain tracked by #129. See the
 [implementation plan](implementation/issue-135-plan.md).
+[Issue #136](https://github.com/gajo357/dsharplang/issues/136) adds synchronous
+callback-first Result helpers through the standard prelude. They use ordinary
+calls and pipes, evaluate callback expressions eagerly, and invoke callbacks only
+for the applicable outcome. `map` wraps rather than flattening nested results;
+`tap` observers return Unit. Async overloads remain tracked by #130. See the
+[implementation plan](implementation/issue-136-plan.md).
 [Issue #36](https://github.com/gajo357/dsharplang/issues/36) adds immutable
 tuple values and types, with checked, nested `let` destructuring. Tuple elements
 are evaluated in order and a destructuring initializer is evaluated once. A
