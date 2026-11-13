@@ -15,6 +15,11 @@ public sealed record Token(string Text, SourceSpan Span)
 public abstract record ExpressionSyntax(Token Token);
 public abstract record StatementSyntax;
 public sealed record LetStatementSyntax(LetBindingSyntax Binding) : StatementSyntax;
+public sealed record TupleBindingSyntax(Token Token, IReadOnlyList<TupleBindingSyntax> Elements)
+{
+    public IEnumerable<Token> Names => Elements.Count == 0 ? new[] { Token } : Elements.SelectMany(element => element.Names);
+}
+public sealed record TupleLetStatementSyntax(TupleBindingSyntax Pattern, Token? Annotation, ExpressionSyntax Value) : StatementSyntax;
 public sealed record ReturnStatementSyntax(Token Keyword, ExpressionSyntax Value) : StatementSyntax;
 public sealed record ExpressionStatementSyntax(ExpressionSyntax Expression) : StatementSyntax;
 public sealed record UnitSyntax(Token Unit) : ExpressionSyntax(Unit);
@@ -29,6 +34,7 @@ public sealed record IfSyntax(Token If, ExpressionSyntax Condition, BlockSyntax 
     public Token? MissingElseLocation { get; init; }
 }
 public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
+public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
 public sealed record LambdaParameterSyntax(Token Name, Token? Type);
 public sealed record LambdaSyntax(Token Start, IReadOnlyList<LambdaParameterSyntax> Parameters, BlockSyntax Body) : ExpressionSyntax(Start);
@@ -80,6 +86,8 @@ public sealed record BoundLetStatement(BoundLocal Local) : BoundStatement;
 public sealed record BoundReturnStatement(BoundExpression Value) : BoundStatement;
 public sealed record BoundExpressionStatement(BoundExpression Expression) : BoundStatement;
 public sealed record BoundUnit : BoundExpression;
+public sealed record BoundTuple(IReadOnlyList<BoundExpression> Elements, string Type) : BoundExpression;
+public sealed record BoundTupleItem(BoundExpression Tuple, int Index) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
@@ -582,7 +590,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         {
             var open = Take();
             if (Current.Text == ")") { var close = Take(); left = new UnitSyntax(close); }
-            else { var inner = Expression(); Expect(")"); left = new GroupSyntax(open, inner); }
+            else
+            {
+                var inner = Expression();
+                if (Current.Text != ",") { Expect(")"); left = new GroupSyntax(open, inner); }
+                else
+                {
+                    var elements = new List<ExpressionSyntax> { inner };
+                    while (Current.Text == ",") { Take(); elements.Add(Expression()); }
+                    Expect(")"); left = new TupleSyntax(open, elements);
+                }
+            }
         }
         else
         {
@@ -698,7 +716,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or TupleSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -791,7 +809,23 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         {
             if (Current.Text == "let")
             {
-                var keyword = Take(); var local = Identifier(); Token? annotation = null;
+                var keyword = Take();
+                TupleBindingSyntax? tuplePattern = null; Token? local = null;
+                if (Current.Text == "(")
+                {
+                    TupleBindingSyntax ParseTupleBinding()
+                    {
+                        if (Current.Text != "(") return new(Identifier(), Array.Empty<TupleBindingSyntax>());
+                        var open = Take(); var elements = new List<TupleBindingSyntax> { ParseTupleBinding() };
+                        while (Current.Text == ",") { Take(); elements.Add(ParseTupleBinding()); }
+                        Expect(")");
+                        if (elements.Count < 2) throw Error("Tuple destructuring requires at least two bindings.");
+                        return new(open, elements);
+                    }
+                    tuplePattern = ParseTupleBinding();
+                }
+                else local = Identifier();
+                Token? annotation = null;
                 if (Current.Text == ":") { Take(); annotation = TypeToken(); }
                 var equals = Expect("=");
                 if (equals.Span.Line != keyword.Span.Line)
@@ -800,8 +834,13 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 var end = tokens[position - 1];
                 if (end.Span.Line != keyword.Span.Line && first.Span.Line == keyword.Span.Line && !AllowsContinuation(value)) throw new SourceError(new("DS1002", path, end.Span, "Write each let binding on one line."));
                 if (Current.Span.Line == end.Span.Line) throw Error("A let binding must be followed by a newline and a final expression or another binding.");
-                var binding = new LetBindingSyntax(local, annotation, first) { Expression = value };
-                bindings.Add(binding); statements.Add(new LetStatementSyntax(binding)); continue;
+                if (tuplePattern is not null) statements.Add(new TupleLetStatementSyntax(tuplePattern, annotation, value));
+                else
+                {
+                    var binding = new LetBindingSyntax(local!, annotation, first) { Expression = value };
+                    bindings.Add(binding); statements.Add(new LetStatementSyntax(binding));
+                }
+                continue;
             }
             if (Current.Text == "return")
             {
@@ -900,7 +939,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var body = Block();
             // Prefer the missing-result span over a following stray closing brace.
             if (Current.Text == "}" && type.Text == "int" && body.Result is UnitSyntax missing &&
-                body.Statements.All(statement => statement is LetStatementSyntax))
+                body.Statements.All(statement => statement is LetStatementSyntax or TupleLetStatementSyntax))
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType });
         }
@@ -1042,7 +1081,13 @@ public static class Binder
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
-            return Display(shape).ToString();
+            string Format(TypeShape value)
+            {
+                var suffix = value.IsNullable ? "?" : "";
+                if (value.IsTuple) return "(" + string.Join(", ", value.Arguments.Select(Format)) + ")" + suffix;
+                return value.Name + (value.Arguments.Count == 0 ? "" : "<" + string.Join(", ", value.Arguments.Select(Format)) + ">") + suffix;
+            }
+            return Format(Display(shape));
         }
         var records = new Dictionary<string, RecordDeclarationSyntax>(StringComparer.Ordinal);
         foreach (var record in syntax.Records)
@@ -1175,6 +1220,7 @@ public static class Binder
                     if (statement is ReturnStatementSyntax) return true;
                     if (statement is LetStatementSyntax declaration &&
                         NeverExpression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer))) return true;
+                    if (statement is TupleLetStatementSyntax tupleDeclaration && NeverExpression(tupleDeclaration.Value)) return true;
                     if (statement is ExpressionStatementSyntax evaluated && NeverExpression(evaluated.Expression)) return true;
                 }
                 return NeverExpression(block.Result);
@@ -1182,6 +1228,7 @@ public static class Binder
             bool NeverExpression(ExpressionSyntax expression) => expression switch
             {
                 GroupSyntax group => NeverExpression(group.Inner),
+                TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                 PropagateSyntax propagation => NeverExpression(propagation.Operand),
                 IfSyntax conditional => NeverExpression(conditional.Condition) ||
                     (LiteralBool(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -1225,6 +1272,11 @@ public static class Binder
                             Expression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer), names);
                             names.Add(declaration.Binding.Name.Text);
                             if (!includeUnreachable && NeverExpression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer))) return;
+                            break;
+                        case TupleLetStatementSyntax tupleDeclaration:
+                            Expression(tupleDeclaration.Value, names);
+                            foreach (var name in tupleDeclaration.Pattern.Names) names.Add(name.Text);
+                            if (!includeUnreachable && NeverExpression(tupleDeclaration.Value)) return;
                             break;
                         case ReturnStatementSyntax returned: Expression(returned.Value, names); if (!includeUnreachable) return; break;
                         case ExpressionStatementSyntax evaluated:
@@ -1364,6 +1416,13 @@ public static class Binder
                         }
                         break;
                     case GroupSyntax group: Expression(group.Inner, names); break;
+                    case TupleSyntax tuple:
+                        foreach (var element in tuple.Elements)
+                        {
+                            Expression(element, names);
+                            if (!includeUnreachable && NeverExpression(element)) break;
+                        }
+                        break;
                     case UnarySyntax unary: Expression(unary.Operand, names); break;
                     case BinarySyntax binary:
                         Expression(binary.Left, names);
@@ -1487,6 +1546,7 @@ public static class Binder
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var boundLocals = new List<BoundLocal>();
+            var tupleBindingCount = 0;
             bool hasReturn = false;
             string? currentReturnType = function.ReturnType.Text;
             List<string>? inferredReturns = null;
@@ -1578,12 +1638,14 @@ public static class Binder
                 {
                     ReturnStatementSyntax => true,
                     LetStatementSyntax binding => NeverExpression(binding.Binding.Expression ?? new ValueSyntax(binding.Binding.Initializer)),
+                    TupleLetStatementSyntax binding => NeverExpression(binding.Value),
                     ExpressionStatementSyntax statementExpression => NeverExpression(statementExpression.Expression),
                     _ => false
                 }) || NeverExpression(block.Result);
                 bool NeverExpression(ExpressionSyntax expression) => expression switch
                 {
                     GroupSyntax group => NeverExpression(group.Inner),
+                    TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                     PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -1611,6 +1673,11 @@ public static class Binder
                 {
                     if (NeverExpression(expression) || !GenericTypes.TryParse(formal, out var shape)) return;
                     if (expression is GroupSyntax group) { CollectNullConstraints(group.Inner, formal); return; }
+                    if (expression is TupleSyntax tuple && shape.IsTuple && tuple.Elements.Count == shape.Arguments.Count)
+                    {
+                        for (var i = 0; i < tuple.Elements.Count; i++) CollectNullConstraints(tuple.Elements[i], shape.Arguments[i].ToString());
+                        return;
+                    }
                     if (expression is NullSyntax)
                     {
                         if (!shape.IsNullable && shape.Arguments.Count == 0 && parameters.Contains(shape.Name)) nullableRequired.Add(shape.Name);
@@ -1669,6 +1736,8 @@ public static class Binder
                     if (NeverExpression(expression)) return type;
                     if (expression is NullSyntax) return type with { IsNullable = true };
                     if (expression is GroupSyntax group) return RefineNullEvidence(group.Inner, type);
+                    if (expression is TupleSyntax tuple && type.IsTuple && tuple.Elements.Count == type.Arguments.Count)
+                        return type with { Arguments = tuple.Elements.Select((element, i) => RefineNullEvidence(element, type.Arguments[i])).ToArray() };
                     if (expression is CoalesceSyntax coalesce) return RefineNullEvidence(coalesce.Right, type);
                     if (expression is IfSyntax conditional)
                     {
@@ -1779,16 +1848,22 @@ public static class Binder
                     for (var i = 0; i < arguments.Count; i++)
                     {
                         if (bound[i] is not null) continue;
+                        var argumentCore = arguments[i];
+                        while (argumentCore is GroupSyntax group) argumentCore = group.Inner;
                         var hint = substitutions.Count == typeParameters.Count &&
                             (fixedParameters.Count == typeParameters.Count || allowInferredHints)
                             ? Substitute(formalTypes[i].Text, substitutions, formalTypes[i]) : null;
                         if (arguments[i] is LambdaSyntax && GenericTypes.TrySubstitute(formalTypes[i].Text, substitutions, out var partial) &&
                             GenericTypes.TryParse(partial, out var partialShape) && partialShape.IsFunction)
                             hint = partial;
+                        if (argumentCore is TupleSyntax && GenericTypes.TrySubstitute(formalTypes[i].Text, substitutions, out var partialTuple) &&
+                            GenericTypes.TryParse(partialTuple, out var partialTupleShape) && partialTupleShape.IsTuple)
+                            hint = partialTuple;
                         (BoundExpression Expression, string Type) value;
                         try { value = ProbeArgument(arguments[i], hint); }
                         catch (SourceError error) when (typeParameters.Count > 0 &&
                             ((hint is null && error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.") ||
+                             (argumentCore is TupleSyntax && error.Diagnostic.Code == "DS2002" && error.Diagnostic.Message == "Cannot infer the type of a null tuple element.") ||
                              (arguments[i] is LambdaSyntax && error.Diagnostic.Code == "DS2026")))
                         {
                             deferred ??= error;
@@ -1895,6 +1970,7 @@ public static class Binder
             // Preserve it when checking unreachable code and chained record operations.
             string? KnownType(BoundExpression expression) => expression switch
             {
+                BoundTuple tuple => tuple.Type,
                 BoundLambda lambda => lambda.Type,
                 BoundInvoke invocation => invocation.Type,
                 BoundPipe pipe => pipe.Type,
@@ -2081,6 +2157,145 @@ public static class Binder
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
                     case NullSyntax: return (new BoundNull("<null>"), "<null>");
+                    case TupleSyntax tuple:
+                        TypeShape? expectedTuple = null;
+                        if (expectedResult is not null && GenericTypes.TryParse(expectedResult, out var tupleHint) && tupleHint.IsTuple && tupleHint.Arguments.Count == tuple.Elements.Count)
+                            expectedTuple = tupleHint;
+                        var tupleElements = new BoundExpression?[tuple.Elements.Count];
+                        var tupleTypes = new TypeShape?[tuple.Elements.Count];
+                        var tupleValues = new (BoundExpression Expression, string Type)?[tuple.Elements.Count];
+                        var tupleParameters = new HashSet<string>(StringComparer.Ordinal);
+                        var tupleSubstitutions = new Dictionary<string, string>(StringComparer.Ordinal);
+                        var tupleNullableRequired = new HashSet<string>(StringComparer.Ordinal);
+                        void FindTupleParameters(TypeShape shape)
+                        {
+                            if (shape.Arguments.Count == 0 && !SupportedType(shape.ToString(), activeTypeParameters)) tupleParameters.Add(shape.Name);
+                            foreach (var argument in shape.Arguments) FindTupleParameters(argument);
+                        }
+                        if (expectedTuple is not null) foreach (var item in expectedTuple.Arguments) FindTupleParameters(item);
+                        void FindTupleNulls(ExpressionSyntax element, TypeShape shape)
+                        {
+                            while (element is GroupSyntax group) element = group.Inner;
+                            if (element is NullSyntax && !shape.IsNullable && shape.Arguments.Count == 0 && tupleParameters.Contains(shape.Name))
+                                tupleNullableRequired.Add(shape.Name);
+                            else if (element is TupleSyntax nested && shape.IsTuple && nested.Elements.Count == shape.Arguments.Count)
+                                for (var i = 0; i < nested.Elements.Count; i++) FindTupleNulls(nested.Elements[i], shape.Arguments[i]);
+                            else if (unions.TryGetValue(shape.Name, out var tupleUnion) && tupleUnion.TypeParameters.Count == shape.Arguments.Count)
+                            {
+                                Token? name = null; IReadOnlyList<ExpressionSyntax>? payloads = null;
+                                if (element is CallSyntax call && !locals.ContainsKey(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                                    candidates.Count == 1 && candidates[0].Union.Name.Text == shape.Name)
+                                { name = call.Name; payloads = call.Arguments; }
+                                else if (element is MemberCallSyntax member && member.Receiver is ValueSyntax qualifier &&
+                                    !locals.ContainsKey(qualifier.Value.Text) && UnionQualifier(qualifier.Value.Text) == shape.Name)
+                                { name = member.Member; payloads = member.Arguments; }
+                                var unionCase = name is null ? null : tupleUnion.Cases.FirstOrDefault(item => item.Name.Text == name.Text);
+                                if (unionCase is null || payloads is null || unionCase.PayloadTypes.Count != payloads.Count) return;
+                                var map = tupleUnion.TypeParameters.Select((parameter, i) => (parameter.Text, Type: shape.Arguments[i].ToString()))
+                                    .ToDictionary(pair => pair.Text, pair => pair.Type, StringComparer.Ordinal);
+                                for (var i = 0; i < payloads.Count; i++)
+                                    if (GenericTypes.TrySubstitute(unionCase.PayloadTypes[i].Text, map, out var payloadType) &&
+                                        GenericTypes.TryParse(payloadType, out var payloadShape)) FindTupleNulls(payloads[i], payloadShape);
+                            }
+                        }
+                        bool NullTupleOnly(ExpressionSyntax element)
+                        {
+                            while (element is GroupSyntax group) element = group.Inner;
+                            return element is NullSyntax || element is TupleSyntax nested && nested.Elements.All(NullTupleOnly) ||
+                                element is CallSyntax call && !locals.ContainsKey(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                                    candidates.Count == 1 && call.Arguments.Count > 0 && call.Arguments.All(NullTupleOnly) ||
+                                element is MemberCallSyntax member && member.Receiver is ValueSyntax qualifier && !locals.ContainsKey(qualifier.Value.Text) &&
+                                    unions.ContainsKey(UnionQualifier(qualifier.Value.Text)) && member.Arguments.Count > 0 && member.Arguments.All(NullTupleOnly);
+                        }
+                        if (expectedTuple is not null)
+                            for (var i = 0; i < tuple.Elements.Count; i++) FindTupleNulls(tuple.Elements[i], expectedTuple.Arguments[i]);
+                        var tupleReachable = inferenceReachable; var tupleNever = false;
+                        try
+                        {
+                            for (var i = 0; i < tuple.Elements.Count; i++)
+                            {
+                                inferenceReachable = tupleReachable && !tupleNever;
+                                var element = tuple.Elements[i]; var formal = expectedTuple?.Arguments[i].ToString();
+                                var hint = formal is null ? null : GenericTypes.Substitute(formal, tupleSubstitutions);
+                                if (hint is not null && !SupportedType(hint, activeTypeParameters) &&
+                                    (!GenericTypes.TryParse(hint, out var nestedHint) || !nestedHint.IsTuple)) hint = null;
+                                if (inferencePass && tupleNever)
+                                {
+                                    GenericTypes.TryParse(hint ?? "Unit", out var placeholder);
+                                    tupleTypes[i] = placeholder; tupleElements[i] = new BoundUnit();
+                                    continue;
+                                }
+                                var elementCore = element;
+                                while (elementCore is GroupSyntax elementGroup) elementCore = elementGroup.Inner;
+                                if (elementCore is NullSyntax && formal is not null && !SupportedType(formal, activeTypeParameters))
+                                {
+                                    tupleValues[i] = (new BoundNull("<null>"), "<null>");
+                                    continue;
+                                }
+                                (BoundExpression Expression, string Type) value;
+                                try { value = BindExpression(element, hint); }
+                                catch (SourceError error) when (formal is not null && !SupportedType(formal, activeTypeParameters) &&
+                                    NullTupleOnly(element) &&
+                                    (error.Diagnostic.Code == "DS2002" && error.Diagnostic.Message == "Cannot infer the type of a null tuple element." ||
+                                     error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments."))
+                                { continue; }
+                                if (value.Type == "<null>" && hint is null) Fail("DS2002", element.Token, "Cannot infer the type of a null tuple element.");
+                                var elementType = hint ?? (value.Type == "<never>" ? KnownType(value.Expression) ?? "Unit" : value.Type);
+                                if (hint is not null && !Convertible(value.Type, hint))
+                                {
+                                    if (formal is null || SupportedType(formal, activeTypeParameters)) Require(element, value.Type, hint);
+                                    elementType = value.Type;
+                                }
+                                if (!GenericTypes.TryParse(elementType, out var elementShape)) Fail("DS2002", element.Token, "Cannot infer the tuple element type.");
+                                tupleValues[i] = value;
+                                tupleTypes[i] = elementShape;
+                                tupleElements[i] = Coerce(value.Expression, elementType, value.Type);
+                                if (formal is not null && value.Type != "<never>") GenericTypes.TryUnify(formal, value.Type, tupleParameters, tupleSubstitutions);
+                                if (value.Type == "<never>") tupleNever = true;
+                            }
+                            if (expectedTuple is not null)
+                            {
+                                foreach (var parameter in tupleNullableRequired)
+                                    if (tupleSubstitutions.TryGetValue(parameter, out var inferred) && GenericTypes.TryParse(inferred, out var inferredShape))
+                                        tupleSubstitutions[parameter] = (inferredShape with { IsNullable = true }).ToString();
+                                for (var i = 0; i < tuple.Elements.Count; i++)
+                                {
+                                    var formal = expectedTuple.Arguments[i];
+                                    if (tupleValues[i]?.Type == "<null>" && tupleTypes[i] is null && !formal.IsNullable && formal.Arguments.Count == 0 &&
+                                        tupleParameters.Contains(formal.Name) && tupleSubstitutions.TryGetValue(formal.Name, out var prior) &&
+                                        GenericTypes.TryParse(prior, out var priorShape))
+                                        tupleSubstitutions[formal.Name] = (priorShape with { IsNullable = true }).ToString();
+                                }
+                                for (var i = 0; i < tuple.Elements.Count; i++)
+                                {
+                                    var resolved = GenericTypes.Substitute(expectedTuple.Arguments[i].ToString(), tupleSubstitutions);
+                                    var value = tupleValues[i];
+                                    if (value is null && tupleTypes[i] is null)
+                                    {
+                                        if (!SupportedType(resolved, activeTypeParameters))
+                                            Fail("DS2002", tuple.Elements[i].Token, "Cannot infer the type of a null tuple element.");
+                                        value = BindExpression(tuple.Elements[i], resolved);
+                                    }
+                                    if (value is null) continue;
+                                    if (!SupportedType(resolved, activeTypeParameters))
+                                    {
+                                        if (tupleTypes[i] is null) Fail("DS2002", tuple.Elements[i].Token, "Cannot infer the type of a null tuple element.");
+                                        continue;
+                                    }
+                                    if (tupleTypes[i] is null || Convertible(value.Value.Type, resolved))
+                                    {
+                                        Require(tuple.Elements[i], value.Value.Type, resolved);
+                                        GenericTypes.TryParse(resolved, out var resolvedShape);
+                                        tupleTypes[i] = resolvedShape;
+                                        tupleElements[i] = Coerce(value.Value.Expression, resolved, value.Value.Type);
+                                    }
+                                }
+                            }
+                        }
+                        finally { inferenceReachable = tupleReachable; }
+                        var tupleType = new TypeShape(TypeShape.TupleName, tupleTypes.Select(type => type!).ToArray(), false).ToString();
+                        if (!SupportedType(tupleType, activeTypeParameters)) Fail("DS2026", tuple.Open, "Tuple elements must be immutable data values.");
+                        return (new BoundTuple(tupleElements.Select(element => element!).ToArray(), tupleType), tupleNever ? "<never>" : tupleType);
                     case LambdaSyntax lambda:
                         return BindLambda(lambda, expectedResult);
                     case InvokeSyntax invocation:
@@ -2270,10 +2485,13 @@ public static class Binder
                         var nullableLeft = BindExpression(coalesce.Left);
                         var savedCoalesceReachable = inferenceReachable;
                         inferenceReachable = savedCoalesceReachable && nullableLeft.Type != "<never>";
-                        var fallback = BindExpression(coalesce.Right);
-                        inferenceReachable = savedCoalesceReachable;
                         var leftType = nullableLeft.Type == "<never>" ? KnownType(nullableLeft.Expression) : nullableLeft.Type;
                         if (nullableLeft.Type == "<never>" && (leftType is null || !IsNullable(leftType))) leftType = "<null>";
+                        string? fallbackHint = null;
+                        if (leftType is not null && IsNullable(leftType) && GenericTypes.TryParse(leftType[..^1], out var fallbackShape) && fallbackShape.IsTuple)
+                            fallbackHint = leftType[..^1];
+                        var fallback = BindExpression(coalesce.Right, fallbackHint);
+                        inferenceReachable = savedCoalesceReachable;
                         if (leftType != "<null>" && (leftType is null || !IsNullable(leftType)))
                             Fail("DS2022", coalesce.Left.Token, "The left operand of ?? must be nullable.");
                         if (leftType == "<null>" && fallback.Type == "<null>" && nullableLeft.Type != "<never>")
@@ -2577,6 +2795,41 @@ public static class Binder
                                 boundLocalsInBlock.Add(local); boundStatements.Add(new BoundLetStatement(local));
                                 if (reachable && init.Type == "<never>") reachable = false;
                                 break;
+                            case TupleLetStatementSyntax declaration:
+                            {
+                                var names = new HashSet<string>(StringComparer.Ordinal);
+                                foreach (var name in declaration.Pattern.Names)
+                                    if (!names.Add(name.Text) || locals.ContainsKey(name.Text) || inaccessibleCaptures.Contains(name.Text))
+                                        Fail("DS2006", name, "Duplicate or shadowed local binding.");
+                                var tupleAnnotation = declaration.Annotation is null ? null : ScopedType(declaration.Annotation, functionTypeScope);
+                                if (tupleAnnotation is not null && !SupportedType(tupleAnnotation.Text, activeTypeParameters))
+                                    Fail("DS2008", tupleAnnotation, "Unsupported local annotation.");
+                                var tupleInit = BindExpression(declaration.Value, tupleAnnotation?.Text);
+                                var tupleType = tupleAnnotation?.Text ?? (tupleInit.Type == "<never>" ? KnownType(tupleInit.Expression) ?? "Unit" : tupleInit.Type);
+                                if (tupleAnnotation is not null) Require(declaration.Value, tupleInit.Type, tupleType);
+                                if (!GenericTypes.TryParse(tupleType, out var tupleShape) || !tupleShape.IsTuple || tupleShape.IsNullable)
+                                    Fail("DS2008", declaration.Pattern.Token, "Tuple destructuring requires a non-null tuple value.");
+                                var hiddenName = "$tupleLocal" + (tupleBindingCount++).ToString(CultureInfo.InvariantCulture);
+                                var temporary = new BoundLocal(hiddenName, 0, null) { Type = tupleType, Expression = Coerce(tupleInit.Expression, tupleType, tupleInit.Type) };
+                                boundLocalsInBlock.Add(temporary); boundStatements.Add(new BoundLetStatement(temporary));
+                                void Introduce(TupleBindingSyntax pattern, TypeShape shape, BoundExpression source)
+                                {
+                                    if (pattern.Elements.Count == 0)
+                                    {
+                                        var type = shape.ToString(); locals.Add(pattern.Token.Text, (0, type)); introduced.Add(pattern.Token.Text);
+                                        var local = new BoundLocal(pattern.Token.Text, 0, null) { Type = type, Expression = source };
+                                        boundLocalsInBlock.Add(local); boundStatements.Add(new BoundLetStatement(local));
+                                        return;
+                                    }
+                                    if (!shape.IsTuple || shape.IsNullable || shape.Arguments.Count != pattern.Elements.Count)
+                                        Fail("DS2008", pattern.Token, "Tuple destructuring arity or nested tuple type does not match the value.");
+                                    for (var i = 0; i < pattern.Elements.Count; i++)
+                                        Introduce(pattern.Elements[i], shape.Arguments[i], new BoundTupleItem(source, i));
+                                }
+                                Introduce(declaration.Pattern, tupleShape, new BoundReference(hiddenName));
+                                if (reachable && tupleInit.Type == "<never>") reachable = false;
+                                break;
+                            }
                             case ReturnStatementSyntax ret:
                                 var returned = BindExpression(ret.Value, currentReturnType);
                                 if (currentReturnType is null)
@@ -2642,6 +2895,7 @@ public static class Binder
                     {
                         ReturnStatementSyntax => true,
                         LetStatementSyntax binding => Never(binding.Binding.Expression ?? new ValueSyntax(binding.Binding.Initializer)),
+                        TupleLetStatementSyntax binding => Never(binding.Value),
                         ExpressionStatementSyntax evaluated => Never(evaluated.Expression),
                         _ => false
                     }) || Never(block.Result);
@@ -2649,6 +2903,7 @@ public static class Binder
                 bool Never(ExpressionSyntax expression) => expression switch
                 {
                     GroupSyntax group => Never(group.Inner),
+                    TupleSyntax tuple => tuple.Elements.Any(Never),
                     IfSyntax conditional => Never(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
                          LiteralCondition(conditional.Condition) == false ? NeverBlock(conditional.Else) :
@@ -3137,7 +3392,8 @@ public static class CSharpEmitter
             !(shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name)) && recordTypes.ContainsKey(shape.Name);
         bool IsTypeParameter(string type) => GenericTypes.TryParse(type, out var shape) &&
             shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name);
-        static bool IsValueType(string type) => type is "int" or "bool" or "char" or "Unit";
+        static bool IsValueType(string type) => type is "int" or "bool" or "char" or "Unit" ||
+            GenericTypes.TryParse(type, out var shape) && shape.IsTuple && !shape.IsNullable;
         string CType(string type)
         {
             if (!GenericTypes.TryParse(type, out var shape)) return type;
@@ -3147,6 +3403,11 @@ public static class CSharpEmitter
                     return nullableParameter;
                 if (current.IsFunction)
                     return DelegateName(current.Arguments.Count - 1) + "<" + string.Join(", ", current.Arguments.Select(ConvertShape)) + ">";
+                if (current.IsTuple)
+                {
+                    var tuple = "(" + string.Join(", ", current.Arguments.Select(ConvertShape)) + ")";
+                    return current.IsNullable ? "global::System.Nullable<" + tuple + ">" : tuple;
+                }
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
                     current.Name == "Unit" ? unitType : recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
                 if (current.Arguments.Count > 0)
@@ -3168,6 +3429,10 @@ public static class CSharpEmitter
         }
         string EqualValue(string type, string left, string right)
         {
+            if (GenericTypes.TryParse(type, out var tupleShape) && tupleShape.IsTuple)
+                return module.Records.Count > 0 || module.Unions.Count > 0
+                    ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")"
+                    : "global::System.Collections.Generic.EqualityComparer<" + CType(type) + ">.Default.Equals(" + left + ", " + right + ")";
             if (type.EndsWith("?", StringComparison.Ordinal))
             {
                 var inner = type[..^1];
@@ -3292,6 +3557,10 @@ public static class CSharpEmitter
             output.Append("    internal static bool ").Append(equalityDispatcher).Append("<__DSharp_Value>(__DSharp_Value __left, __DSharp_Value __right)\n    {\n")
                 .Append("        if (global::System.Object.ReferenceEquals(__left, __right)) return true;\n")
                 .Append("        if (__left is ").Append(structuralInterface).Append(" __data) return __data.__dsharp_equals(__right);\n")
+                .Append("        if (__left is global::System.Runtime.CompilerServices.ITuple __leftTuple && __right is global::System.Runtime.CompilerServices.ITuple __rightTuple)\n")
+                .Append("        {\n            if (__leftTuple.Length != __rightTuple.Length) return false;\n")
+                .Append("            for (int __i = 0; __i < __leftTuple.Length; __i++) if (!").Append(equalityDispatcher).Append("<object>(__leftTuple[__i], __rightTuple[__i])) return false;\n")
+                .Append("            return true;\n        }\n")
                 .Append("        return global::System.Collections.Generic.EqualityComparer<__DSharp_Value>.Default.Equals(__left, __right);\n    }\n");
         }
         foreach (var function in module.Functions)
@@ -3390,6 +3659,8 @@ public static class CSharpEmitter
                 switch (expression)
                 {
                     case BoundUnit: return "default(" + unitType + ")";
+                    case BoundTuple tuple: return "(" + string.Join(", ", tuple.Elements.Select(EmitExpression)) + ")";
+                    case BoundTupleItem item: return "(" + EmitExpression(item.Tuple) + ").Item" + (item.Index + 1).ToString(CultureInfo.InvariantCulture);
                     case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
                     case BoundLambda lambda:
                         var lambdaId = (lambdaCount++).ToString(CultureInfo.InvariantCulture);
@@ -3656,7 +3927,8 @@ public static class CSharpEmitter
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
                         if ((binary.Operator is "==" or "!=") && (binary.OperandType.EndsWith("?", StringComparison.Ordinal) ||
-                            binary.OperandType == "string" || IsNominal(binary.OperandType) || IsTypeParameter(binary.OperandType)))
+                            binary.OperandType == "string" || IsNominal(binary.OperandType) || IsTypeParameter(binary.OperandType) ||
+                            GenericTypes.TryParse(binary.OperandType, out var binaryShape) && binaryShape.IsTuple))
                         {
                             var equals = EqualValue(binary.OperandType, left, right);
                             return binary.Operator == "!=" ? "(!(" + equals + "))" : equals;
