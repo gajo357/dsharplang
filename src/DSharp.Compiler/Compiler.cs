@@ -112,7 +112,16 @@ public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList
     public IReadOnlyList<BoundCapture> Captures { get; init; } = Array.Empty<BoundCapture>();
 }
 public sealed record BoundInvoke(BoundExpression Receiver, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
-public sealed record BoundPipe(BoundExpression Value, string ValueType, BoundExpression Receiver, string Type) : BoundExpression;
+public sealed record BoundPipe(BoundExpression Value, string ValueType, BoundExpression Receiver, string Type) : BoundExpression
+{
+    public string ReceiverType { get; init; } = "";
+}
+public sealed record BoundFunctionReference(string Name, string Type, IReadOnlyList<string> TypeArguments) : BoundExpression
+{
+    public Token? Location { get; init; }
+}
+public sealed record BoundPartial(BoundExpression Receiver, string ReceiverType, IReadOnlyList<BoundExpression> Arguments,
+    IReadOnlyList<string> ArgumentTypes, IReadOnlyList<string> RemainingTypes, string ReturnType, string Type) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression
 {
     public IReadOnlyList<string> TypeArguments { get; init; } = Array.Empty<string>();
@@ -687,7 +696,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 else left = new FieldAccessSyntax(left, member);
                 continue;
             }
-            if (line is not null && Current.Span.Line != tokens[position - 1].Span.Line) break;
+            if (line is not null && Current.Span.Line != tokens[position - 1].Span.Line && Current.Text != "|>") break;
             if (Current.Text == "?")
             {
                 left = new PropagateSyntax(left, Take());
@@ -1291,6 +1300,8 @@ public static class Binder
             {
                 switch (expression)
                 {
+                    case ValueSyntax value when !names.Contains(value.Value.Text) && !cases.ContainsKey(value.Value.Text) && signatures.ContainsKey(value.Value.Text):
+                        calls.Add(value.Value.Text); break;
                     case CallSyntax call:
                         var callCompletesArguments = true;
                         foreach (var argument in call.Arguments)
@@ -1340,6 +1351,9 @@ public static class Binder
                                 pipeQualifier.Value.Text == "Result" && !userResultType ? resultSymbol :
                                 pipeQualifier.Value.Text == "Option" && !userOptionType ? optionSymbol : pipeQualifier.Value.Text))
                         { /* Qualified union case construction is statically known. */ }
+                        else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
+                            signatures.TryGetValue(partialCall.Name.Text, out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
+                            Expression(pipeTarget, names);
                         else
                         {
                             indirect = true;
@@ -1607,7 +1621,8 @@ public static class Binder
             (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never)
                 BindGenericArguments(IReadOnlyList<Token> typeParameters, IReadOnlyList<Token> explicitTypes,
                     IReadOnlyList<Token> formalTypes, IReadOnlyList<ExpressionSyntax> arguments, Token location,
-                    string? returnPattern = null, string? expectedResult = null)
+                    string? returnPattern = null, string? expectedResult = null,
+                    string? contextualFormal = null, string? contextualActual = null)
             {
                 if (formalTypes.Count != arguments.Count) Fail("DS2012", location, "Incorrect number of arguments.");
                 if (explicitTypes.Count > 0 && explicitTypes.Count != typeParameters.Count)
@@ -1622,6 +1637,9 @@ public static class Binder
                     substitutions.Add(typeParameters[i].Text, explicitTypes[i].Text);
                     fixedParameters.Add(typeParameters[i].Text);
                 }
+                if (contextualFormal is not null && contextualActual is not null && typeParameters.Count > 0 &&
+                    !GenericTypes.TryUnify(contextualFormal, contextualActual, parameters, substitutions, fixedParameters))
+                    Fail("DS2023", location, "Conflicting generic type arguments.");
                 if (returnPattern is not null && expectedResult is not null && typeParameters.Count > 0)
                 {
                     var inferred = new Dictionary<string, string>(substitutions, StringComparer.Ordinal);
@@ -1974,6 +1992,8 @@ public static class Binder
             {
                 BoundTuple tuple => tuple.Type,
                 BoundLambda lambda => lambda.Type,
+                BoundFunctionReference reference => reference.Type,
+                BoundPartial partial => partial.Type,
                 BoundInvoke invocation => invocation.Type,
                 BoundPipe pipe => pipe.Type,
                 BoundRecordConstruction construction => construction.Type,
@@ -2153,7 +2173,7 @@ public static class Binder
                     argumentsBound.Add(BindPattern(arguments[i], Substitute(unionCase.PayloadTypes[i].Text, substitutions!, unionCase.PayloadTypes[i]), introduced));
                 return new BoundCasePattern(expected, unionCase.Name.Text, argumentsBound);
             }
-            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null)
+            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null)
             {
                 switch (expression)
                 {
@@ -2323,7 +2343,7 @@ public static class Binder
                     case LambdaSyntax lambda:
                         return BindLambda(lambda, expectedResult);
                     case InvokeSyntax invocation:
-                        return BindInvocation(invocation.Receiver, invocation.OpenParen, invocation.Arguments);
+                        return BindInvocation(invocation.Receiver, invocation.OpenParen, invocation.Arguments, expectedResult);
                     case PipeSyntax pipe:
                         return BindPipe(pipe, expectedResult);
                     case PropagateSyntax propagation:
@@ -2504,7 +2524,7 @@ public static class Binder
                             literalCondition == false && elseBlock.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
-                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult);
+                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType);
                     case CoalesceSyntax coalesce:
                         var nullableLeft = BindExpression(coalesce.Left);
                         var savedCoalesceReachable = inferenceReachable;
@@ -2626,6 +2646,13 @@ public static class Binder
                             var selected = BareCase(token);
                             return BindCase(selected.Union, selected.Case, token, Array.Empty<ExpressionSyntax>(), expectedResult: expectedResult);
                         }
+                        if (!locals.ContainsKey(token.Text) && signatures.TryGetValue(token.Text, out var namedFunction))
+                        {
+                            var fullPattern = TypeShape.FunctionName + "<" + string.Join(",", namedFunction.Parameters.Select(p => p.Type.Text).Append(namedFunction.ReturnType.Text)) + ">";
+                            var inferred = BindGenericArguments(namedFunction.TypeParameters, Array.Empty<Token>(), Array.Empty<Token>(), Array.Empty<ExpressionSyntax>(), token, fullPattern, expectedResult);
+                            var fullType = Substitute(fullPattern, inferred.Substitutions, token);
+                            return (new BoundFunctionReference(token.Text, fullType, namedFunction.TypeParameters.Select(p => inferred.Substitutions[p.Text]).ToArray()) { Location = token }, fullType);
+                        }
                         if (!locals.TryGetValue(token.Text, out local))
                             Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
                         return (new BoundReference(token.Text), local.Type);
@@ -2635,7 +2662,7 @@ public static class Binder
                         if (locals.ContainsKey(call.Name.Text))
                         {
                             if (call.TypeArguments.Count > 0) Fail("DS2026", call.Name, "Function values do not accept explicit type arguments.");
-                            return BindInvocation(new ValueSyntax(call.Name), call.OpenParen, call.Arguments);
+                            return BindInvocation(new ValueSyntax(call.Name), call.OpenParen, call.Arguments, expectedResult);
                         }
                         if (cases.ContainsKey(call.Name.Text))
                         {
@@ -2649,10 +2676,13 @@ public static class Binder
                         // final pass will bind and validate the entire call.
                         if (inferencePass && !inferenceReachable && target!.InferReturnType)
                             return (new BoundUnit(), "<never>");
-                        var resolvedCall = BindGenericArguments(target!.TypeParameters,
+                        if (call.Arguments.Count > target!.Parameters.Count) Fail("DS2012", call.Name, "Incorrect number of arguments.");
+                        var isPartialCall = call.Arguments.Count < target.Parameters.Count;
+                        var callPattern = isPartialCall ? TypeShape.FunctionName + "<" + string.Join(",", target.Parameters.Skip(call.Arguments.Count).Select(p => p.Type.Text).Append(target.ReturnType.Text)) + ">" : target.ReturnType.Text;
+                        var resolvedCall = BindGenericArguments(target.TypeParameters,
                             call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(),
-                            target.Parameters.Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name,
-                            target.ReturnType.Text, expectedResult);
+                            target.Parameters.Take(call.Arguments.Count).Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name,
+                            callPattern, expectedResult, isPartialCall ? target.Parameters[call.Arguments.Count].Type.Text : null, pipeInputType);
                         if (inferencePass && resolvedCall.Never && resolvedCall.Substitutions.Count != target.TypeParameters.Count)
                             return (new BoundUnit(), "<never>");
                         if (resolvedCall.Never && target.InferReturnType)
@@ -2663,6 +2693,16 @@ public static class Binder
                             }, "<never>");
                         var callResultType = Substitute(target.ReturnType.Text, resolvedCall.Substitutions, target.ReturnType);
                         if (!SupportedType(callResultType, activeTypeParameters)) Fail("DS2026", call.Name, "Function values cannot be stored in data types.");
+                        if (isPartialCall)
+                        {
+                            var arguments = target.TypeParameters.Select(p => resolvedCall.Substitutions[p.Text]).ToArray();
+                            var formalTypes = target.Parameters.Select(p => Substitute(p.Type.Text, resolvedCall.Substitutions, p.Type)).ToArray();
+                            var fullType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Append(callResultType)) + ">";
+                            var partialType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Skip(call.Arguments.Count).Append(callResultType)) + ">";
+                            return (new BoundPartial(new BoundFunctionReference(call.Name.Text, fullType, arguments) { Location = call.Name }, fullType,
+                                resolvedCall.Values, formalTypes.Take(call.Arguments.Count).ToArray(), formalTypes.Skip(call.Arguments.Count).ToArray(), callResultType, partialType),
+                                resolvedCall.Never ? "<never>" : partialType);
+                        }
                         return (new BoundCall(call.Name.Text, resolvedCall.Values)
                         {
                             TypeArguments = target.TypeParameters.Select(parameter => resolvedCall.Substitutions[parameter.Text]).ToArray(),
@@ -2871,6 +2911,8 @@ public static class Binder
                                 var expr = BindExpression(exprStatement.Expression);
                                 if (GenericTypes.TryParse(expr.Type, out var discardedType) && discardedType.Name == resultSymbol)
                                     Fail("DS2024", exprStatement.Expression.Token, "A Result value cannot be discarded.");
+                                if (GenericTypes.TryParse(expr.Type, out var discardedFunction) && discardedFunction.IsFunction)
+                                    Fail("DS2026", exprStatement.Expression.Token, "A function value cannot be discarded.");
                                 Require(exprStatement.Expression, expr.Type, "Unit");
                                 boundStatements.Add(new BoundExpressionStatement(Coerce(expr.Expression, "Unit", expr.Type)));
                                 if (reachable && expr.Type == "<never>") reachable = false;
@@ -2971,10 +3013,28 @@ public static class Binder
                 // emitted in the opposite order: value first, receiver second.
                 (BoundExpression Expression, string Type)? receiverProbe = null;
                 var savedReachable = inferenceReachable;
+                string? pipeProbeType = null;
+                string? pipeReceiverHint = null;
                 try
                 {
                     inferenceReachable = false;
-                    try { receiverProbe = BindExpression(pipe.Right); }
+                    try
+                    {
+                        var leftProbe = BindExpression(pipe.Left);
+                        pipeProbeType = leftProbe.Type == "<never>" ? KnownType(leftProbe.Expression) : leftProbe.Type;
+                        if (pipeProbeType is "<null>" or "<never>") pipeProbeType = null;
+                    }
+                    catch (SourceError) { /* The target may provide the required context. */ }
+                    if (pipeProbeType is not null && expectedResult is not null && target is CallSyntax targetCall &&
+                        !locals.ContainsKey(targetCall.Name.Text) && signatures.TryGetValue(targetCall.Name.Text, out var pipeTarget))
+                    {
+                        var remaining = pipeTarget.Parameters.Count - targetCall.Arguments.Count;
+                        if (remaining == 1)
+                            pipeReceiverHint = TypeShape.FunctionName + "<" + pipeProbeType + "," + expectedResult + ">";
+                        else if (remaining > 1 && GenericTypes.TryParse(expectedResult, out var rest) && rest.IsFunction && rest.Arguments.Count == remaining)
+                            pipeReceiverHint = TypeShape.FunctionName + "<" + pipeProbeType + "," + string.Join(",", rest.Arguments) + ">";
+                    }
+                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType); }
                     catch (SourceError error) when (target is LambdaSyntax && error.Diagnostic.Code == "DS2026") { }
                 }
                 finally { inferenceReachable = savedReachable; }
@@ -2986,8 +3046,8 @@ public static class Binder
                     var probeType = probe.Type == "<never>" ? KnownType(probe.Expression) : probe.Type;
                     if (probeType is null || !GenericTypes.TryParse(probeType, out var functionShape) || !functionShape.IsFunction || functionShape.IsNullable)
                         Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable function value.");
-                    if (functionShape!.Arguments.Count != 2)
-                        Fail("DS2012", pipe.Operator, "A pipe target must accept exactly one argument.");
+                    if (functionShape!.Arguments.Count < 2)
+                        Fail("DS2012", pipe.Operator, "A pipe target must accept at least one argument.");
                     inputType = functionShape.Arguments[0].ToString();
                 }
                 else if (target is LambdaSyntax lambda)
@@ -3021,20 +3081,25 @@ public static class Binder
                 }
                 inferenceReachable = savedReachable && value.Type != "<never>";
                 (BoundExpression Expression, string Type) receiver;
-                try { receiver = BindExpression(pipe.Right, lambdaHint); }
+                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType); }
                 finally { inferenceReachable = savedReachable; }
                 var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
-                if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count != 2)
-                    Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable one-argument function value.");
+                if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2)
+                    Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable function with an argument.");
                 var formal = shape!.Arguments[0].ToString();
                 Require(pipe.Left, value.Type, formal);
-                var result = shape.Arguments[1].ToString();
+                var result = shape.Arguments.Count == 2 ? shape.Arguments[1].ToString() : TypeShape.FunctionName + "<" + string.Join(",", shape.Arguments.Skip(1)) + ">";
                 return (new BoundPipe(Coerce(value.Expression, formal, value.Type), formal,
-                    Coerce(receiver.Expression, receiverType!, receiver.Type), result),
+                    Coerce(receiver.Expression, receiverType!, receiver.Type), result) { ReceiverType = receiverType! },
                     value.Type == "<never>" || receiver.Type == "<never>" ? "<never>" : result);
             }
-            (BoundExpression Expression, string Type) BindInvocation(ExpressionSyntax receiverSyntax, Token location, IReadOnlyList<ExpressionSyntax> arguments)
+            (BoundExpression Expression, string Type) BindInvocation(ExpressionSyntax receiverSyntax, Token location, IReadOnlyList<ExpressionSyntax> arguments, string? expectedResult = null)
             {
+                var unwrappedReceiver = receiverSyntax;
+                while (unwrappedReceiver is GroupSyntax group) unwrappedReceiver = group.Inner;
+                if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) &&
+                    !inaccessibleCaptures.Contains(name.Value.Text) && !cases.ContainsKey(name.Value.Text) && signatures.ContainsKey(name.Value.Text))
+                    return BindExpression(new CallSyntax(name.Value, location, arguments), expectedResult);
                 var receiver = BindExpression(receiverSyntax);
                 var type = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
                 if (type is null || !GenericTypes.TryParse(type, out var shape) || !shape.IsFunction)
@@ -3044,12 +3109,20 @@ public static class Binder
                 var functionShape = shape!;
                 var formal = functionShape.Arguments.Take(functionShape.Arguments.Count - 1)
                     .Select(argument => new Token(argument.ToString(), location.Span)).ToArray();
+                if (arguments.Count > formal.Length) Fail("DS2012", location, "Incorrect number of arguments.");
                 var savedInvokeReachable = inferenceReachable;
                 inferenceReachable = savedInvokeReachable && receiver.Type != "<never>";
                 (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) values;
-                try { values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), formal, arguments, location); }
+                try { values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), formal.Take(arguments.Count).ToArray(), arguments, location); }
                 finally { inferenceReachable = savedInvokeReachable; }
                 var resultType = functionShape.Arguments[^1].ToString();
+                if (arguments.Count < formal.Length)
+                {
+                    var partialType = TypeShape.FunctionName + "<" + string.Join(",", formal.Skip(arguments.Count).Select(t => t.Text).Append(resultType)) + ">";
+                    return (new BoundPartial(receiver.Expression, type!, values.Values, formal.Take(arguments.Count).Select(t => t.Text).ToArray(),
+                        formal.Skip(arguments.Count).Select(t => t.Text).ToArray(), resultType, partialType),
+                        receiver.Type == "<never>" || values.Never ? "<never>" : partialType);
+                }
                 return (new BoundInvoke(receiver.Expression, values.Values, resultType),
                     receiver.Type == "<never>" || values.Never ? "<never>" : resultType);
             }
@@ -3251,6 +3324,17 @@ public static class Binder
                             Need(argument);
                         }
                     }
+                    if (node is BoundFunctionReference reference && boundFunctions.TryGetValue(reference.Name, out var referenced))
+                    {
+                        for (var i = 0; i < Math.Min(reference.TypeArguments.Count, referenced.TypeParameters.Count); i++)
+                        {
+                            if (!dataRequirements[referenced.Name].Contains(referenced.TypeParameters[i]) ||
+                                !GenericTypes.TryParse(reference.TypeArguments[i], out var argument)) continue;
+                            if (argument.ContainsFunction)
+                                Fail("DS2026", reference.Location ?? new Token(reference.Name, syntheticSpan), "Function type is not valid for this generic operation.");
+                            Need(argument);
+                        }
+                    }
                     if (node is System.Collections.IEnumerable sequence)
                     {
                         foreach (var item in sequence) Visit(item);
@@ -3371,6 +3455,9 @@ public static class CSharpEmitter
                 if (node is BoundCall call && functionProjections.TryGetValue(call.Name, out var calleeSlots))
                     for (var i = 0; i < Math.Min(calleeSlots.Length, call.TypeArguments.Count); i++)
                         if (calleeSlots[i] && GenericTypes.TryParse(call.TypeArguments[i], out var argument)) Need(argument);
+                if (node is BoundFunctionReference reference && functionProjections.TryGetValue(reference.Name, out var referenceSlots))
+                    for (var i = 0; i < Math.Min(referenceSlots.Length, reference.TypeArguments.Count); i++)
+                        if (referenceSlots[i] && GenericTypes.TryParse(reference.TypeArguments[i], out var argument)) Need(argument);
                 if (node is System.Collections.IEnumerable sequence)
                 {
                     foreach (var item in sequence) Discover(item, parameters, requirements);
@@ -3617,6 +3704,7 @@ public static class CSharpEmitter
             var nullableOperationCount = 0;
             var propagationCount = 0;
             var pipeCount = 0;
+            var partialCount = 0;
             var lambdaCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
@@ -3761,6 +3849,38 @@ public static class CSharpEmitter
                         localNames = savedNames;
                         emitterReturnType = savedEmitterReturnType;
                         return "((" + CType(lambda.Type) + ")" + lambdaName + ")";
+                    case BoundFunctionReference functionReference:
+                        var referenceArguments = new List<string>();
+                        var referenceSlots = functionProjections[functionReference.Name];
+                        for (var i = 0; i < functionReference.TypeArguments.Count; i++)
+                        {
+                            var argument = functionReference.TypeArguments[i];
+                            referenceArguments.Add(CType(argument));
+                            if (referenceSlots[i] && GenericTypes.TryParse(argument, out var shape))
+                                referenceArguments.Add(CType((shape with { IsNullable = true }).ToString()));
+                        }
+                        return "((" + CType(functionReference.Type) + ")" + container + ".@" + functionReference.Name +
+                            (referenceArguments.Count == 0 ? "" : "<" + string.Join(", ", referenceArguments) + ">") + ")";
+                    case BoundPartial partial:
+                        var partialId = (partialCount++).ToString(CultureInfo.InvariantCulture);
+                        var partialHelper = "__dsharp_partial_" + partialId;
+                        var partialReceiver = "__dsharp_partial_receiver_" + partialId;
+                        output.Append("            ").Append(CType(partial.Type)).Append(" ").Append(partialHelper).Append("()\n            {\n");
+                        var capturedReceiver = EmitExpression(partial.Receiver);
+                        output.Append("            ").Append(CType(partial.ReceiverType)).Append(" ").Append(partialReceiver).Append(" = ").Append(capturedReceiver).Append(";\n");
+                        var capturedArguments = new List<string>();
+                        for (var i = 0; i < partial.Arguments.Count; i++)
+                        {
+                            var captured = EmitExpression(partial.Arguments[i]);
+                            var captureName = "__dsharp_partial_arg_" + partialId + "_" + i.ToString(CultureInfo.InvariantCulture);
+                            output.Append("            ").Append(CType(partial.ArgumentTypes[i])).Append(" ").Append(captureName).Append(" = ").Append(captured).Append(";\n");
+                            capturedArguments.Add(captureName);
+                        }
+                        var remainingNames = partial.RemainingTypes.Select((_, i) => "__dsharp_partial_rest_" + partialId + "_" + i.ToString(CultureInfo.InvariantCulture)).ToArray();
+                        output.Append("            return ((").Append(CType(partial.Type)).Append(")((")
+                            .Append(string.Join(", ", remainingNames)).Append(") => ").Append(partialReceiver).Append(".Invoke(")
+                            .Append(string.Join(", ", capturedArguments.Concat(remainingNames))).Append(")));\n            }\n");
+                        return partialHelper + "()";
                     case BoundInvoke invocation:
                         var callable = EmitExpression(invocation.Receiver);
                         var invocationArguments = invocation.Arguments.Select(EmitExpression).ToArray();
@@ -3773,7 +3893,15 @@ public static class CSharpEmitter
                         var pipedValue = EmitExpression(pipe.Value);
                         output.Append("            ").Append(CType(pipe.ValueType)).Append(" ").Append(pipeValue).Append(" = ").Append(pipedValue).Append(";\n");
                         var pipeReceiver = EmitExpression(pipe.Receiver);
-                        output.Append("            return (").Append(pipeReceiver).Append(").Invoke(").Append(pipeValue).Append(");\n            }\n");
+                        if (GenericTypes.TryParse(pipe.ReceiverType, out var pipeShape) && pipeShape.IsFunction && pipeShape.Arguments.Count > 2)
+                        {
+                            var pipeCallable = "__dsharp_pipe_callable_" + pipeId;
+                            var names = pipeShape.Arguments.Skip(1).SkipLast(1).Select((_, i) => "__dsharp_pipe_rest_" + pipeId + "_" + i.ToString(CultureInfo.InvariantCulture)).ToArray();
+                            output.Append("            ").Append(CType(pipe.ReceiverType)).Append(" ").Append(pipeCallable).Append(" = ").Append(pipeReceiver).Append(";\n")
+                                .Append("            return ((").Append(CType(pipe.Type)).Append(")((").Append(string.Join(", ", names)).Append(") => ")
+                                .Append(pipeCallable).Append(".Invoke(").Append(pipeValue).Append(", ").Append(string.Join(", ", names)).Append(")));\n            }\n");
+                        }
+                        else output.Append("            return (").Append(pipeReceiver).Append(").Invoke(").Append(pipeValue).Append(");\n            }\n");
                         return pipeHelper + "()";
                     case BoundPropagation propagation:
                         var propagationId = (propagationCount++).ToString(CultureInfo.InvariantCulture);

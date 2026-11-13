@@ -5,10 +5,10 @@ The matrix below includes subsequent implemented feature slices.
 This status describes tested implementation, not the full syntax draft.
 
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
-is a target addition tracked in #129–#136. Partial application, Result helpers,
-callable HTTP preprocessing and Logger are not implemented by importing that
-specification. The #35 plain-pipe and #36 tuple milestones below retain their
-tested scope; existing full-arity call rules remain in effect until #135 lands.
+is a target addition tracked in #129–#136. Issue #135 implements the ordinary
+function partial-application slice below. Result helpers, callable HTTP
+preprocessing, Logger and the remaining #129 integrations remain future work.
+The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
@@ -28,6 +28,7 @@ tested scope; existing full-arity call rules remain in effect until #135 lands.
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
+| Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
@@ -209,6 +210,12 @@ tuples. Recursive, indirect or unresolved inference and cyclic checked-type
 dependencies require an annotation. Explicitly typed recursive functions remain
 supported. See [the example](../../examples/pipes-inference.ds) and
 [implementation plan](implementation/issue-35-plan.md).
+[Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
+partial application of ordinary functions and function values. Supplied values
+and dynamic receivers are evaluated once when a partial is formed; calls run
+only when saturated. Pipes can supply the first remaining parameter. Async and
+service/interface/extension integrations remain tracked by #129. See the
+[implementation plan](implementation/issue-135-plan.md).
 [Issue #36](https://github.com/gajo357/dsharplang/issues/36) adds immutable
 tuple values and types, with checked, nested `let` destructuring. Tuple elements
 are evaluated in order and a destructuring initializer is evaluated once. A
