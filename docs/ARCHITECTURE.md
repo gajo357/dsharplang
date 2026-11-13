@@ -249,7 +249,7 @@ restart; reconnection and missed-message recovery require an explicit protocol.
 
 .NET is the target platform, including CLR garbage collection. The conceptual
 path is source code, type/composition checks, executable .NET output, and runtime
-hosting. The approved bootstrap uses C# on .NET 10, a hand-written lexer/parser,
+hosting. The compiler uses C# on .NET 11, a hand-written lexer/parser,
 a syntax tree, binding/type checks, a small typed representation, and deterministic
 readable C# emission built through the pinned .NET SDK. No runtime framework
 (including Akka.NET) is selected or required. The implemented subset and exact

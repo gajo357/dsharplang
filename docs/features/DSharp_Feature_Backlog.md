@@ -268,7 +268,7 @@ Run existing bootstrap/verifier/compiler checks. For infrastructure, demonstrate
 
 ### Decisions already made
 
-The repository now uses C# generation, the pinned .NET 10 SDK and compiler-code automation. Older implementation instructions are historical where they conflict with current repository policy.
+The repository now uses C# generation, the pinned .NET 11 SDK and compiler-code automation. Older implementation instructions are historical where they conflict with current repository policy.
 
 ## SET-02: Enable bounded runtime projects and trusted runtime tests
 

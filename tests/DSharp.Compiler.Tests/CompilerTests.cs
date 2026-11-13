@@ -79,8 +79,8 @@ public sealed class CompilerTests
         try
         {
             File.WriteAllText(Path.Combine(directory, "Generated.cs"), result.CSharp);
-            File.WriteAllText(Path.Combine(directory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
-            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}");
+            File.WriteAllText(Path.Combine(directory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"11.0.100\",\"rollForward\":\"disable\"}}");
             File.WriteAllText(Path.Combine(directory, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
             var start = new ProcessStartInfo("dotnet") { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "build", "Generated.csproj", "--nologo", "--verbosity", "quiet" }) start.ArgumentList.Add(arg);
@@ -92,7 +92,7 @@ public sealed class CompilerTests
             var context = new AssemblyLoadContext("generated-" + Guid.NewGuid(), isCollectible: true);
             try
             {
-                var assembly = context.LoadFromAssemblyPath(Path.Combine(directory, "bin/Debug/net10.0/Generated.dll"));
+                var assembly = context.LoadFromAssemblyPath(Path.Combine(directory, "bin/Debug/net11.0/Generated.dll"));
                 var method = assembly.GetType("DSharp.Generated." + module)!.GetMethod(function, BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)!;
                 var observed = method.Invoke(null, null);
                 Assert.Equal(42, observed);

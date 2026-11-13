@@ -100,7 +100,7 @@ are labeled; examples do not finalize grammar.
 
 ## Implementation status
 
-Install the exact SDK in `global.json` (.NET 10.0.100), plus Node 24+,
+Install the exact SDK in `global.json` (.NET 11.0.100), plus Node 24+,
 Git and unzip. Run:
 
 ```bash

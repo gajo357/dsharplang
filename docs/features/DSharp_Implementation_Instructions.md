@@ -21,9 +21,9 @@ relevant contract decision; this update does not approve unrelated draft choices
 or establish implementation completion.
 
 The compiler is C#, with a hand-written lexer/parser, typed binding and generated
-C# on .NET SDK 10.0.100. The implementation status records the tested subset,
-including plain pipes and tuples; do not infer implementation support for partial
-application, async composition or Logger from the new target specification.
+C# on .NET SDK 11.0.100 (C# 15 by default for net11.0). The implementation status
+records the tested subset, including plain pipes and tuples; do not infer support
+for async composition or Logger from the new target specification.
 
 ## Codex web lifecycle
 

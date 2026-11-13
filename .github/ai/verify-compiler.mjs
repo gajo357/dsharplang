@@ -23,7 +23,7 @@ function copy(source, destination) { mkdirSync(dirname(destination), { recursive
 let config;
 try {
   const cache = resolve(process.env.AI_NUGET_CACHE || join(dirname(reports), 'dsharp-nuget-cache'));
-  const keys = ['PATH', 'HOME', 'DOTNET_ROOT', 'DOTNET_CLI_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'SSL_CERT_FILE'];
+  const keys = ['PATH', 'HOME', 'DOTNET_ROOT', 'DOTNET_CLI_HOME', 'XDG_RUNTIME_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'SSL_CERT_FILE'];
   const env = Object.fromEntries(keys.filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
   Object.assign(env, { NUGET_PACKAGES: cache, DOTNET_CLI_TELEMETRY_OPTOUT: '1' });
   // Only approved project/manifests execute during host-side restore.
@@ -44,7 +44,7 @@ try {
   const image = process.env.AI_COMPILER_IMAGE || readFileSync(join(trusted, '.github/ai/compiler-image.txt'), 'utf8').trim();
   const script = `set -euo pipefail
 cd /work
-test "$(dotnet --version)" = 10.0.100
+test "$(dotnet --version)" = 11.0.100
 dotnet restore DSharp.slnx --locked-mode --packages /packages --source /packages -p:NuGetAudit=false
 dotnet build DSharp.slnx --no-restore -c Release
 echo success > build-status

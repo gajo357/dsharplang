@@ -171,8 +171,8 @@ public sealed class DSharpPreludeExecutionTests
         try
         {
             File.WriteAllText(Path.Combine(directory, "Generated.cs"), csharp);
-            File.WriteAllText(Path.Combine(directory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Project>");
-            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}");
+            File.WriteAllText(Path.Combine(directory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"11.0.100\",\"rollForward\":\"disable\"}}");
             File.WriteAllText(Path.Combine(directory, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
             var start = new ProcessStartInfo("dotnet") { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var argument in new[] { "build", "Generated.csproj", "--nologo", "--verbosity", "quiet" }) start.ArgumentList.Add(argument);
@@ -186,7 +186,7 @@ public sealed class DSharpPreludeExecutionTests
             var context = new AssemblyLoadContext("generated-prelude-" + Guid.NewGuid(), isCollectible: true);
             try
             {
-                var generated = context.LoadFromAssemblyPath(Path.Combine(directory, "bin/Debug/net10.0/Generated.dll"));
+                var generated = context.LoadFromAssemblyPath(Path.Combine(directory, "bin/Debug/net11.0/Generated.dll"));
                 verify(generated.GetType("DSharp.Generated.Demo", throwOnError: true)!);
             }
             finally { context.Unload(); }
@@ -202,14 +202,14 @@ public sealed class DSharpPreludeExecutionTests
         try
         {
             File.Copy(typeof(DSharpCompiler).Assembly.Location, Path.Combine(directory, "DSharp.Compiler.dll"));
-            File.WriteAllText(Path.Combine(directory, "Probe.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><Reference Include=\"DSharp.Compiler\"><HintPath>DSharp.Compiler.dll</HintPath></Reference></ItemGroup></Project>");
-            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}");
+            File.WriteAllText(Path.Combine(directory, "Probe.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework></PropertyGroup><ItemGroup><Reference Include=\"DSharp.Compiler\"><HintPath>DSharp.Compiler.dll</HintPath></Reference></ItemGroup></Project>");
+            File.WriteAllText(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"11.0.100\",\"rollForward\":\"disable\"}}");
             File.WriteAllText(Path.Combine(directory, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
             File.WriteAllText(Path.Combine(directory, "Program.cs"), "using System; using System.IO; using DSharp.Compiler; var result = DSharpCompiler.Compile(File.ReadAllText(args[0]), args[0]); if (result.CSharp == null) throw new Exception(string.Join(\"; \", result.Diagnostics)); Console.Write(\"compiled\");");
             var consumer = Path.Combine(directory, "consumer.ds");
             File.WriteAllText(consumer, "module Demo\nfn observe(value: int): Unit { () }\nfn run(): Result<int, string> { tap(observe, Success<int, string>(42)) }");
             await RunDotnet(directory, "build", "Probe.csproj", "--nologo", "--verbosity", "quiet");
-            var output = await RunDotnet(isolated, Path.Combine(directory, "bin/Debug/net10.0/Probe.dll"), consumer);
+            var output = await RunDotnet(isolated, Path.Combine(directory, "bin/Debug/net11.0/Probe.dll"), consumer);
             Assert.Equal("compiled", output.Trim());
         }
         finally { Directory.Delete(directory, true); }

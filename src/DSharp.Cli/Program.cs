@@ -22,9 +22,9 @@ try
         var outputDirectory = args[^1];
         Directory.CreateDirectory(outputDirectory);
         File.WriteAllText(Path.Combine(outputDirectory, "Generated.cs"), result.CSharp);
-        File.WriteAllText(Path.Combine(outputDirectory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>\n");
+        File.WriteAllText(Path.Combine(outputDirectory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>\n");
         // Pin the child SDK even when the output is outside this repository.
-        File.WriteAllText(Path.Combine(outputDirectory, "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}\n");
+        File.WriteAllText(Path.Combine(outputDirectory, "global.json"), "{\"sdk\":{\"version\":\"11.0.100\",\"rollForward\":\"disable\"}}\n");
         var start = new System.Diagnostics.ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetFullPath(outputDirectory) };
         start.ArgumentList.Add("build"); start.ArgumentList.Add("Generated.csproj"); start.ArgumentList.Add("--nologo");
         using var build = System.Diagnostics.Process.Start(start)!;

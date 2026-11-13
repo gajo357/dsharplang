@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: trusted/global.json
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: candidate/global.json
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -32,6 +35,13 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: node candidate/.github/ai/migrate-parameter-fixture.mjs trusted candidate "$BASE_SHA"
+      # The one-time SDK migration verifies the exact base and trusted-file
+      # hashes, then updates version pins and the host runtime-directory allowlist
+      # only in the temporary base checkout.
+      - name: Reconcile the reviewed .NET 11 harness pins
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: node candidate/.github/ai/migrate-dotnet11-harness.mjs trusted "$BASE_SHA"
       - name: Verify candidate with the base harness when available
         run: |
           if [[ -f trusted/.github/ai/bootstrap.sh && -f trusted/.github/ai/verify.sh ]]; then

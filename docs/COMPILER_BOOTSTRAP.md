@@ -28,7 +28,7 @@ layout and development CLI names are provisional implementation details.
 
 ## Pins and reproducibility
 
-`global.json` pins .NET SDK 10.0.100 with roll-forward disabled and net10.0 targets.
+`global.json` pins .NET SDK 11.0.100 with roll-forward disabled and net11.0 targets.
 No compiler/runtime NuGet dependencies are needed. Tests use xUnit 2.9.3,
 xunit.runner.visualstudio 3.1.5 and Microsoft.NET.Test.Sdk 17.14.1, with exact direct
 version ranges and checked-in `packages.lock.json` transitive versions/content hashes.
@@ -40,7 +40,7 @@ VSTest execution, and strict nonzero/all-passed TRX validation. Reports are in
 `artifacts/compiler/`; `COMPILER_REPORT_DIR` selects another output directory.
 The script fails on missing/zero/skipped/failed or inconsistent results.
 Run the existing `.github/ai/bootstrap.sh` and `.github/ai/verify.sh` separately
-for documentation and automation regressions. They are unchanged by this PR.
+for documentation and automation regressions.
 
 ## Acceptance evidence mapping
 
@@ -65,7 +65,8 @@ CLI usage errors exit 2, source/I/O failures exit 1, SDK build failures propagat
 Repository validation uses JavaScript on Node 24+, with saxes 6.0.0 pinned in
 package.json and its transitive graph/integrity hashes pinned in package-lock.json.
 Use npm ci with lifecycle scripts disabled; no Python runtime is required.
-Compiler implementation and generated code remain C# on the pinned .NET 10 SDK.
+Compiler implementation and generated code remain C# on the pinned .NET 11 SDK;
+projects targeting net11.0 use C# 15 by default.
 Generated applications use normal managed .NET execution. Native AOT is deferred
 because future imported packages may require runtime features it does not support;
 AOT compatibility is not a requirement of the language or package contract.

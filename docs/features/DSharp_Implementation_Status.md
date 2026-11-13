@@ -15,6 +15,15 @@ The synchronous Result helper bodies are authored as D# in
 [`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
 compiler and parsed and bound as the active implementation by #142.
 
+The compiler targets the pinned .NET 11 SDK and C# 15. C# 15 provides
+[union types](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/tutorials/unions),
+but the current D# backend retains its explicitly tagged representation. C#'s
+case types and default null state do not by themselves express every D# case:
+`Success(int)` and `Error(int)` remain distinct even when their payload types
+match, and `None`, `Some(null)` and nested options must remain distinct. A future
+native-union lowering needs explicit case representation and execution tests for
+matching, generics, nullability and structural equality before replacing it.
+
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
