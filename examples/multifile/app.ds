@@ -1,0 +1,7 @@
+module Demo
+
+import Billing
+
+fn run(): int {
+    Billing.answer()
+}

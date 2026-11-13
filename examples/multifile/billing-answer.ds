@@ -1,0 +1,7 @@
+module Billing
+
+import Lib.Math
+
+fn answer(): int {
+    increment(start())
+}

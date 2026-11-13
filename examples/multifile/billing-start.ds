@@ -1,0 +1,5 @@
+module Billing
+
+fn start(): int {
+    41
+}

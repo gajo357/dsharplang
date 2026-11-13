@@ -1,0 +1,5 @@
+module Lib.Math
+
+fn increment(value: int): int {
+    value + 1
+}

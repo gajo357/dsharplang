@@ -14,6 +14,7 @@ The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
+| Multiple source files and modules | Dotted module names, file-scoped imports, qualified lookup and duplicate/ambiguity diagnostics | Split modules and cross-module D# calls execute from multiple files |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
@@ -231,6 +232,13 @@ single tuple parameter stays distinct from multiple parameters; `()` remains
 Unit. Tuple values can contain supported nullable and generic data and retain
 structural equality. Function values remain excluded from stored data. See the
 [example](../../examples/tuples.ds) and [implementation plan](implementation/issue-36-plan.md).
+[Issue #46](https://github.com/gajo357/dsharplang/issues/46) adds multi-file
+module contributions and explicit, file-scoped imports. The compiler API and
+CLI accept multiple sources while retaining single-file use. The
+[D# example](../../examples/multifile/) demonstrates cross-file calls and
+qualified names. Generated C# module-wrapper names are not a .NET interop
+contract. Bundling a D# standard library remains separate work; the current
+Result helpers have not yet been migrated to D# source (see #142).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
