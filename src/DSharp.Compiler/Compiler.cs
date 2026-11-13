@@ -6,11 +6,23 @@ namespace DSharp.Compiler;
 public sealed record SourceSpan(int Start, int Length, int Line, int Column);
 public sealed record Diagnostic(string Code, string Path, SourceSpan Span, string Message);
 public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics);
+public sealed record SourceFile(string Path, string Text);
+public sealed record ModuleExport(string Module, string Name, string InternalName);
+public sealed record ModuleResolution(ModuleSyntax Unified, IReadOnlyList<ModuleExport> Exports);
 public sealed record Token(string Text, SourceSpan Span)
 {
+    // Source origin is diagnostic metadata. Preserve the public token value
+    // equality used by existing lexer callers when recording file paths.
+    public string? OriginPath { get; init; }
     public bool IsDocumentation { get; init; }
     public bool HasInterveningComment { get; init; }
     public bool HasCodeBeforeOnLine { get; init; }
+    public bool Equals(Token? other) => other is not null && Text == other.Text &&
+        Span == other.Span && IsDocumentation == other.IsDocumentation &&
+        HasInterveningComment == other.HasInterveningComment &&
+        HasCodeBeforeOnLine == other.HasCodeBeforeOnLine;
+    public override int GetHashCode() => HashCode.Combine(Text, Span, IsDocumentation,
+        HasInterveningComment, HasCodeBeforeOnLine);
 }
 public abstract record ExpressionSyntax(Token Token);
 public abstract record StatementSyntax;
@@ -55,6 +67,7 @@ public sealed record RecordDeclarationSyntax(Token Name, IReadOnlyList<RecordFie
 }
 public sealed record RecordInitializerSyntax(Token Name, ExpressionSyntax Value);
 public sealed record RecordConstructionSyntax(Token Name, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(Name);
+public sealed record QualifiedRecordConstructionSyntax(ExpressionSyntax Receiver, Token Name, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(Name);
 public sealed record FieldAccessSyntax(ExpressionSyntax Receiver, Token Field) : ExpressionSyntax(Field);
 public sealed record ConditionalFieldAccessSyntax(ExpressionSyntax Receiver, Token Operator, Token Field) : ExpressionSyntax(Operator);
 public sealed record RecordUpdateSyntax(ExpressionSyntax Receiver, Token With, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(With);
@@ -183,6 +196,7 @@ public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
 }
 public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions)
 {
+    public IReadOnlyList<Token> Imports { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<RecordDeclarationSyntax> Records { get; init; } = Array.Empty<RecordDeclarationSyntax>();
     public IReadOnlyList<UnionDeclarationSyntax> Unions { get; init; } = Array.Empty<UnionDeclarationSyntax>();
@@ -298,7 +312,7 @@ public static class Lexer
             pendingDocumentation = false;
         }
         tokens.Add(new("", new(i, 0, line, column)) { HasInterveningComment = hasInterveningComment });
-        return tokens;
+        return tokens.Select(token => token with { OriginPath = path }).ToArray();
     }
 }
 
@@ -402,7 +416,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (end == start + 1) return tokens[start];
         var first = tokens[start].Span;
         var last = tokens[end - 1].Span;
-        return new Token(text, new SourceSpan(first.Start, last.Start + last.Length - first.Start, first.Line, first.Column));
+        return new Token(text, new SourceSpan(first.Start, last.Start + last.Length - first.Start, first.Line, first.Column)) { OriginPath = path };
     }
     private bool SplitGenericAssignmentClose(out int end, out string text)
     {
@@ -693,6 +707,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     Expect(")");
                     left = new MemberCallSyntax(left, member, open, args) { TypeArguments = typeArguments };
                 }
+                else if (Current.Text == "{" && (!stopAtBlock || ConditionRecordConstruction()))
+                    left = new QualifiedRecordConstructionSyntax(left, member, RecordInitializers());
                 else left = new FieldAccessSyntax(left, member);
                 continue;
             }
@@ -751,10 +767,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var first = Identifier();
         Token? qualifier = null;
         var name = first;
-        if (Current.Text == ".")
+        while (Current.Text == ".")
         {
             Take();
-            qualifier = first;
+            qualifier = qualifier is null ? name : qualifier with { Text = qualifier.Text + "." + name.Text };
             name = Identifier();
         }
         if (Current.Text == "(")
@@ -875,6 +891,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     {
         var moduleDocs = Documentation("module");
         Expect("module"); var name = Identifier();
+        while (Current.Text == ".") { Take(); var part = Identifier(); name = name with { Text = name.Text + "." + part.Text }; }
+        var imports = new List<Token>();
+        while (Current.Text == "import")
+        {
+            Take(); var imported = Identifier();
+            while (Current.Text == ".") { Take(); var part = Identifier(); imported = imported with { Text = imported.Text + "." + part.Text }; }
+            imports.Add(imported);
+        }
         var functions = new List<FunctionSyntax>();
         var records = new List<RecordDeclarationSyntax>();
         var unions = new List<UnionDeclarationSyntax>();
@@ -953,7 +977,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType });
         }
         if (functions.Count == 0 && records.Count == 0 && unions.Count == 0) throw Error("Expected at least one declaration.");
-        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions };
+        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Imports = imports };
     }
 }
 
@@ -988,7 +1012,7 @@ public static class Binder
     }
     public static BoundModule Bind(ModuleSyntax syntax, string path = "<source>")
     {
-        void Fail(string code, Token token, string message) => throw new SourceError(new(code, path, token.Span, message));
+        void Fail(string code, Token token, string message) => throw new SourceError(new(code, token.OriginPath ?? path, token.Span, message));
         // Give every declared type parameter a distinct internal identity. The
         // lexer cannot produce '$', so these symbols cannot capture a source
         // type, even when a type parameter shadows a nominal type or Unit.
@@ -2002,7 +2026,7 @@ public static class Binder
                             allowInferredHints = true;
                             continue;
                         }
-                        throw deferred ?? new SourceError(new("DS2023", path, location.Span, "Cannot infer all generic type arguments."));
+                        throw deferred ?? new SourceError(new("DS2023", location.OriginPath ?? path, location.Span, "Cannot infer all generic type arguments."));
                     }
                 }
                 if (substitutions.Count != typeParameters.Count)
@@ -2673,7 +2697,7 @@ public static class Binder
                         var token = valueSyntax.Value;
                         if (token.Text.Length > 0 && (token.Text[0] is '\"' or '\''))
                         {
-                            var text = DecodeText(token, path);
+                            var text = DecodeText(token, token.OriginPath ?? path);
                             var isChar = token.Text[0] == '\'';
                             if (isChar && text.Length != 1) Fail("DS2014", token, "A char literal must contain exactly one UTF-16 code unit.");
                             return (new BoundText(text, isChar), isChar ? "char" : "string");
@@ -3467,11 +3491,12 @@ public static class Binder
 
 public static class CSharpEmitter
 {
-    public static string Emit(BoundModule module)
+    public static string Emit(BoundModule module, IReadOnlyList<ModuleExport>? exports = null)
     {
         // A generated namespace avoids a C# member/type name collision without restricting D# names.
         var output = new StringBuilder("// Generated by DSharp.\n#nullable disable\nnamespace DSharp.Generated;\n\n");
-        var globalNames = new HashSet<string>(StringComparer.Ordinal) { module.Name };
+        var globalNames = new HashSet<string>(StringComparer.Ordinal);
+        if (exports is null) globalNames.Add(module.Name);
         foreach (var function in module.Functions) globalNames.Add(function.Name);
         foreach (var record in module.Records)
         {
@@ -3737,9 +3762,41 @@ public static class CSharpEmitter
             }
             output.Append("            default: return false;\n        }\n    }\n}\n\n");
         }
-        output.Append("public sealed class @").Append(module.Name).Append(" : ").Append(container)
-            .Append("\n{\n    private @").Append(module.Name).Append("() {}\n}\n\npublic abstract class ")
-            .Append(container).Append("\n{\n");
+        if (exports is null)
+            output.Append("public sealed class @").Append(module.Name).Append(" : ").Append(container)
+                .Append("\n{\n    private @").Append(module.Name).Append("() {}\n}\n\n");
+        else
+        {
+            var moduleIndex = 0;
+            foreach (var group in exports.GroupBy(item => item.Module, StringComparer.Ordinal))
+            {
+                var className = UniqueGlobal(group.Key.Replace('.', '_'));
+                var baseName = UniqueGlobal("__DSharp_ModuleExports_" + (moduleIndex++).ToString(CultureInfo.InvariantCulture));
+                while (group.Any(export => export.Name == baseName)) baseName = UniqueGlobal(baseName + "_");
+                output.Append("public sealed class @").Append(className).Append(" : ").Append(baseName)
+                    .Append("\n{\n    private @").Append(className).Append("() {}\n}\n\npublic abstract class ")
+                    .Append(baseName).Append("\n{\n");
+                foreach (var export in group)
+                {
+                    var function = module.Functions.Single(item => item.Name == export.InternalName);
+                    SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
+                    output.Append("    public static ").Append(CType(function.ReturnType)).Append(" @").Append(export.Name)
+                        .Append(TypeParameterList(function.TypeParameters)).Append("(");
+                    var arguments = new List<string>();
+                    for (var i = 0; i < function.Parameters.Count; i++)
+                    {
+                        if (i != 0) output.Append(", ");
+                        var argument = "__arg" + i.ToString(CultureInfo.InvariantCulture);
+                        arguments.Add(argument);
+                        output.Append(CType(function.ParameterTypes[i])).Append(" ").Append(argument);
+                    }
+                    output.Append(") => ").Append(container).Append(".@").Append(function.Name)
+                        .Append(TypeParameterList(function.TypeParameters)).Append("(").Append(string.Join(", ", arguments)).Append(");\n");
+                }
+                output.Append("}\n\n");
+            }
+        }
+        output.Append("public abstract class ").Append(container).Append("\n{\n");
         bool NeedsLambdaReturn(object? node)
         {
             if (node is null || node is string) return false;
@@ -4267,9 +4324,39 @@ public static class CSharpEmitter
 
 public static class DSharpCompiler
 {
+    private static bool NeedsModuleResolution(ModuleSyntax module, IReadOnlyList<Token> tokens)
+    {
+        if (module.Imports.Count != 0 || module.Name.Text.Contains('.')) return true;
+        for (var i = 0; i + 1 < tokens.Count; i++)
+            if (tokens[i].Text == module.Name.Text && tokens[i + 1].Text == ".") return true;
+        return false;
+    }
     public static Compilation Compile(string source, string path = "<source>")
     {
-        try { return new(CSharpEmitter.Emit(Binder.Bind(new Parser(Lexer.Lex(source, path), path).Parse(), path)), []); }
+        try
+        {
+            var tokens = Lexer.Lex(source, path);
+            var parsed = new Parser(tokens, path).Parse();
+            if (!NeedsModuleResolution(parsed, tokens))
+                return new(CSharpEmitter.Emit(Binder.Bind(parsed, path)), []);
+            var resolved = MultiFileResolver.Resolve(new[] { parsed });
+            return new(CSharpEmitter.Emit(Binder.Bind(resolved.Unified, path), resolved.Exports), []);
+        }
         catch (SourceError error) { return new(null, [error.Diagnostic]); }
+    }
+    public static Compilation Compile(IReadOnlyList<SourceFile> sources)
+    {
+        if (sources is null || sources.Count == 0)
+            return new(null, new[] { new Diagnostic("DS1002", "<source>", new SourceSpan(0, 0, 1, 1), "Expected at least one source file.") });
+        try
+        {
+            var tokenSets = sources.Select(source => Lexer.Lex(source.Text, source.Path)).ToArray();
+            var parsed = sources.Select((source, i) => new Parser(tokenSets[i], source.Path).Parse()).ToArray();
+            if (parsed.Length == 1 && !NeedsModuleResolution(parsed[0], tokenSets[0]))
+                return new(CSharpEmitter.Emit(Binder.Bind(parsed[0], sources[0].Path)), []);
+            var resolved = MultiFileResolver.Resolve(parsed);
+            return new(CSharpEmitter.Emit(Binder.Bind(resolved.Unified, sources[0].Path), resolved.Exports), []);
+        }
+        catch (SourceError error) { return new(null, new[] { error.Diagnostic }); }
     }
 }

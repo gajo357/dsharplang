@@ -1,25 +1,31 @@
 using DSharp.Compiler;
 
 if (args.Length < 2 || !new[] { "check", "compile" }.Contains(args[0]) ||
-    (args[0] == "check" && args.Length != 2) || (args[0] == "compile" && args.Length != 3))
+    (args[0] == "compile" && args.Length < 3))
 {
-    Console.Error.WriteLine("Usage: dsharp check <source.ds> | dsharp compile <source.ds> <output-directory>");
+    Console.Error.WriteLine("Usage: dsharp check <source.ds> [source.ds ...] | dsharp compile <source.ds> [source.ds ...] <output-directory>");
     return 2;
 }
 try
 {
-    var result = DSharpCompiler.Compile(File.ReadAllText(args[1]), args[1]);
+    var sourcePaths = args[0] == "check" ? args[1..] : args[1..^1];
+    var sources = sourcePaths.Select(path => new SourceFile(path, File.ReadAllText(path))).ToArray();
+    // Keep the existing single-file entry point and its behavior intact.
+    var result = sources.Length == 1
+        ? DSharpCompiler.Compile(sources[0].Text, sources[0].Path)
+        : DSharpCompiler.Compile(sources);
     foreach (var diagnostic in result.Diagnostics)
         Console.Error.WriteLine($"{diagnostic.Path}({diagnostic.Span.Line},{diagnostic.Span.Column}): {diagnostic.Code}: {diagnostic.Message}");
     if (result.Diagnostics.Count != 0) return 1;
     if (args[0] == "compile")
     {
-        Directory.CreateDirectory(args[2]);
-        File.WriteAllText(Path.Combine(args[2], "Generated.cs"), result.CSharp);
-        File.WriteAllText(Path.Combine(args[2], "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>\n");
+        var outputDirectory = args[^1];
+        Directory.CreateDirectory(outputDirectory);
+        File.WriteAllText(Path.Combine(outputDirectory, "Generated.cs"), result.CSharp);
+        File.WriteAllText(Path.Combine(outputDirectory, "Generated.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>\n");
         // Pin the child SDK even when the output is outside this repository.
-        File.WriteAllText(Path.Combine(args[2], "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}\n");
-        var start = new System.Diagnostics.ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetFullPath(args[2]) };
+        File.WriteAllText(Path.Combine(outputDirectory, "global.json"), "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}\n");
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetFullPath(outputDirectory) };
         start.ArgumentList.Add("build"); start.ArgumentList.Add("Generated.csproj"); start.ArgumentList.Add("--nologo");
         using var build = System.Diagnostics.Process.Start(start)!;
         build.WaitForExit(); return build.ExitCode;
