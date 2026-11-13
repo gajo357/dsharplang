@@ -408,3 +408,8 @@ baseline and 362 feature tests). All 23 automation tests passed. The local
 isolated verifier could not pull its pinned Docker image (`Forbidden`); GitHub
 Actions runs the unchanged verifier. These checks validate the repository, not
 durable queue behavior or adoption of this proposal.
+
+The first GitHub compiler run passed all tests but rejected its feature report
+for exceeding the existing size limit. A shorter internal test assembly name
+reduces repeated report paths; test cases, assertions and the verifier remain
+unchanged. This is a CI repair on the same PR, not a queue implementation.
