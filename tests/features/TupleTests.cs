@@ -37,6 +37,16 @@ public sealed class TupleTests
                 b }
             fn optionLeft<T>(value: (Option<T>, T)): Option<T> { let (a, b) = value
                 a }
+            fn empty<T>(): Option<T> { None }
+            fn consume<T>(pair: (Option<T>, T)): int { 42 }
+            fn relay<T>(pair: (Option<T>, T)): T { let (a, b) = pair
+                b }
+            fn definitelyReturn(flag: bool) {
+                relay((if true { return 42 } else { empty() }, if flag { return 42 } else { 1 }))
+            }
+            fn deferredReturn(flag: bool) {
+                consume((if flag { return 7 } else { empty() }, 1))
+            }
             fn maybe<T>(value: T?): T? { value }
             fn inferredForward() { inferredPair() }
             fn inferredPair() { (inferredElement(), 22) }
@@ -114,9 +124,25 @@ public sealed class TupleTests
                     Some(value) => false
                 }
                 let someNull = optionLeft((Some(null), 1))
+                let inferredNone = optionLeft((None, 42))
+                let inferredEmpty = optionLeft((empty(), 42))
+                let contextualEmpty: (Option<int>, int) = (empty(), 42)
+                let (contextEmpty, contextInt) = contextualEmpty
                 let preservedSomeNull = match someNull {
                     None => false
                     Some(null) => true
+                    Some(value) => false
+                }
+                let preservedNone = match inferredNone {
+                    None => true
+                    Some(value) => false
+                }
+                let preservedEmpty = match inferredEmpty {
+                    None => true
+                    Some(value) => false
+                }
+                let contextualIsNone = match contextEmpty {
+                    None => true
                     Some(value) => false
                 }
                 let nestedOption: Option<Option<(int, int)>> = Some(Some((20, 22)))
@@ -158,6 +184,11 @@ public sealed class TupleTests
                 (nestedFirst(((1, null), 1)) == 1) &&
                 (optionFirst((Some(null), 1)) == 1) &&
                 (optionFirst((Some(1), null)) == null) && preservedSomeNull &&
+                (optionFirst((None, 42)) == 42) && preservedNone &&
+                (optionFirst((empty(), 42)) == 42) && preservedEmpty &&
+                contextualIsNone && (contextInt == 42) &&
+                (deferredReturn(true) == 7) && (deferredReturn(false) == 42) &&
+                (definitelyReturn(true) == 42) && (definitelyReturn(false) == 42) &&
                 (missingNumber == null) && (missingText == null) &&
                 (genericMissing == null) && (genericLeft + genericRight == 42) &&
                 (contextNumber == null) && contextSomeNull &&
@@ -224,6 +255,28 @@ public sealed class TupleTests
             Assert.InRange(error.Span.Start, 0, input.Length);
             Assert.InRange(error.Span.Length, 1, input.Length - error.Span.Start);
         }
+
+        const string unresolvedGeneric = """
+            module Demo
+            fn empty<T>(): Option<T> { None }
+            fn consume<T>(pair: (Option<T>, int)): int { 42 }
+            fn f(): int { consume((empty(), 1)) }
+            """;
+        var unresolved = DSharpCompiler.Compile(unresolvedGeneric, "tuples.ds");
+        Assert.Null(unresolved.CSharp);
+        var unresolvedError = Assert.Single(unresolved.Diagnostics);
+        Assert.Equal("DS2023", unresolvedError.Code);
+        Assert.DoesNotContain("null", unresolvedError.Message, StringComparison.OrdinalIgnoreCase);
+
+        const string incompatibleReturn = """
+            module Demo
+            fn empty<T>(): Option<T> { None }
+            fn consume<T>(pair: (Option<T>, T)): int { 42 }
+            fn go(flag: bool) { consume((if flag { return "bad" } else { empty() }, 1)) }
+            """;
+        var incompatible = DSharpCompiler.Compile(incompatibleReturn, "tuples.ds");
+        Assert.Null(incompatible.CSharp);
+        Assert.Equal("DS2027", Assert.Single(incompatible.Diagnostics).Code);
     }
 
     private static async Task WithGenerated(string source, Action<Type> verify)

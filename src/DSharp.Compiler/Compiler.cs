@@ -1812,7 +1812,9 @@ public static class Binder
                             inferenceTypes.Add("<never>");
                             continue;
                         }
-                        var argumentValue = BindExpression(argument, SupportedType(formal, activeTypeParameters) ? formal : null);
+                        var argumentHint = SupportedType(formal, activeTypeParameters) ? formal :
+                            GenericTypes.TryParse(formal, out var partialTupleShape) && partialTupleShape.IsTuple ? formal : null;
+                        var argumentValue = BindExpression(argument, argumentHint);
                         if (typeParameters.Count > 0 && !GenericTypes.TryUnify(formalTypes[index].Text, argumentValue.Type, parameters, substitutions, fixedParameters))
                             Fail("DS2023", argument.Token, "Conflicting generic type arguments.");
                         formal = Substitute(formalTypes[index].Text, substitutions, formalTypes[index]);
@@ -1862,7 +1864,7 @@ public static class Binder
                         (BoundExpression Expression, string Type) value;
                         try { value = ProbeArgument(arguments[i], hint); }
                         catch (SourceError error) when (typeParameters.Count > 0 &&
-                            ((hint is null && error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.") ||
+                            (((hint is null || argumentCore is TupleSyntax) && error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.") ||
                              (argumentCore is TupleSyntax && error.Diagnostic.Code == "DS2002" && error.Diagnostic.Message == "Cannot infer the type of a null tuple element.") ||
                              (arguments[i] is LambdaSyntax && error.Diagnostic.Code == "DS2026")))
                         {
@@ -2164,9 +2166,25 @@ public static class Binder
                         var tupleElements = new BoundExpression?[tuple.Elements.Count];
                         var tupleTypes = new TypeShape?[tuple.Elements.Count];
                         var tupleValues = new (BoundExpression Expression, string Type)?[tuple.Elements.Count];
+                        var tupleDeferredErrors = new SourceError?[tuple.Elements.Count];
                         var tupleParameters = new HashSet<string>(StringComparer.Ordinal);
                         var tupleSubstitutions = new Dictionary<string, string>(StringComparer.Ordinal);
                         var tupleNullableRequired = new HashSet<string>(StringComparer.Ordinal);
+                        var tupleReturnTarget = inferredReturns;
+                        var tupleReturnEvidence = new List<string>?[tuple.Elements.Count];
+                        (BoundExpression Expression, string Type) BindTupleElement(int index, ExpressionSyntax element, string? hint)
+                        {
+                            if (tupleReturnTarget is null) return BindExpression(element, hint);
+                            var saved = inferredReturns;
+                            inferredReturns = new List<string>();
+                            try
+                            {
+                                var value = BindExpression(element, hint);
+                                tupleReturnEvidence[index] = inferredReturns;
+                                return value;
+                            }
+                            finally { inferredReturns = saved; }
+                        }
                         void FindTupleParameters(TypeShape shape)
                         {
                             if (shape.Arguments.Count == 0 && !SupportedType(shape.ToString(), activeTypeParameters)) tupleParameters.Add(shape.Name);
@@ -2198,15 +2216,6 @@ public static class Binder
                                         GenericTypes.TryParse(payloadType, out var payloadShape)) FindTupleNulls(payloads[i], payloadShape);
                             }
                         }
-                        bool NullTupleOnly(ExpressionSyntax element)
-                        {
-                            while (element is GroupSyntax group) element = group.Inner;
-                            return element is NullSyntax || element is TupleSyntax nested && nested.Elements.All(NullTupleOnly) ||
-                                element is CallSyntax call && !locals.ContainsKey(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
-                                    candidates.Count == 1 && call.Arguments.Count > 0 && call.Arguments.All(NullTupleOnly) ||
-                                element is MemberCallSyntax member && member.Receiver is ValueSyntax qualifier && !locals.ContainsKey(qualifier.Value.Text) &&
-                                    unions.ContainsKey(UnionQualifier(qualifier.Value.Text)) && member.Arguments.Count > 0 && member.Arguments.All(NullTupleOnly);
-                        }
                         if (expectedTuple is not null)
                             for (var i = 0; i < tuple.Elements.Count; i++) FindTupleNulls(tuple.Elements[i], expectedTuple.Arguments[i]);
                         var tupleReachable = inferenceReachable; var tupleNever = false;
@@ -2233,12 +2242,12 @@ public static class Binder
                                     continue;
                                 }
                                 (BoundExpression Expression, string Type) value;
-                                try { value = BindExpression(element, hint); }
+                                var savedHasReturn = hasReturn;
+                                try { value = BindTupleElement(i, element, hint); }
                                 catch (SourceError error) when (formal is not null && !SupportedType(formal, activeTypeParameters) &&
-                                    NullTupleOnly(element) &&
                                     (error.Diagnostic.Code == "DS2002" && error.Diagnostic.Message == "Cannot infer the type of a null tuple element." ||
                                      error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments."))
-                                { continue; }
+                                { hasReturn = savedHasReturn; tupleDeferredErrors[i] = error; continue; }
                                 if (value.Type == "<null>" && hint is null) Fail("DS2002", element.Token, "Cannot infer the type of a null tuple element.");
                                 var elementType = hint ?? (value.Type == "<never>" ? KnownType(value.Expression) ?? "Unit" : value.Type);
                                 if (hint is not null && !Convertible(value.Type, hint))
@@ -2273,8 +2282,14 @@ public static class Binder
                                     if (value is null && tupleTypes[i] is null)
                                     {
                                         if (!SupportedType(resolved, activeTypeParameters))
+                                        {
+                                            if (tupleDeferredErrors[i] is { } deferredError) throw deferredError;
                                             Fail("DS2002", tuple.Elements[i].Token, "Cannot infer the type of a null tuple element.");
-                                        value = BindExpression(tuple.Elements[i], resolved);
+                                        }
+                                        inferenceReachable = tupleReachable && !tupleValues.Take(i).Any(item => item?.Type == "<never>");
+                                        value = BindTupleElement(i, tuple.Elements[i], resolved);
+                                        tupleValues[i] = value;
+                                        if (value.Value.Type == "<never>") tupleNever = true;
                                     }
                                     if (value is null) continue;
                                     if (!SupportedType(resolved, activeTypeParameters))
@@ -2289,6 +2304,15 @@ public static class Binder
                                         tupleTypes[i] = resolvedShape;
                                         tupleElements[i] = Coerce(value.Value.Expression, resolved, value.Value.Type);
                                     }
+                                }
+                            }
+                            if (tupleReturnTarget is not null)
+                            {
+                                var reachableElement = tupleReachable;
+                                for (var i = 0; i < tuple.Elements.Count; i++)
+                                {
+                                    if (reachableElement && tupleReturnEvidence[i] is { } evidence) tupleReturnTarget.AddRange(evidence);
+                                    if (tupleValues[i]?.Type == "<never>") reachableElement = false;
                                 }
                             }
                         }
