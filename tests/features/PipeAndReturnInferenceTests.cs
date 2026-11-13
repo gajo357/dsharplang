@@ -5,12 +5,12 @@ using System.Text.RegularExpressions;
 using DSharp.Compiler;
 using Xunit;
 
-namespace D;
+namespace DSharp.Tests;
 
-public sealed class PipeTests
+public sealed class PipeAndReturnInferenceTests
 {
-    [Fact(DisplayName = "Pipe")]
-    public async Task Run()
+    [Fact(DisplayName = "Pipes and inferred returns/execution")]
+    public async Task PipesEvaluateOnceInOrderAndInferenceUsesCheckedBodies()
     {
         const string source = """
             module Demo
