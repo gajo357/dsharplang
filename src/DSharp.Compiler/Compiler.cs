@@ -62,6 +62,7 @@ public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public sealed record CoalesceSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
+public sealed record PipeSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public sealed record PropagateSyntax(ExpressionSyntax Operand, Token Operator) : ExpressionSyntax(Operator);
 public abstract record PatternSyntax(Token Token);
 public sealed record WildcardPatternSyntax(Token Wildcard) : PatternSyntax(Wildcard);
@@ -103,6 +104,7 @@ public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList
     public IReadOnlyList<BoundCapture> Captures { get; init; } = Array.Empty<BoundCapture>();
 }
 public sealed record BoundInvoke(BoundExpression Receiver, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundPipe(BoundExpression Value, string ValueType, BoundExpression Receiver, string Type) : BoundExpression;
 public sealed record BoundCall(string Name, IReadOnlyList<BoundExpression> Arguments) : BoundExpression
 {
     public IReadOnlyList<string> TypeArguments { get; init; } = Array.Empty<string>();
@@ -160,6 +162,7 @@ public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
     public IReadOnlyList<Token> TypeParameters { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<ParameterSyntax> Parameters { get; init; } = Array.Empty<ParameterSyntax>();
     public IReadOnlyList<LetBindingSyntax> Bindings { get; init; } = Array.Empty<LetBindingSyntax>();
+    public bool InferReturnType { get; init; }
 }
 public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions)
 {
@@ -270,7 +273,7 @@ public static class Lexer
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
                 do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
-            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>" or "->" or "??" or "?.")) { Advance(); Advance(); }
+            else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>" or "->" or "??" or "?." or "|>")) { Advance(); Advance(); }
             else if ("(),.:{}=+-*/%!<>|?".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
             tokens.Add(new(source[start..i], new(start, i - start, startLine, startColumn)) { HasInterveningComment = hasInterveningComment });
@@ -478,7 +481,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             {
                 if (index + 1 == tokens.Count) return false;
                 return tokens[index + 1].Text is "." or "?." or "?" or "with" or "{" or
-                    "??" or "||" or "&&" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "+" or "-" or "*" or "/" or "%";
+                    "|>" or "??" or "||" or "&&" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "+" or "-" or "*" or "/" or "%";
             }
         }
         return false;
@@ -573,7 +576,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         else if (Current.Text is "-" or "!")
         {
             var op = Take();
-            left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 7, stopAtBlock, stopAtMatchArrow));
+            left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 8, stopAtBlock, stopAtMatchArrow));
         }
         else if (Current.Text == "(")
         {
@@ -678,23 +681,24 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 left = new RecordUpdateSyntax(left, with, RecordInitializers());
                 continue;
             }
-            var precedence = Current.Text switch { "??" => 0, "||" => 1, "&&" => 2, "==" or "!=" => 3,
-                "<" or "<=" or ">" or ">=" => 4, "+" or "-" => 5, "*" or "/" or "%" => 6, _ => -1 };
+            var precedence = Current.Text switch { "|>" => 0, "??" => 1, "||" => 2, "&&" => 3, "==" or "!=" => 4,
+                "<" or "<=" or ">" or ">=" => 5, "+" or "-" => 6, "*" or "/" or "%" => 7, _ => -1 };
             if (precedence < minimumPrecedence) break;
             var op = Take();
             var rightLine = line is not null ? Current.Span.Line : line;
             var right = Expression(rightLine, op.Text == "??" ? precedence : precedence + 1, stopAtBlock, stopAtMatchArrow);
             static bool Comparison(ExpressionSyntax expr) => expr is BinarySyntax binary &&
                 binary.Operator.Text is "==" or "!=" or "<" or "<=" or ">" or ">=";
-            if (precedence is 3 or 4 && (Comparison(left) || Comparison(right)))
+            if (precedence is 4 or 5 && (Comparison(left) || Comparison(right)))
                 throw new SourceError(new("DS2013", path, op.Span, "Chained comparisons require explicit grouping."));
-            left = op.Text == "??" ? new CoalesceSyntax(left, op, right) : new BinarySyntax(left, op, right);
+            left = op.Text == "??" ? new CoalesceSyntax(left, op, right) : op.Text == "|>"
+                ? new PipeSyntax(left, op, right) : new BinarySyntax(left, op, right);
         }
         return left;
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or MatchSyntax or GroupSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -888,14 +892,17 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     Take();
                 } while (true);
             }
-            Expect(")"); Expect(":");
-            var type = TypeToken();
+            Expect(")");
+            var inferReturnType = Current.Text != ":";
+            Token type;
+            if (inferReturnType) type = new Token("<inferred>", Current.Span);
+            else { Take(); type = TypeToken(); }
             var body = Block();
             // Prefer the missing-result span over a following stray closing brace.
             if (Current.Text == "}" && type.Text == "int" && body.Result is UnitSyntax missing &&
                 body.Statements.All(statement => statement is LetStatementSyntax))
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
-            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings });
+            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType });
         }
         if (functions.Count == 0 && records.Count == 0 && unions.Count == 0) throw Error("Expected at least one declaration.");
         return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions };
@@ -1117,7 +1124,7 @@ public static class Binder
             if (records.TryGetValue(function.Name.Text, out var conflictingRecord))
                 Fail("DS2015", function.Name.Span.Start > conflictingRecord.Name.Span.Start ? function.Name : conflictingRecord.Name,
                     "A function and record constructor cannot share a name.");
-            if (!SupportedType(function.ReturnType.Text, typeParameters)) Fail("DS2003", function.ReturnType, "Unsupported return type or unconstrained nullable type parameter.");
+            if (!function.InferReturnType && !SupportedType(function.ReturnType.Text, typeParameters)) Fail("DS2003", function.ReturnType, "Unsupported return type or unconstrained nullable type parameter.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters)
             {
@@ -1131,9 +1138,349 @@ public static class Binder
         foreach (var unionCase in standardOption.Cases)
             if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
                 cases.Add(unionCase.Name.Text, new() { (standardOption, unionCase) });
-        var functions = new List<BoundFunction>();
-        foreach (var function in syntax.Functions)
+        // Return inference is deliberately local to a checked, acyclic call
+        // graph. Distinguish calls to lexical function values from calls to
+        // module functions; the former cannot establish a static call graph.
+        (HashSet<string> Calls, bool Indirect) AnalyzeDependencies(FunctionSyntax source, bool includeUnreachable = false, bool includeDeadBranches = false)
         {
+            var calls = new HashSet<string>(StringComparer.Ordinal);
+            var indirect = false;
+            var visible = source.Parameters.Select(parameter => parameter.Name.Text).ToHashSet(StringComparer.Ordinal);
+            void PatternNames(PatternSyntax pattern, HashSet<string> names)
+            {
+                if (pattern is NamePatternSyntax name) names.Add(name.Name.Text);
+                else if (pattern is CasePatternSyntax unionCase)
+                    foreach (var argument in unionCase.Arguments) PatternNames(argument, names);
+            }
+            // Conservative syntactic subsumption is sufficient to avoid
+            // inventing call edges from obvious duplicate/dead match arms;
+            // typed pattern usefulness is checked later during binding.
+            bool Subsumes(PatternSyntax prior, PatternSyntax next) => (prior, next) switch
+            {
+                (WildcardPatternSyntax, _) => true,
+                (NullPatternSyntax, NullPatternSyntax) => true,
+                (UnitPatternSyntax, UnitPatternSyntax) => true,
+                (NamePatternSyntax a, NamePatternSyntax b) => a.Name.Text == b.Name.Text,
+                (LiteralPatternSyntax a, LiteralPatternSyntax b) => a.Literal.Text == b.Literal.Text && (a.Minus is null) == (b.Minus is null),
+                (CasePatternSyntax a, CasePatternSyntax b) => a.Qualifier?.Text == b.Qualifier?.Text && a.Name.Text == b.Name.Text &&
+                    a.Arguments.Count == b.Arguments.Count && a.Arguments.Zip(b.Arguments).All(pair => Subsumes(pair.First, pair.Second)),
+                _ => false
+            };
+            bool NeverBlock(BlockSyntax block)
+            {
+                var statements = block.Statements.Count > 0 ? block.Statements :
+                    block.Bindings.Select(binding => (StatementSyntax)new LetStatementSyntax(binding)).ToArray();
+                foreach (var statement in statements)
+                {
+                    if (statement is ReturnStatementSyntax) return true;
+                    if (statement is LetStatementSyntax declaration &&
+                        NeverExpression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer))) return true;
+                    if (statement is ExpressionStatementSyntax evaluated && NeverExpression(evaluated.Expression)) return true;
+                }
+                return NeverExpression(block.Result);
+            }
+            bool NeverExpression(ExpressionSyntax expression) => expression switch
+            {
+                GroupSyntax group => NeverExpression(group.Inner),
+                PropagateSyntax propagation => NeverExpression(propagation.Operand),
+                IfSyntax conditional => NeverExpression(conditional.Condition) ||
+                    (LiteralBool(conditional.Condition) == true ? NeverBlock(conditional.Then) :
+                     LiteralBool(conditional.Condition) == false ? NeverBlock(conditional.Else) :
+                     conditional.HasElse && NeverBlock(conditional.Then) && NeverBlock(conditional.Else)),
+                MatchSyntax match => NeverExpression(match.Scrutinee) || match.Arms.All(arm =>
+                    arm.Guard is not null && NeverExpression(arm.Guard) || NeverExpression(arm.Value)),
+                CallSyntax call => call.Arguments.Any(NeverExpression),
+                InvokeSyntax invoke => NeverExpression(invoke.Receiver) || invoke.Arguments.Any(NeverExpression),
+                MemberCallSyntax member => NeverExpression(member.Receiver) || member.Arguments.Any(NeverExpression),
+                RecordConstructionSyntax record => record.Fields.Any(field => NeverExpression(field.Value)),
+                RecordUpdateSyntax update => NeverExpression(update.Receiver) || update.Fields.Any(field => NeverExpression(field.Value)),
+                FieldAccessSyntax access => NeverExpression(access.Receiver),
+                ConditionalFieldAccessSyntax access => NeverExpression(access.Receiver),
+                UnarySyntax unary => NeverExpression(unary.Operand),
+                BinarySyntax binary => NeverExpression(binary.Left) ||
+                    (binary.Operator.Text is not ("&&" or "||") ||
+                     binary.Operator.Text == "&&" && LiteralBool(binary.Left) == true ||
+                     binary.Operator.Text == "||" && LiteralBool(binary.Left) == false) && NeverExpression(binary.Right),
+                CoalesceSyntax coalesce => NeverExpression(coalesce.Left),
+                PipeSyntax pipe => NeverExpression(pipe.Left) || NeverExpression(pipe.Right),
+                _ => false
+            };
+            bool? LiteralBool(ExpressionSyntax expression) => expression switch
+            {
+                GroupSyntax group => LiteralBool(group.Inner),
+                ValueSyntax { Value.Text: "true" } => true,
+                ValueSyntax { Value.Text: "false" } => false,
+                _ => null
+            };
+            void Block(BlockSyntax block, HashSet<string> outer)
+            {
+                var names = new HashSet<string>(outer, StringComparer.Ordinal);
+                var statements = block.Statements.Count > 0 ? block.Statements :
+                    block.Bindings.Select(binding => (StatementSyntax)new LetStatementSyntax(binding)).ToArray();
+                foreach (var statement in statements)
+                {
+                    switch (statement)
+                    {
+                        case LetStatementSyntax declaration:
+                            Expression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer), names);
+                            names.Add(declaration.Binding.Name.Text);
+                            if (!includeUnreachable && NeverExpression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer))) return;
+                            break;
+                        case ReturnStatementSyntax returned: Expression(returned.Value, names); if (!includeUnreachable) return; break;
+                        case ExpressionStatementSyntax evaluated:
+                            Expression(evaluated.Expression, names);
+                            if (!includeUnreachable && NeverExpression(evaluated.Expression)) return;
+                            break;
+                    }
+                }
+                Expression(block.Result, names);
+            }
+            void Expression(ExpressionSyntax expression, HashSet<string> names)
+            {
+                switch (expression)
+                {
+                    case CallSyntax call:
+                        var callCompletesArguments = true;
+                        foreach (var argument in call.Arguments)
+                        {
+                            Expression(argument, names);
+                            if (!includeUnreachable && NeverExpression(argument)) { callCompletesArguments = false; break; }
+                        }
+                        if (!callCompletesArguments) break;
+                        if (names.Contains(call.Name.Text)) indirect = true;
+                        else if (cases.ContainsKey(call.Name.Text)) { /* A union case is not a function dependency. */ }
+                        else if (signatures.ContainsKey(call.Name.Text)) calls.Add(call.Name.Text);
+                        else indirect = true;
+                        break;
+                    case MemberCallSyntax member:
+                        var qualifier = member.Receiver as ValueSyntax;
+                        var unionName = qualifier?.Value.Text == "Result" && !userResultType ? resultSymbol :
+                            qualifier?.Value.Text == "Option" && !userOptionType ? optionSymbol : qualifier?.Value.Text;
+                        if (qualifier is null || names.Contains(qualifier.Value.Text) || unionName is null || !unions.ContainsKey(unionName))
+                        { indirect = true; Expression(member.Receiver, names); }
+                        if (includeUnreachable || !NeverExpression(member.Receiver))
+                            foreach (var argument in member.Arguments) { Expression(argument, names); if (!includeUnreachable && NeverExpression(argument)) break; }
+                        break;
+                    case InvokeSyntax invocation:
+                        Expression(invocation.Receiver, names);
+                        var invokeCompletes = includeUnreachable || !NeverExpression(invocation.Receiver);
+                        if (invokeCompletes)
+                            foreach (var argument in invocation.Arguments)
+                            {
+                                Expression(argument, names);
+                                if (!includeUnreachable && NeverExpression(argument)) { invokeCompletes = false; break; }
+                            }
+                        if (invokeCompletes) indirect = true;
+                        break;
+                    case PipeSyntax pipe:
+                        Expression(pipe.Left, names);
+                        if (!includeUnreachable && NeverExpression(pipe.Left)) break;
+                        var pipeTarget = pipe.Right;
+                        while (pipeTarget is GroupSyntax groupedTarget) pipeTarget = groupedTarget.Inner;
+                        if (pipeTarget is ValueSyntax pipeName && !names.Contains(pipeName.Value.Text))
+                        {
+                            if (cases.ContainsKey(pipeName.Value.Text)) { /* Union construction is statically known. */ }
+                            else if (signatures.ContainsKey(pipeName.Value.Text)) calls.Add(pipeName.Value.Text);
+                            else indirect = true;
+                        }
+                        else if (pipeTarget is FieldAccessSyntax { Receiver: ValueSyntax pipeQualifier } &&
+                            !names.Contains(pipeQualifier.Value.Text) && unions.ContainsKey(
+                                pipeQualifier.Value.Text == "Result" && !userResultType ? resultSymbol :
+                                pipeQualifier.Value.Text == "Option" && !userOptionType ? optionSymbol : pipeQualifier.Value.Text))
+                        { /* Qualified union case construction is statically known. */ }
+                        else
+                        {
+                            indirect = true;
+                            Expression(pipe.Right, names);
+                        }
+                        break;
+                    case LambdaSyntax lambda:
+                        var lambdaNames = new HashSet<string>(names, StringComparer.Ordinal);
+                        foreach (var parameter in lambda.Parameters) lambdaNames.Add(parameter.Name.Text);
+                        Block(lambda.Body, lambdaNames);
+                        break;
+                    case IfSyntax conditional:
+                        Expression(conditional.Condition, names);
+                        if (includeUnreachable || !NeverExpression(conditional.Condition))
+                        {
+                            var condition = includeUnreachable ? null : LiteralBool(conditional.Condition);
+                            // A dead branch that can complete still contributes to
+                            // the checked conditional's common type. A dead branch
+                            // that cannot complete contributes only unreachable exits.
+                            if (condition != false || includeDeadBranches && !NeverBlock(conditional.Then) && !NeverBlock(conditional.Else)) Block(conditional.Then, names);
+                            if (condition != true || includeDeadBranches && !NeverBlock(conditional.Else) && !NeverBlock(conditional.Then)) Block(conditional.Else, names);
+                        }
+                        break;
+                    case MatchSyntax match:
+                        Expression(match.Scrutinee, names);
+                        if (!includeUnreachable && NeverExpression(match.Scrutinee)) break;
+                        var earlierPatterns = new List<PatternSyntax>();
+                        // Covered arms can influence the checked match type only
+                        // if some reachable arm can actually complete.
+                        var coverageForCompletion = new List<PatternSyntax>();
+                        var hasCompletingReachableArm = false;
+                        ExpressionSyntax literalSource = match.Scrutinee;
+                        while (literalSource is GroupSyntax literalGroup) literalSource = literalGroup.Inner;
+                        PatternSyntax? singleton = literalSource switch
+                        {
+                            ValueSyntax value when value.Value.Text is "true" or "false" ||
+                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) ||
+                                value.Value.Text.StartsWith('"') || value.Value.Text.StartsWith('\'') => new LiteralPatternSyntax(value.Value),
+                            UnarySyntax { Operator.Text: "-", Operand: ValueSyntax value } unary when
+                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
+                            UnitSyntax unit => new UnitPatternSyntax(unit.Unit),
+                            NullSyntax nullValue => new NullPatternSyntax(nullValue.Null),
+                            _ => null
+                        };
+                        bool LiteralArmPossible(PatternSyntax pattern)
+                        {
+                            if (singleton is not LiteralPatternSyntax point || pattern is not LiteralPatternSyntax literal) return true;
+                            if (point.Literal.Text is "true" or "false" && literal.Literal.Text is "true" or "false")
+                                return point.Literal.Text == literal.Literal.Text;
+                            if (int.TryParse((point.Minus is null ? "" : "-") + point.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var a) &&
+                                int.TryParse((literal.Minus is null ? "" : "-") + literal.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var b)) return a == b;
+                            return true; // Different spellings of text literals can denote the same value.
+                        }
+                        bool Covered(List<PatternSyntax> previous, PatternSyntax target) =>
+                            previous.Any(pattern => Subsumes(pattern, target) || singleton is not null && Subsumes(pattern, singleton));
+                        foreach (var candidate in match.Arms)
+                        {
+                            if (!LiteralArmPossible(candidate.Pattern) || Covered(coverageForCompletion, candidate.Pattern)) continue;
+                            if ((candidate.Guard is null || !NeverExpression(candidate.Guard) && LiteralBool(candidate.Guard) != false) && !NeverExpression(candidate.Value))
+                                hasCompletingReachableArm = true;
+                            if (candidate.Guard is null) coverageForCompletion.Add(candidate.Pattern);
+                        }
+                        foreach (var arm in match.Arms)
+                        {
+                            if (!includeUnreachable && (!LiteralArmPossible(arm.Pattern) || Covered(earlierPatterns, arm.Pattern)) &&
+                                (!includeDeadBranches || !hasCompletingReachableArm || NeverExpression(arm.Value))) continue;
+                            var armNames = new HashSet<string>(names, StringComparer.Ordinal);
+                            PatternNames(arm.Pattern, armNames);
+                            if (arm.Guard is not null) Expression(arm.Guard, armNames);
+                            if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard) &&
+                                (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames);
+                            if (arm.Guard is null) earlierPatterns.Add(arm.Pattern);
+                            if (!includeUnreachable && !includeDeadBranches && arm.Guard is null && arm.Pattern is WildcardPatternSyntax) break;
+                        }
+                        break;
+                    case GroupSyntax group: Expression(group.Inner, names); break;
+                    case UnarySyntax unary: Expression(unary.Operand, names); break;
+                    case BinarySyntax binary:
+                        Expression(binary.Left, names);
+                        if (includeUnreachable || !NeverExpression(binary.Left) &&
+                            (includeDeadBranches || !(binary.Operator.Text == "&&" && LiteralBool(binary.Left) == false) &&
+                            !(binary.Operator.Text == "||" && LiteralBool(binary.Left) == true))) Expression(binary.Right, names);
+                        break;
+                    case CoalesceSyntax coalesce:
+                        Expression(coalesce.Left, names);
+                        if (includeUnreachable || !NeverExpression(coalesce.Left)) Expression(coalesce.Right, names);
+                        break;
+                    case PropagateSyntax propagation: Expression(propagation.Operand, names); break;
+                    case FieldAccessSyntax access: Expression(access.Receiver, names); break;
+                    case ConditionalFieldAccessSyntax access: Expression(access.Receiver, names); break;
+                    case RecordConstructionSyntax construction:
+                        foreach (var field in construction.Fields)
+                        {
+                            Expression(field.Value, names);
+                            if (!includeUnreachable && NeverExpression(field.Value)) break;
+                        }
+                        break;
+                    case RecordUpdateSyntax update:
+                        Expression(update.Receiver, names);
+                        if (includeUnreachable || !NeverExpression(update.Receiver))
+                            foreach (var field in update.Fields)
+                            {
+                                Expression(field.Value, names);
+                                if (!includeUnreachable && NeverExpression(field.Value)) break;
+                            }
+                        break;
+                }
+            }
+            Block(source.Body ?? new BlockSyntax(source.Bindings, source.Expression ?? new ValueSyntax(source.Literal)), visible);
+            return (calls, indirect);
+        }
+        var dependencyGraph = syntax.Functions.ToDictionary(function => function.Name.Text, function => AnalyzeDependencies(function), StringComparer.Ordinal);
+        bool InRecursiveComponent(string root)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            bool ReachesRoot(string current)
+            {
+                if (!seen.Add(current)) return false;
+                foreach (var next in dependencyGraph[current].Calls)
+                    if (next == root || ReachesRoot(next)) return true;
+                return false;
+            }
+            return ReachesRoot(root);
+        }
+        bool HasIndirectDependency(string root)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            bool Visit(string current) => seen.Add(current) &&
+                (dependencyGraph[current].Indirect || dependencyGraph[current].Calls.Any(Visit));
+            return Visit(root);
+        }
+        foreach (var function in syntax.Functions.Where(function => function.InferReturnType))
+            if (InRecursiveComponent(function.Name.Text) || HasIndirectDependency(function.Name.Text))
+                Fail("DS2027", function.Name, "An explicit return type is required for recursive or unresolved function dependencies.");
+        // Dead branches can contribute to the checked type of a completing
+        // expression. Infer those type dependencies in an acyclic order too;
+        // a cycle needs an annotation instead of relying on declaration order.
+        // Statements after an unconditional exit and impossible calls remain
+        // excluded, and annotated callees already have known return types.
+        var typeDependencies = syntax.Functions.ToDictionary(function => function.Name.Text,
+            function => AnalyzeDependencies(function, includeDeadBranches: true).Calls, StringComparer.Ordinal);
+        bool HasCyclicTypeDependencies(string root)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            bool Visit(string current)
+            {
+                if (!seen.Add(current)) return false;
+                foreach (var next in typeDependencies[current])
+                    if (signatures[next].InferReturnType && (next == root || Visit(next))) return true;
+                return false;
+            }
+            return Visit(root);
+        }
+        foreach (var function in syntax.Functions.Where(function => function.InferReturnType))
+            if (HasCyclicTypeDependencies(function.Name.Text))
+                Fail("DS2027", function.Name, "An explicit return type is required for cyclic checked-type dependencies.");
+        // A statically dead call may still affect the checked type of an if or
+        // match expression. Prefer resolving its callee first when doing so
+        // does not conflict with the reachable-call inference order. Dead-only
+        // cycles use the provisional bottom fallback and are checked in pass 2.
+        var schedulingGraph = typeDependencies.ToDictionary(entry => entry.Key,
+            entry => new HashSet<string>(entry.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+        bool SchedulingPath(string from, string to)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            bool Visit(string current) => current == to || seen.Add(current) && schedulingGraph[current].Any(Visit);
+            return Visit(from);
+        }
+        foreach (var owner in syntax.Functions)
+            foreach (var callee in AnalyzeDependencies(owner, includeUnreachable: true).Calls)
+                if (signatures[callee].InferReturnType && !schedulingGraph[owner.Name.Text].Contains(callee) &&
+                    !SchedulingPath(callee, owner.Name.Text))
+                    schedulingGraph[owner.Name.Text].Add(callee);
+        var inferenceOrder = new List<FunctionSyntax>();
+        var scheduled = new HashSet<string>(StringComparer.Ordinal);
+        void Schedule(FunctionSyntax function)
+        {
+            if (!scheduled.Add(function.Name.Text)) return;
+            foreach (var name in schedulingGraph[function.Name.Text])
+                if (signatures[name].InferReturnType) Schedule(signatures[name]);
+            inferenceOrder.Add(function);
+        }
+        foreach (var function in syntax.Functions.Where(function => function.InferReturnType)) Schedule(function);
+        foreach (var function in syntax.Functions.Where(function => !function.InferReturnType)) Schedule(function);
+        var functions = new List<BoundFunction>();
+        // Infer every omitted signature before the final body-checking pass.
+        // Runtime-unreachable calls may still need a callee's inferred type
+        // during final checking, even when they are not call-graph edges.
+        foreach (var inferencePass in new[] { true, false })
+        foreach (var declaration in inferenceOrder)
+        {
+            if (inferencePass && !declaration.InferReturnType) continue;
+            var function = inferencePass ? declaration : signatures[declaration.Name.Text];
             var functionTypeScope = functionTypeScopes[function.Name.Text];
             var activeTypeParameters = Parameters(function.TypeParameters);
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
@@ -1143,6 +1490,14 @@ public static class Binder
             bool hasReturn = false;
             string? currentReturnType = function.ReturnType.Text;
             List<string>? inferredReturns = null;
+            bool inferenceReachable = true;
+            bool? LiteralCondition(ExpressionSyntax node) => node switch
+            {
+                GroupSyntax group => LiteralCondition(group.Inner),
+                ValueSyntax { Value.Text: "true" } => true,
+                ValueSyntax { Value.Text: "false" } => false,
+                _ => null
+            };
             bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected ||
                 (IsNullable(expected) && (actual == "<null>" || actual == expected[..^1]));
             string? CommonType(string left, string right)
@@ -1231,7 +1586,9 @@ public static class Binder
                     GroupSyntax group => NeverExpression(group.Inner),
                     PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
-                        conditional.HasElse && NeverBlock(conditional.Then) && NeverBlock(conditional.Else),
+                        (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
+                         LiteralCondition(conditional.Condition) == false ? NeverBlock(conditional.Else) :
+                         conditional.HasElse && NeverBlock(conditional.Then) && NeverBlock(conditional.Else)),
                     MatchSyntax match => NeverExpression(match.Scrutinee) || match.Arms.All(arm =>
                         arm.Guard is not null && NeverExpression(arm.Guard) || NeverExpression(arm.Value)),
                     CallSyntax call => call.Arguments.Any(NeverExpression),
@@ -1243,8 +1600,11 @@ public static class Binder
                     ConditionalFieldAccessSyntax access => NeverExpression(access.Receiver),
                     UnarySyntax unary => NeverExpression(unary.Operand),
                     BinarySyntax binary => NeverExpression(binary.Left) ||
-                        binary.Operator.Text is not ("&&" or "||") && NeverExpression(binary.Right),
+                        (binary.Operator.Text is not ("&&" or "||") ||
+                         binary.Operator.Text == "&&" && LiteralCondition(binary.Left) == true ||
+                         binary.Operator.Text == "||" && LiteralCondition(binary.Left) == false) && NeverExpression(binary.Right),
                     CoalesceSyntax coalesce => NeverExpression(coalesce.Left),
+                    PipeSyntax pipe => NeverExpression(pipe.Left) || NeverExpression(pipe.Right),
                     _ => false
                 };
                 void CollectNullConstraints(ExpressionSyntax expression, string formal)
@@ -1365,10 +1725,53 @@ public static class Binder
                     return type with { Arguments = union.TypeParameters.Select(parameter =>
                         GenericTypes.TryParse(caseMap[parameter.Text], out var argument) ? argument : type.Arguments[0]).ToArray() };
                 }
+                // When the checked parameter types are already fixed, a
+                // definitely noncompleting argument makes all later arguments
+                // irrelevant to return inference. Defer those expressions to
+                // the final checking pass, where all signatures are known.
+                if (inferencePass && arguments.Any(NeverExpression))
+                {
+                    var inferenceValues = new List<BoundExpression>();
+                    var inferenceTypes = new List<string>();
+                    var never = false;
+                    foreach (var (argument, index) in arguments.Select((argument, index) => (argument, index)))
+                    {
+                        var formal = Substitute(formalTypes[index].Text, substitutions, formalTypes[index]);
+                        if (never)
+                        {
+                            inferenceValues.Add(new BoundUnit());
+                            inferenceTypes.Add("<never>");
+                            continue;
+                        }
+                        var argumentValue = BindExpression(argument, SupportedType(formal, activeTypeParameters) ? formal : null);
+                        if (typeParameters.Count > 0 && !GenericTypes.TryUnify(formalTypes[index].Text, argumentValue.Type, parameters, substitutions, fixedParameters))
+                            Fail("DS2023", argument.Token, "Conflicting generic type arguments.");
+                        formal = Substitute(formalTypes[index].Text, substitutions, formalTypes[index]);
+                        if (SupportedType(formal, activeTypeParameters))
+                        {
+                            Require(argument, argumentValue.Type, formal);
+                            inferenceValues.Add(Coerce(argumentValue.Expression, formal, argumentValue.Type));
+                        }
+                        else inferenceValues.Add(argumentValue.Expression);
+                        inferenceTypes.Add(argumentValue.Type);
+                        never = argumentValue.Type == "<never>" || NeverExpression(argument);
+                    }
+                    return (inferenceValues, inferenceTypes, substitutions, never);
+                }
                 for (var i = 0; i < arguments.Count; i++) CollectNullConstraints(arguments[i], formalTypes[i].Text);
                 var bound = new (BoundExpression Expression, string Type)?[arguments.Count];
                 var remaining = arguments.Count;
                 var allowInferredHints = false;
+                // Inference can bind arguments several times and out of source
+                // order. Provisional attempts must not contribute return exits.
+                (BoundExpression Expression, string Type) ProbeArgument(ExpressionSyntax argument, string? hint)
+                {
+                    if (inferredReturns is null) return BindExpression(argument, hint);
+                    var saved = inferredReturns;
+                    inferredReturns = new List<string>();
+                    try { return BindExpression(argument, hint); }
+                    finally { inferredReturns = saved; }
+                }
                 while (remaining > 0)
                 {
                     var progress = false;
@@ -1383,7 +1786,7 @@ public static class Binder
                             GenericTypes.TryParse(partial, out var partialShape) && partialShape.IsFunction)
                             hint = partial;
                         (BoundExpression Expression, string Type) value;
-                        try { value = BindExpression(arguments[i], hint); }
+                        try { value = ProbeArgument(arguments[i], hint); }
                         catch (SourceError error) when (typeParameters.Count > 0 &&
                             ((hint is null && error.Diagnostic.Code == "DS2023" && error.Diagnostic.Message == "Cannot infer all generic type arguments.") ||
                              (arguments[i] is LambdaSyntax && error.Diagnostic.Code == "DS2026")))
@@ -1424,7 +1827,7 @@ public static class Binder
                                 var expected = Substitute(formalTypes[i].Text, candidate, formalTypes[i]);
                                 try
                                 {
-                                    var rebound = BindExpression(arguments[i], expected);
+                                    var rebound = ProbeArgument(arguments[i], expected);
                                     if (Convertible(rebound.Type, expected))
                                     {
                                         value = rebound;
@@ -1464,18 +1867,29 @@ public static class Binder
                 if (substitutions.Count != typeParameters.Count)
                     Fail("DS2023", location, "Cannot infer all generic type arguments.");
                 var values = new List<BoundExpression>();
-                for (var i = 0; i < bound.Length; i++)
+                var finalTypes = new List<string>();
+                var entryReachable = inferenceReachable;
+                var earlierNever = false;
+                try
                 {
-                    var expected = Substitute(formalTypes[i].Text, substitutions, formalTypes[i]);
-                    if (!SupportedType(expected, activeTypeParameters))
-                        Fail("DS2026", arguments[i].Token, "Function values cannot be stored in data types.");
-                    // Rebind with the final context: earlier inferred constructors
-                    // may need a nullable type discovered by a later argument.
-                    var value = typeParameters.Count == 0 ? bound[i]!.Value : BindExpression(arguments[i], expected);
-                    Require(arguments[i], value.Type, expected);
-                    values.Add(Coerce(value.Expression, expected, value.Type));
+                    for (var i = 0; i < bound.Length; i++)
+                    {
+                        var expected = Substitute(formalTypes[i].Text, substitutions, formalTypes[i]);
+                        if (!SupportedType(expected, activeTypeParameters))
+                            Fail("DS2026", arguments[i].Token, "Function values cannot be stored in data types.");
+                        // Commit exits exactly once in runtime argument order.
+                        // Later unreachable arguments are still type checked.
+                        inferenceReachable = entryReachable && !earlierNever;
+                        var value = typeParameters.Count == 0 && inferredReturns is null
+                            ? bound[i]!.Value : BindExpression(arguments[i], expected);
+                        Require(arguments[i], value.Type, expected);
+                        values.Add(Coerce(value.Expression, expected, value.Type));
+                        finalTypes.Add(value.Type);
+                        earlierNever |= value.Type == "<never>";
+                    }
                 }
-                return (values, bound.Select(item => item!.Value.Type).ToArray(), substitutions, bound.Any(item => item!.Value.Type == "<never>"));
+                finally { inferenceReachable = entryReachable; }
+                return (values, finalTypes, substitutions, earlierNever);
             }
             // Some noncompleting expressions still carry a known nominal type.
             // Preserve it when checking unreachable code and chained record operations.
@@ -1483,6 +1897,7 @@ public static class Binder
             {
                 BoundLambda lambda => lambda.Type,
                 BoundInvoke invocation => invocation.Type,
+                BoundPipe pipe => pipe.Type,
                 BoundRecordConstruction construction => construction.Type,
                 BoundRecordUpdate update => update.Type,
                 BoundUnionConstruction construction => construction.Type,
@@ -1494,7 +1909,7 @@ public static class Binder
                     record.Fields.FirstOrDefault(field => field.Name.Text == access.Field) is { } field &&
                     SubstitutionsFor(access.ReceiverType, record.Name.Text, record.TypeParameters) is { } substitutions
                         ? Substitute(field.Type.Text, substitutions, field.Type) : null,
-                BoundCall call when signatures.TryGetValue(call.Name, out var target) =>
+                BoundCall call when signatures.TryGetValue(call.Name, out var target) && !target.InferReturnType =>
                     Substitute(target.ReturnType.Text, target.TypeParameters.Select((parameter, index) => (parameter.Text, call.TypeArguments[index]))
                         .ToDictionary(pair => pair.Text, pair => pair.Item2, StringComparer.Ordinal), target.ReturnType),
                 BoundNever never => never.Type,
@@ -1670,6 +2085,8 @@ public static class Binder
                         return BindLambda(lambda, expectedResult);
                     case InvokeSyntax invocation:
                         return BindInvocation(invocation.Receiver, invocation.OpenParen, invocation.Arguments);
+                    case PipeSyntax pipe:
+                        return BindPipe(pipe, expectedResult);
                     case PropagateSyntax propagation:
                         if (currentReturnType is null || !GenericTypes.TryParse(currentReturnType, out var outerResult) ||
                             outerResult.Name != resultSymbol || outerResult.IsNullable || outerResult.Arguments.Count != 2)
@@ -1706,15 +2123,13 @@ public static class Binder
                             var operandHint = resultSymbol + "<" + successHint + "," + outerResult!.Arguments[1] + ">";
                             propagated = BindExpression(propagation.Operand, operandHint);
                         }
-                        // An if/match with no completing branch has no operand
-                        // value to inspect. It is bottom-typed, so it may inhabit
-                        // the required Result context. Keep evaluating it, so its
-                        // enclosing-function return still occurs. A typed call
-                        // whose argument does not complete retains its declared
-                        // type and must still be checked below.
-                        if (propagated.Type == "<never>" &&
-                            (propagated.Expression is BoundIf { Then.CanComplete: false, Else.CanComplete: false } ||
-                             propagated.Expression is BoundMatch { HasCompletingArm: false }))
+                        // A bottom-typed conditional or match has no operand
+                        // value to inspect, even if a dead arm can complete. It
+                        // can inhabit the required Result context, but must still
+                        // execute to deliver its enclosing-function return. A
+                        // typed call with a noncompleting argument retains its
+                        // declared type and must still be checked below.
+                        if (propagated.Type == "<never>" && propagated.Expression is BoundIf or BoundMatch)
                             return (propagated.Expression, "<never>");
                         var propagatedType = propagated.Type == "<never>" ? KnownType(propagated.Expression) : propagated.Type;
                         if (propagatedType is null || !GenericTypes.TryParse(propagatedType, out var operandShape) ||
@@ -1729,17 +2144,49 @@ public static class Binder
                             propagated.Type == "<never>" ? "<never>" : successType);
                     case MatchSyntax match:
                         var scrutinee = BindExpression(match.Scrutinee);
+                        var savedMatchReachable = inferenceReachable;
+                        inferenceReachable = savedMatchReachable && scrutinee.Type != "<never>";
                         var scrutineeType = scrutinee.Type == "<never>" ? KnownType(scrutinee.Expression) : scrutinee.Type;
                         if (scrutineeType is null || !SupportedType(scrutineeType, activeTypeParameters))
                             Fail("DS2019", match.Scrutinee.Token, "Cannot determine the type being matched.");
+                        var coverageUnions = syntax.Unions.Select(union => new BoundUnionDeclaration(union.Name.Text,
+                            union.Cases.Select(unionCase => new BoundUnionCase(unionCase.Name.Text,
+                                unionCase.PayloadTypes.Select(type => type.Text).ToArray())).ToArray())
+                            { TypeParameters = union.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray();
                         var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
+                        BoundPattern? singletonPattern = scrutinee.Expression switch
+                        {
+                            BoundBool or BoundInt or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundUnary { Operator: "-", Operand: BoundInt } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundNull => new BoundNullPattern(),
+                            _ => null
+                        };
                         string? matchResultType = null;
+                        var hasReachableCompletingArm = false;
+                        var hasDefinitelyCompletingArm = false;
+                        var hasUncertainCompletingArm = false;
                         foreach (var arm in match.Arms)
                         {
                             var introduced = new List<string>();
+                            var armReachable = savedMatchReachable && scrutinee.Type != "<never>";
+                            var evidenceBeforeArm = inferredReturns?.Count ?? 0;
+                            var uncertainArm = false;
                             try
                             {
+                                inferenceReachable = armReachable;
                                 var pattern = BindPattern(arm.Pattern, scrutineeType!, introduced);
+                                var previousPatterns = boundArms.Where(item => item.Guard is null).Select(item => item.Pattern).ToArray();
+                                var armPossible = MatchCoverage.IsUseful(scrutineeType!, previousPatterns, pattern, coverageUnions, out var definite);
+                                if (armPossible && singletonPattern is not null)
+                                {
+                                    var pointUncovered = MatchCoverage.IsUseful(scrutineeType!, previousPatterns, singletonPattern, coverageUnions, out var pointDefinite);
+                                    var pointOutsideArm = MatchCoverage.IsUseful(scrutineeType!, new[] { pattern }, singletonPattern, coverageUnions, out var armDefinite);
+                                    if (pointDefinite && !pointUncovered || armDefinite && pointOutsideArm) armPossible = false;
+                                    else definite &= pointDefinite && armDefinite;
+                                }
+                                armReachable &= armPossible;
+                                uncertainArm = armReachable && !definite;
+                                inferenceReachable = armReachable;
                                 BoundExpression? guard = null;
                                 var guardNever = false;
                                 if (arm.Guard is not null)
@@ -1749,7 +2196,17 @@ public static class Binder
                                     guard = Coerce(boundGuard.Expression, "bool", boundGuard.Type);
                                     guardNever = boundGuard.Type == "<never>";
                                 }
+                                var guardFalse = arm.Guard is not null && LiteralCondition(arm.Guard) == false;
+                                inferenceReachable = armReachable && !guardNever && !guardFalse;
                                 var value = BindExpression(arm.Value, expectedResult);
+                                if (uncertainArm && inferredReturns is not null && inferredReturns.Count > evidenceBeforeArm)
+                                    Fail("DS2027", arm.Value.Token, "An explicit return type is required when match-arm reachability cannot be proven.");
+                                if (armPossible && !guardNever && !guardFalse && value.Type != "<never>")
+                                {
+                                    hasReachableCompletingArm = true;
+                                    if (definite) hasDefinitelyCompletingArm = true;
+                                    else hasUncertainCompletingArm = true;
+                                }
                                 if (!guardNever && value.Type != "<never>")
                                 {
                                     if (matchResultType is null) matchResultType = value.Type;
@@ -1766,13 +2223,13 @@ public static class Binder
                             }
                             finally
                             {
+                                inferenceReachable = armReachable;
                                 foreach (var name in introduced) locals.Remove(name);
                             }
                         }
-                        var coverageUnions = syntax.Unions.Select(union => new BoundUnionDeclaration(union.Name.Text,
-                            union.Cases.Select(unionCase => new BoundUnionCase(unionCase.Name.Text,
-                                unionCase.PayloadTypes.Select(type => type.Text).ToArray())).ToArray())
-                            { TypeParameters = union.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray();
+                        inferenceReachable = savedMatchReachable;
+                        if (inferredReturns is not null && hasUncertainCompletingArm && !hasDefinitelyCompletingArm)
+                            Fail("DS2027", match.Match, "An explicit return type is required when match completion cannot be proven.");
                         if (!MatchCoverage.IsExhaustive(scrutineeType!,
                             boundArms.Where(arm => arm.Guard is null).Select(arm => arm.Pattern).ToArray(), coverageUnions))
                             Fail("DS2020", match.Match, "Match patterns are not exhaustive.");
@@ -1782,12 +2239,17 @@ public static class Binder
                                 ? new BoundNever(arm.Value, "<null>") : Coerce(arm.Value, emittedMatchType, arm.Type), arm.GuardNever)).ToArray();
                         return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType)
                             { HasCompletingArm = boundArms.Any(arm => !arm.GuardNever && arm.Type != "<never>") },
-                            scrutinee.Type == "<never>" || boundArms.All(arm => arm.GuardNever || arm.Type == "<never>") ? "<never>" : emittedMatchType);
+                            scrutinee.Type == "<never>" || !hasReachableCompletingArm ? "<never>" : emittedMatchType);
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
                         Require(conditional.Condition, condition.Type, "bool");
+                        var savedIfReachable = inferenceReachable;
+                        var literalCondition = LiteralCondition(conditional.Condition);
+                        inferenceReachable = savedIfReachable && condition.Type != "<never>" && literalCondition != false;
                         var thenBlock = BindBlock(conditional.Then, expectedResultType: expectedResult);
+                        inferenceReachable = savedIfReachable && condition.Type != "<never>" && literalCondition != true;
                         var elseBlock = BindBlock(conditional.Else, expectedResultType: expectedResult);
+                        inferenceReachable = savedIfReachable;
                         if (!conditional.HasElse && thenBlock.Type is not ("Unit" or "<never>"))
                             Fail("DS1002", conditional.MissingElseLocation ?? conditional.If, "An if without else requires a Unit branch.");
                         var branchType = CommonType(thenBlock.Type, elseBlock.Type);
@@ -1799,13 +2261,17 @@ public static class Binder
                         if (branchType is not null && IsNullable(branchType) && !SupportedType(branchType, activeTypeParameters))
                             Fail("DS2023", conditional.If, "Nullable unconstrained type parameters are not supported.");
                         var emittedType = branchType == "<never>" ? "Unit" : branchType;
-                        if (condition.Type == "<never>") branchType = "<never>";
+                        if (condition.Type == "<never>" || literalCondition == true && thenBlock.Type == "<never>" ||
+                            literalCondition == false && elseBlock.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
                     case GroupSyntax group: return BindExpression(group.Inner, expectedResult);
                     case CoalesceSyntax coalesce:
                         var nullableLeft = BindExpression(coalesce.Left);
+                        var savedCoalesceReachable = inferenceReachable;
+                        inferenceReachable = savedCoalesceReachable && nullableLeft.Type != "<never>";
                         var fallback = BindExpression(coalesce.Right);
+                        inferenceReachable = savedCoalesceReachable;
                         var leftType = nullableLeft.Type == "<never>" ? KnownType(nullableLeft.Expression) : nullableLeft.Type;
                         if (nullableLeft.Type == "<never>" && (leftType is null || !IsNullable(leftType))) leftType = "<null>";
                         if (leftType != "<null>" && (leftType is null || !IsNullable(leftType)))
@@ -1888,7 +2354,11 @@ public static class Binder
                             Fail("DS2016", update.With, "A nullable record cannot be copied without matching.");
                         if (!records.TryGetValue(Nominal(originalType ?? ""), out var updatedRecord))
                             Fail("DS2016", update.With, "A copy update requires a record value.");
-                        var changes = BindRecordFields(updatedRecord!, update.Fields, update.With, false, originalType);
+                        var savedUpdateReachable = inferenceReachable;
+                        inferenceReachable = savedUpdateReachable && original.Type != "<never>";
+                        (IReadOnlyList<BoundRecordInitializer> Fields, bool Never, string Type) changes;
+                        try { changes = BindRecordFields(updatedRecord!, update.Fields, update.With, false, originalType); }
+                        finally { inferenceReachable = savedUpdateReachable; }
                         return (new BoundRecordUpdate(Coerce(original.Expression, originalType!, original.Type), originalType!, changes.Fields),
                             original.Type == "<never>" || changes.Never ? "<never>" : originalType!);
                     case ValueSyntax valueSyntax:
@@ -1932,10 +2402,23 @@ public static class Binder
                                 call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         }
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
+                        // A dead call cannot supply return evidence, and its
+                        // callee may not yet have an inferred signature. The
+                        // final pass will bind and validate the entire call.
+                        if (inferencePass && !inferenceReachable && target!.InferReturnType)
+                            return (new BoundUnit(), "<never>");
                         var resolvedCall = BindGenericArguments(target!.TypeParameters,
                             call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(),
                             target.Parameters.Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name,
                             target.ReturnType.Text, expectedResult);
+                        if (inferencePass && resolvedCall.Never && resolvedCall.Substitutions.Count != target.TypeParameters.Count)
+                            return (new BoundUnit(), "<never>");
+                        if (resolvedCall.Never && target.InferReturnType)
+                            return (new BoundCall(call.Name.Text, resolvedCall.Values)
+                            {
+                                TypeArguments = target.TypeParameters.Select(parameter => resolvedCall.Substitutions[parameter.Text]).ToArray(),
+                                Location = call.Name
+                            }, "<never>");
                         var callResultType = Substitute(target.ReturnType.Text, resolvedCall.Substitutions, target.ReturnType);
                         if (!SupportedType(callResultType, activeTypeParameters)) Fail("DS2026", call.Name, "Function values cannot be stored in data types.");
                         return (new BoundCall(call.Name.Text, resolvedCall.Values)
@@ -1963,7 +2446,13 @@ public static class Binder
                         return (new BoundUnary(unary.Operator.Text, Coerce(operand.Expression, expected, operand.Type)), operand.Type == "<never>" ? "<never>" : expected);
                     case BinarySyntax binary:
                         var left = BindExpression(binary.Left);
+                        var savedBinaryReachable = inferenceReachable;
+                        var literalLeft = LiteralCondition(binary.Left);
+                        inferenceReachable = savedBinaryReachable && left.Type != "<never>" &&
+                            !(binary.Operator.Text == "&&" && literalLeft == false) &&
+                            !(binary.Operator.Text == "||" && literalLeft == true);
                         var right = BindExpression(binary.Right);
+                        inferenceReachable = savedBinaryReachable;
                         var op = binary.Operator.Text;
                         if (op is "&&" or "||")
                         {
@@ -2049,11 +2538,17 @@ public static class Binder
             {
                 var introduced = new List<string>(); var boundStatements = new List<BoundStatement>();
                 var boundLocalsInBlock = new List<BoundLocal>(); bool reachable = true;
+                var enclosingReachable = inferenceReachable;
                 try
                 {
                     var statements = block.Statements.Count > 0 ? block.Statements : block.Bindings.Select(b => (StatementSyntax)new LetStatementSyntax(b)).ToArray();
                     foreach (var statement in statements)
                     {
+                        // Once this block itself cannot complete, remaining
+                        // statements cannot contribute inference evidence.
+                        // The final pass still binds and checks all of them.
+                        if (inferencePass && !reachable) break;
+                        inferenceReachable = enclosingReachable && reachable;
                         switch (statement)
                         {
                             case LetStatementSyntax declaration:
@@ -2086,7 +2581,7 @@ public static class Binder
                                 var returned = BindExpression(ret.Value, currentReturnType);
                                 if (currentReturnType is null)
                                 {
-                                    if (returned.Type != "<never>") inferredReturns!.Add(returned.Type);
+                                    if (inferenceReachable && returned.Type != "<never>") inferredReturns!.Add(returned.Type);
                                     boundStatements.Add(new BoundReturnStatement(returned.Expression));
                                 }
                                 else
@@ -2105,11 +2600,159 @@ public static class Binder
                                 break;
                         }
                     }
+                    if (inferencePass && !reachable)
+                        return (new BoundBlock(boundLocalsInBlock, new BoundUnit())
+                            { Statements = boundStatements, CanComplete = false, EvaluateResult = false, ResultType = "<never>" }, "<never>");
+                    inferenceReachable = enclosingReachable && reachable;
                     var final = BindExpression(block.Result, expectedResultType);
                     var type = reachable ? final.Type : "<never>";
                     return (new BoundBlock(boundLocalsInBlock, final.Expression) { Statements = boundStatements, CanComplete = type != "<never>", EvaluateResult = reachable, ResultType = final.Type }, type);
                 }
-                finally { if (!keepLocals) foreach (var name in introduced) locals.Remove(name); }
+                finally
+                {
+                    inferenceReachable = enclosingReachable;
+                    if (!keepLocals) foreach (var name in introduced) locals.Remove(name);
+                }
+            }
+            (BoundExpression Expression, string Type) BindPipe(PipeSyntax pipe, string? expectedResult)
+            {
+                // Module functions and union constructors already have typed
+                // call binding, including inference and lexical lookup. They
+                // have no effectful receiver, so a direct call evaluates the
+                // piped expression once in the proper order.
+                var target = pipe.Right;
+                while (target is GroupSyntax group) target = group.Inner;
+                if (target is ValueSyntax name && !locals.ContainsKey(name.Value.Text) &&
+                    !inaccessibleCaptures.Contains(name.Value.Text) &&
+                    (signatures.ContainsKey(name.Value.Text) || cases.ContainsKey(name.Value.Text)))
+                    return BindExpression(new CallSyntax(name.Value, pipe.Operator, new[] { pipe.Left }), expectedResult);
+                if (target is FieldAccessSyntax { Receiver: ValueSyntax qualifier } member &&
+                    !locals.ContainsKey(qualifier.Value.Text) && !inaccessibleCaptures.Contains(qualifier.Value.Text) &&
+                    unions.ContainsKey(UnionQualifier(qualifier.Value.Text)))
+                    return BindExpression(new MemberCallSyntax(member.Receiver, member.Field, pipe.Operator, new[] { pipe.Left }), expectedResult);
+
+                // A noncompleting left side never evaluates a dynamic target.
+                // Inference can collect its exits without knowing an as-yet
+                // unresolved target signature; the final pass checks both.
+                bool NeverBlock(BlockSyntax block)
+                {
+                    var statements = block.Statements.Count > 0 ? block.Statements :
+                        block.Bindings.Select(binding => (StatementSyntax)new LetStatementSyntax(binding)).ToArray();
+                    return statements.Any(statement => statement switch
+                    {
+                        ReturnStatementSyntax => true,
+                        LetStatementSyntax binding => Never(binding.Binding.Expression ?? new ValueSyntax(binding.Binding.Initializer)),
+                        ExpressionStatementSyntax evaluated => Never(evaluated.Expression),
+                        _ => false
+                    }) || Never(block.Result);
+                }
+                bool Never(ExpressionSyntax expression) => expression switch
+                {
+                    GroupSyntax group => Never(group.Inner),
+                    IfSyntax conditional => Never(conditional.Condition) ||
+                        (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
+                         LiteralCondition(conditional.Condition) == false ? NeverBlock(conditional.Else) :
+                         conditional.HasElse && NeverBlock(conditional.Then) && NeverBlock(conditional.Else)),
+                    MatchSyntax match => Never(match.Scrutinee) || match.Arms.All(arm =>
+                        arm.Guard is not null && Never(arm.Guard) || Never(arm.Value)),
+                    CallSyntax call => call.Arguments.Any(Never),
+                    InvokeSyntax invoke => Never(invoke.Receiver) || invoke.Arguments.Any(Never),
+                    MemberCallSyntax call => Never(call.Receiver) || call.Arguments.Any(Never),
+                    PropagateSyntax propagation => Never(propagation.Operand),
+                    UnarySyntax unary => Never(unary.Operand),
+                    BinarySyntax binary => Never(binary.Left) ||
+                        (binary.Operator.Text is not ("&&" or "||") ||
+                         binary.Operator.Text == "&&" && LiteralCondition(binary.Left) == true ||
+                         binary.Operator.Text == "||" && LiteralCondition(binary.Left) == false) && Never(binary.Right),
+                    CoalesceSyntax coalesce => Never(coalesce.Left),
+                    PipeSyntax nested => Never(nested.Left) || Never(nested.Right),
+                    RecordConstructionSyntax record => record.Fields.Any(field => Never(field.Value)),
+                    RecordUpdateSyntax update => Never(update.Receiver) || update.Fields.Any(field => Never(field.Value)),
+                    FieldAccessSyntax access => Never(access.Receiver),
+                    ConditionalFieldAccessSyntax access => Never(access.Receiver),
+                    _ => false
+                };
+                if (inferencePass && Never(pipe.Left))
+                {
+                    var savedExits = inferredReturns;
+                    if (savedExits is not null) inferredReturns = new List<string>();
+                    var canBind = false;
+                    try { BindExpression(pipe.Left); canBind = true; }
+                    catch (SourceError) { /* The callable may supply required context. */ }
+                    finally { inferredReturns = savedExits; }
+                    if (canBind)
+                    {
+                        BindExpression(pipe.Left);
+                        return (new BoundUnit(), "<never>");
+                    }
+                }
+
+                // Determine a callable's parameter type without collecting
+                // speculative function-return evidence. Runtime evaluation is
+                // emitted in the opposite order: value first, receiver second.
+                (BoundExpression Expression, string Type)? receiverProbe = null;
+                var savedReachable = inferenceReachable;
+                try
+                {
+                    inferenceReachable = false;
+                    try { receiverProbe = BindExpression(pipe.Right); }
+                    catch (SourceError error) when (target is LambdaSyntax && error.Diagnostic.Code == "DS2026") { }
+                }
+                finally { inferenceReachable = savedReachable; }
+
+                string? inputType = null;
+                string? lambdaHint = null;
+                if (receiverProbe is { } probe)
+                {
+                    var probeType = probe.Type == "<never>" ? KnownType(probe.Expression) : probe.Type;
+                    if (probeType is null || !GenericTypes.TryParse(probeType, out var functionShape) || !functionShape.IsFunction || functionShape.IsNullable)
+                        Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable function value.");
+                    if (functionShape!.Arguments.Count != 2)
+                        Fail("DS2012", pipe.Operator, "A pipe target must accept exactly one argument.");
+                    inputType = functionShape.Arguments[0].ToString();
+                }
+                else if (target is LambdaSyntax lambda)
+                {
+                    if (lambda.Parameters.Count != 1) Fail("DS2012", pipe.Operator, "A pipe target must accept exactly one argument.");
+                    if (lambda.Parameters[0].Type is { } annotation)
+                        inputType = ScopedType(annotation, functionTypeScope).Text;
+                }
+                else Fail("DS2026", pipe.Operator, "Cannot infer the pipe target.");
+
+                var value = BindExpression(pipe.Left, inputType);
+                if (inputType is null)
+                {
+                    inputType = value.Type == "<never>" ? KnownType(value.Expression) : value.Type;
+                    if (inputType is null || !SupportedType(inputType, activeTypeParameters))
+                        Fail("DS2026", pipe.Left.Token, "Cannot infer a pipe parameter type from this value.");
+                }
+                if (receiverProbe is null)
+                {
+                    var resultHint = expectedResult is not null && SupportedType(expectedResult, activeTypeParameters)
+                        ? expectedResult : null;
+                    // A hygienic, unbound symbol asks BindLambda to infer its
+                    // result while its input is determined by the pipe value.
+                    if (resultHint is null)
+                    {
+                        var marker = int.MaxValue;
+                        while (activeTypeParameters.Contains("$" + marker.ToString(CultureInfo.InvariantCulture))) marker--;
+                        resultHint = "$" + marker.ToString(CultureInfo.InvariantCulture);
+                    }
+                    lambdaHint = TypeShape.FunctionName + "<" + inputType + "," + resultHint + ">";
+                }
+                inferenceReachable = savedReachable && value.Type != "<never>";
+                (BoundExpression Expression, string Type) receiver;
+                try { receiver = BindExpression(pipe.Right, lambdaHint); }
+                finally { inferenceReachable = savedReachable; }
+                var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
+                if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count != 2)
+                    Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable one-argument function value.");
+                var formal = shape!.Arguments[0].ToString();
+                Require(pipe.Left, value.Type, formal);
+                var result = shape.Arguments[1].ToString();
+                return (new BoundPipe(Coerce(value.Expression, formal, value.Type), formal,
+                    Coerce(receiver.Expression, receiverType!, receiver.Type), result),
+                    value.Type == "<never>" || receiver.Type == "<never>" ? "<never>" : result);
             }
             (BoundExpression Expression, string Type) BindInvocation(ExpressionSyntax receiverSyntax, Token location, IReadOnlyList<ExpressionSyntax> arguments)
             {
@@ -2122,7 +2765,11 @@ public static class Binder
                 var functionShape = shape!;
                 var formal = functionShape.Arguments.Take(functionShape.Arguments.Count - 1)
                     .Select(argument => new Token(argument.ToString(), location.Span)).ToArray();
-                var values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), formal, arguments, location);
+                var savedInvokeReachable = inferenceReachable;
+                inferenceReachable = savedInvokeReachable && receiver.Type != "<never>";
+                (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) values;
+                try { values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), formal, arguments, location); }
+                finally { inferenceReachable = savedInvokeReachable; }
                 var resultType = functionShape.Arguments[^1].ToString();
                 return (new BoundInvoke(receiver.Expression, values.Values, resultType),
                     receiver.Type == "<never>" || values.Never ? "<never>" : resultType);
@@ -2139,6 +2786,7 @@ public static class Binder
                 var savedReturnType = currentReturnType;
                 var savedReturns = inferredReturns;
                 var savedHasReturn = hasReturn;
+                var savedReachable = inferenceReachable;
                 var parameterTypes = new List<string>();
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var (parameter, index) in lambda.Parameters.Select((parameter, index) => (parameter, index)))
@@ -2172,6 +2820,7 @@ public static class Binder
                         currentReturnType = resultType;
                         inferredReturns = returns;
                         hasReturn = false;
+                        inferenceReachable = true;
                         return BindBlock(lambda.Body, true, resultType);
                     }
                     var returns = new List<string>();
@@ -2224,9 +2873,31 @@ public static class Binder
                     currentReturnType = savedReturnType;
                     inferredReturns = savedReturns;
                     hasReturn = savedHasReturn;
+                    inferenceReachable = savedReachable;
                 }
             }
             var sourceBody = function.Body ?? new BlockSyntax(function.Bindings, function.Expression ?? new ValueSyntax(function.Literal));
+            if (function.InferReturnType)
+            {
+                // Infer from the function's own reachable exits only, never
+                // from a caller's expected type. Bind again with the resulting
+                // type to validate and lower the complete body normally.
+                currentReturnType = null;
+                var exits = new List<string>();
+                inferredReturns = exits;
+                var inferredBody = BindBlock(sourceBody, true);
+                if (inferredBody.Type != "<never>") exits.Add(inferredBody.Type);
+                var candidate = exits.FirstOrDefault(type => type != "<null>");
+                if (candidate is null || candidate is "<never>" or "<invalid>" ||
+                    exits.Any(type => type != "<null>" && type != candidate))
+                    Fail("DS2027", function.Name, "Cannot infer a unique return type without widening or caller context.");
+                if (exits.Contains("<null>") && !IsNullable(candidate!)) candidate += "?";
+                if (!SupportedType(candidate!, activeTypeParameters))
+                    Fail("DS2027", function.Name, "Cannot infer a supported return type.");
+                function = function with { ReturnType = new Token(candidate!, function.ReturnType.Span), InferReturnType = false };
+                signatures[function.Name.Text] = function;
+                continue;
+            }
             var body = BindBlock(sourceBody, true, function.ReturnType.Text);
             if (body.Type != "<never>" && body.Type != "<null>" && !IsNullable(body.Type) && body.Type != function.ReturnType.Text && (function.ReturnType.Text is "string" or "char"))
                 Fail("DS2003", function.ReturnType, "Return type does not match the function body.");
@@ -2319,7 +2990,8 @@ public static class Binder
                 Visit(owner);
             }
         } while (requirementsChanged);
-        return new(syntax.Name.Text, functions)
+        var byName = functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
+        return new(syntax.Name.Text, syntax.Functions.Select(function => byName[function.Name.Text]).ToArray())
         {
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
@@ -2651,6 +3323,7 @@ public static class CSharpEmitter
             var matchCount = 0;
             var nullableOperationCount = 0;
             var propagationCount = 0;
+            var pipeCount = 0;
             var lambdaCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
@@ -2797,6 +3470,16 @@ public static class CSharpEmitter
                         var callable = EmitExpression(invocation.Receiver);
                         var invocationArguments = invocation.Arguments.Select(EmitExpression).ToArray();
                         return "(" + callable + ").Invoke(" + string.Join(", ", invocationArguments) + ")";
+                    case BoundPipe pipe:
+                        var pipeId = (pipeCount++).ToString(CultureInfo.InvariantCulture);
+                        var pipeHelper = "__dsharp_pipe_" + pipeId;
+                        var pipeValue = "__dsharp_pipe_value_" + pipeId;
+                        output.Append("            ").Append(CType(pipe.Type)).Append(" ").Append(pipeHelper).Append("()\n            {\n");
+                        var pipedValue = EmitExpression(pipe.Value);
+                        output.Append("            ").Append(CType(pipe.ValueType)).Append(" ").Append(pipeValue).Append(" = ").Append(pipedValue).Append(";\n");
+                        var pipeReceiver = EmitExpression(pipe.Receiver);
+                        output.Append("            return (").Append(pipeReceiver).Append(").Invoke(").Append(pipeValue).Append(");\n            }\n");
+                        return pipeHelper + "()";
                     case BoundPropagation propagation:
                         var propagationId = (propagationCount++).ToString(CultureInfo.InvariantCulture);
                         var propagationHelper = "__dsharp_propagate_" + propagationId;

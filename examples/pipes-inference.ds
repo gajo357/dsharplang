@@ -1,0 +1,8 @@
+module Demo
+
+fn increment(value: int) { value + 1 }
+fn double(value: int): int { value * 2 }
+
+fn answer(): int {
+    20 |> double |> increment |> (value => value + 1)
+}
