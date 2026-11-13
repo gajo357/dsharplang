@@ -194,8 +194,10 @@ Hashes establish repeatable bytes, not package trust or vulnerability status.
 The exact file/CLI syntax, source configuration and diagnostics remain open for
 [#87](https://github.com/gajo357/dsharplang/issues/87).
 
-Target the repository's pinned managed .NET 10 SDK/target framework and select
-only NuGet-compatible managed assets for that target; a package targeting another
+Target the repository's pinned managed SDK and target framework. The proposed
+[.NET 11 upgrade](https://github.com/gajo357/dsharplang/issues/151) changes that
+baseline; select only NuGet-compatible managed assets for the actual pinned
+target. A package targeting another
 framework is accepted only when the SDK's compatibility rules select a usable
 managed asset, not merely because restore reports success. Diagnose incompatible
 frameworks and unsupported required runtime assets before generated code is run.
