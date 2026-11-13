@@ -7,7 +7,10 @@ internal sealed record TypeShape(string Name, IReadOnlyList<TypeShape> Arguments
     // Impossible in source identifiers and distinct from scoped `$N` symbols.
     // Function arguments are parameters in order followed by the result.
     public const string FunctionName = "$fn";
+    // Tuple components are stored in source order and always number at least two.
+    public const string TupleName = "$tuple";
     public bool IsFunction => Name == FunctionName;
+    public bool IsTuple => Name == TupleName;
     public bool ContainsFunction => IsFunction || Arguments.Any(argument => argument.ContainsFunction);
 
     public override string ToString() => Name +
@@ -17,9 +20,10 @@ internal sealed record TypeShape(string Name, IReadOnlyList<TypeShape> Arguments
 
 internal static class GenericTypes
 {
-    // Parse source function syntax or the compiler's canonical function marker.
-    // Tuple types remain unsupported. Function types canonicalize to $fn<...>,
-    // so a nullable return cannot be confused with a nullable function itself.
+    // Parse source function and tuple syntax or their canonical markers.
+    // Function types canonicalize to $fn<...>, so a nullable return cannot be
+    // confused with a nullable function itself. Tuple types canonicalize to
+    // $tuple<...>, keeping a single tuple argument distinct from two arguments.
     public static bool TryParse(string text, out TypeShape shape)
     {
         var position = 0;
@@ -50,10 +54,11 @@ internal static class GenericTypes
                     parts.Add(result);
                     return new TypeShape(TypeShape.FunctionName, parts, false);
                 }
-                // Parentheses may group one type, but cannot manufacture Unit or
-                // tuple types. A suffix applies to the grouped type as a whole.
-                if (parts.Count != 1) return null;
-                var grouped = parts[0];
+                // Empty parentheses are reserved for function parameter lists;
+                // Unit is spelled Unit in a type. A suffix applies to the
+                // grouped type or tuple as a whole.
+                if (parts.Count == 0) return null;
+                var grouped = parts.Count == 1 ? parts[0] : new TypeShape(TypeShape.TupleName, parts, false);
                 if (position < text.Length && text[position] == '?')
                 {
                     position++;
@@ -70,6 +75,11 @@ internal static class GenericTypes
                 if (position + 1 < text.Length && text[position] == 'f' && text[position + 1] == 'n')
                 {
                     position += 2;
+                    if (position >= text.Length || text[position] != '<') return null;
+                }
+                else if (text.AsSpan(position).StartsWith("tuple", StringComparison.Ordinal))
+                {
+                    position += "tuple".Length;
                     if (position >= text.Length || text[position] != '<') return null;
                 }
                 else
@@ -109,6 +119,7 @@ internal static class GenericTypes
             var nullable = position < text.Length && text[position] == '?';
             if (nullable) position++;
             if (name == TypeShape.FunctionName && arguments.Count == 0) return null;
+            if (name == TypeShape.TupleName && arguments.Count < 2) return null;
             return new TypeShape(name, arguments, nullable);
         }
         var parsed = Parse();
@@ -125,6 +136,7 @@ internal static class GenericTypes
         bool Valid(TypeShape value)
         {
             if (value.IsFunction) return value.Arguments.Count > 0 && value.Arguments.All(Valid);
+            if (value.IsTuple) return value.Arguments.Count >= 2 && value.Arguments.All(Valid);
             if (parameters.Contains(value.Name)) return value.Arguments.Count == 0;
             return arities.TryGetValue(value.Name, out var arity) && arity == value.Arguments.Count &&
                 value.Arguments.All(Valid);
