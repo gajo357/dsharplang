@@ -11,11 +11,9 @@ helpers; their async overloads, callable HTTP preprocessing, Logger and the
 remaining #129 integrations remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
-The synchronous Result helper bodies are also authored as D# in
-[`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds) and packaged with
-the compiler. The compiler still uses its existing C#-constructed helper bodies;
-[#142](https://github.com/gajo357/dsharplang/issues/142) tracks making the D#
-source the active implementation. Packaging alone does not complete that work.
+The synchronous Result helper bodies are authored as D# in
+[`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
+compiler and parsed and bound as the active implementation by #142.
 
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
@@ -243,8 +241,8 @@ module contributions and explicit, file-scoped imports. The compiler API and
 CLI accept multiple sources while retaining single-file use. The
 [D# example](../../examples/multifile/) demonstrates cross-file calls and
 qualified names. Generated C# module-wrapper names are not a .NET interop
-contract. Bundling a D# standard library remains separate work; the current
-Result helpers have not yet been migrated to D# source (see #142).
+contract. General-purpose D# standard-library packaging remains separate work;
+the five synchronous Result helpers use the embedded D# prelude.
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

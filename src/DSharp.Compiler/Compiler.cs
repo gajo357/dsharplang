@@ -1216,33 +1216,77 @@ public static class Binder
         foreach (var unionCase in standardOption.Cases)
             if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
                 cases.Add(unionCase.Name.Text, new() { (standardOption, unionCase) });
-        // Standard Result helpers are ordinary prelude functions. Their hidden
-        // generic signatures use the standard Result identity even when a user
-        // declaration shadows the source spelling Result. Source declarations
-        // and lexical locals retain precedence over these names.
+        // Read the shipped D# source and register its declarations as ordinary
+        // prelude functions. Source declarations and locals retain precedence;
+        // within this compiler-owned source, Result means the intrinsic union.
         var resultHelpers = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
         var usedResultHelpers = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var helperName in new[] { "andThen", "map", "mapError", "tap", "tapError" })
+        const string preludePath = "<standard:Result.ds>";
+        using var preludeStream = typeof(Binder).Assembly.GetManifestResourceStream("DSharp.Compiler.Prelude.Result.ds")
+            ?? throw new InvalidOperationException("The compiler's embedded Result prelude is missing.");
+        using var preludeReader = new StreamReader(preludeStream, Encoding.UTF8);
+        var preludeSource = preludeReader.ReadToEnd();
+        var preludeTokens = Lexer.Lex(preludeSource, preludePath);
+        var prelude = new Parser(preludeTokens, preludePath).Parse();
+        // Compiler-owned helpers need distinct internal identities when a user
+        // declaration shadows their public name. Reserve every source token so
+        // the generated identity cannot be captured by a source local or name.
+        var reservedPreludeNames = new HashSet<string>(preludeTokens.Select(token => token.Text), StringComparer.Ordinal);
+        void ReserveTokens(object? node)
         {
-            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName)) continue;
-            var helperTypeTokens = new[] { new Token("A", syntheticSpan), new Token("B", syntheticSpan), new Token("E", syntheticSpan) };
-            // tap and tapError do not use a second output type parameter.
-            if (helperName is "tap" or "tapError") helperTypeTokens = new[] { helperTypeTokens[0], helperTypeTokens[2] };
-            var scope = TypeScope(helperTypeTokens);
-            var a = scope["A"]; var e = scope["E"];
-            var b = scope.TryGetValue("B", out var output) ? output : "Unit";
-            string Result(string success, string error) => resultSymbol + "<" + success + "," + error + ">";
-            var input = Result(a, e);
-            var outputType = helperName switch { "andThen" or "map" => Result(b, e), "mapError" => Result(a, b), _ => input };
-            var callbackInput = helperName is "mapError" or "tapError" ? e : a;
-            var callbackOutput = helperName switch { "andThen" => Result(b, e), "map" or "mapError" => b, _ => "Unit" };
-            var name = new Token(helperName, syntheticSpan);
-            var helper = new FunctionSyntax(name, new Token(outputType, syntheticSpan), name)
+            if (node is null || node is string) return;
+            if (node is Token token) { reservedPreludeNames.Add(token.Text); return; }
+            if (node is System.Collections.IEnumerable sequence)
             {
-                TypeParameters = helperTypeTokens.Select(parameter => ScopedParameter(parameter, scope)).ToArray(),
-                Parameters = new[] { new ParameterSyntax(new Token("callback", syntheticSpan), new Token(TypeShape.FunctionName + "<" + callbackInput + "," + callbackOutput + ">", syntheticSpan)),
-                    new ParameterSyntax(new Token("result", syntheticSpan), new Token(input, syntheticSpan)) }
+                foreach (var item in sequence) ReserveTokens(item);
+                return;
+            }
+            var type = node.GetType();
+            if (!type.Name.EndsWith("Syntax", StringComparison.Ordinal)) return;
+            foreach (var property in type.GetProperties())
+                if (property.GetIndexParameters().Length == 0) ReserveTokens(property.GetValue(node));
+        }
+        ReserveTokens(syntax);
+        var preludeNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var declaration in prelude.Functions)
+        {
+            var sourceName = declaration.Name.Text;
+            if (preludeNames.ContainsKey(sourceName)) Fail("DS2001", declaration.Name, "Duplicate prelude function declaration.");
+            var helperName = sourceName;
+            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName))
+            {
+                helperName = "__dsharp_prelude_" + sourceName;
+                while (!reservedPreludeNames.Add(helperName)) helperName += "_";
+            }
+            preludeNames.Add(sourceName, helperName);
+            var scope = TypeScope(declaration.TypeParameters);
+            functionTypeScopes.Add(helperName, scope);
+            Token PreludeType(Token token)
+            {
+                if (!GenericTypes.TryParse(token.Text, out var shape)) return token;
+                TypeShape Rebind(TypeShape value) => value with
+                {
+                    Name = scope.TryGetValue(value.Name, out var symbol) ? symbol : value.Name == "Result" ? resultSymbol : value.Name,
+                    Arguments = value.Arguments.Select(Rebind).ToArray()
+                };
+                return token with { Text = Rebind(shape).ToString() };
+            }
+            var helper = declaration with
+            {
+                Name = declaration.Name with { Text = helperName },
+                TypeParameters = declaration.TypeParameters.Select(parameter => ScopedParameter(parameter, scope)).ToArray(),
+                Parameters = declaration.Parameters.Select(parameter => parameter with { Type = PreludeType(parameter.Type) }).ToArray(),
+                ReturnType = PreludeType(declaration.ReturnType)
             };
+            var helperParameters = Parameters(helper.TypeParameters);
+            if (helper.InferReturnType || !SupportedType(helper.ReturnType.Text, helperParameters))
+                Fail("DS2003", helper.ReturnType, "Unsupported prelude return type.");
+            var helperNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var parameter in helper.Parameters)
+            {
+                if (!helperNames.Add(parameter.Name.Text)) Fail("DS2010", parameter.Name, "Duplicate parameter.");
+                if (!SupportedType(parameter.Type.Text, helperParameters)) Fail("DS2011", parameter.Type, "Unsupported prelude parameter type.");
+            }
             signatures.Add(helperName, helper);
             resultHelpers.Add(helperName, helper);
         }
@@ -1254,6 +1298,8 @@ public static class Binder
             var calls = new HashSet<string>(StringComparer.Ordinal);
             var indirect = false;
             var visible = source.Parameters.Select(parameter => parameter.Name.Text).ToHashSet(StringComparer.Ordinal);
+            string DependencyName(string name, HashSet<string> names) =>
+                resultHelpers.ContainsKey(source.Name.Text) && !names.Contains(name) && preludeNames.TryGetValue(name, out var resolved) ? resolved : name;
             void PatternNames(PatternSyntax pattern, HashSet<string> names)
             {
                 if (pattern is NamePatternSyntax name) names.Add(name.Name.Text);
@@ -1354,8 +1400,8 @@ public static class Binder
             {
                 switch (expression)
                 {
-                    case ValueSyntax value when !names.Contains(value.Value.Text) && !cases.ContainsKey(value.Value.Text) && signatures.ContainsKey(value.Value.Text):
-                        calls.Add(value.Value.Text); break;
+                    case ValueSyntax value when !names.Contains(value.Value.Text) && !cases.ContainsKey(DependencyName(value.Value.Text, names)) && signatures.ContainsKey(DependencyName(value.Value.Text, names)):
+                        calls.Add(DependencyName(value.Value.Text, names)); break;
                     case CallSyntax call:
                         var callCompletesArguments = true;
                         foreach (var argument in call.Arguments)
@@ -1365,8 +1411,8 @@ public static class Binder
                         }
                         if (!callCompletesArguments) break;
                         if (names.Contains(call.Name.Text)) indirect = true;
-                        else if (cases.ContainsKey(call.Name.Text)) { /* A union case is not a function dependency. */ }
-                        else if (signatures.ContainsKey(call.Name.Text)) calls.Add(call.Name.Text);
+                        else if (cases.ContainsKey(DependencyName(call.Name.Text, names))) { /* A union case is not a function dependency. */ }
+                        else if (signatures.ContainsKey(DependencyName(call.Name.Text, names))) calls.Add(DependencyName(call.Name.Text, names));
                         else indirect = true;
                         break;
                     case MemberCallSyntax member:
@@ -1396,8 +1442,8 @@ public static class Binder
                         while (pipeTarget is GroupSyntax groupedTarget) pipeTarget = groupedTarget.Inner;
                         if (pipeTarget is ValueSyntax pipeName && !names.Contains(pipeName.Value.Text))
                         {
-                            if (cases.ContainsKey(pipeName.Value.Text)) { /* Union construction is statically known. */ }
-                            else if (signatures.ContainsKey(pipeName.Value.Text)) calls.Add(pipeName.Value.Text);
+                            if (cases.ContainsKey(DependencyName(pipeName.Value.Text, names))) { /* Union construction is statically known. */ }
+                            else if (signatures.ContainsKey(DependencyName(pipeName.Value.Text, names))) calls.Add(DependencyName(pipeName.Value.Text, names));
                             else indirect = true;
                         }
                         else if (pipeTarget is FieldAccessSyntax { Receiver: ValueSyntax pipeQualifier } &&
@@ -1406,7 +1452,7 @@ public static class Binder
                                 pipeQualifier.Value.Text == "Option" && !userOptionType ? optionSymbol : pipeQualifier.Value.Text))
                         { /* Qualified union case construction is statically known. */ }
                         else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
-                            signatures.TryGetValue(partialCall.Name.Text, out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
+                            signatures.TryGetValue(DependencyName(partialCall.Name.Text, names), out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
                             Expression(pipeTarget, names);
                         else
                         {
@@ -1600,6 +1646,9 @@ public static class Binder
         }
         foreach (var function in syntax.Functions.Where(function => function.InferReturnType)) Schedule(function);
         foreach (var function in syntax.Functions.Where(function => !function.InferReturnType)) Schedule(function);
+        // User bodies determine which prelude declarations are needed. Their
+        // explicit signatures permit binding their bodies after the user code.
+        inferenceOrder.AddRange(resultHelpers.Values);
         var functions = new List<BoundFunction>();
         // Infer every omitted signature before the final body-checking pass.
         // Runtime-unreachable calls may still need a callee's inferred type
@@ -1608,6 +1657,22 @@ public static class Binder
         foreach (var declaration in inferenceOrder)
         {
             if (inferencePass && !declaration.InferReturnType) continue;
+            if (resultHelpers.ContainsKey(declaration.Name.Text))
+            {
+                // A used helper can itself call another helper earlier in source
+                // order. Close the static dependencies before selecting bodies,
+                // so forward/back references are both emitted once. Cycles are
+                // harmless here because the set grows monotonically.
+                var pending = new Queue<string>(usedResultHelpers);
+                var scanned = new HashSet<string>(StringComparer.Ordinal);
+                while (pending.TryDequeue(out var name))
+                {
+                    if (!scanned.Add(name)) continue;
+                    foreach (var dependency in AnalyzeDependencies(resultHelpers[name], includeUnreachable: true).Calls)
+                        if (resultHelpers.ContainsKey(dependency) && usedResultHelpers.Add(dependency)) pending.Enqueue(dependency);
+                }
+                if (!usedResultHelpers.Contains(declaration.Name.Text)) continue;
+            }
             var function = inferencePass ? declaration : signatures[declaration.Name.Text];
             var functionTypeScope = functionTypeScopes[function.Name.Text];
             var activeTypeParameters = Parameters(function.TypeParameters);
@@ -1655,7 +1720,7 @@ public static class Binder
                 }
             }
             string Nominal(string type) => GenericTypes.TryParse(type, out var shape) ? shape.Name : type;
-            string UnionQualifier(string name) => name == "Result" && !userResultType ? resultSymbol :
+            string UnionQualifier(string name) => name == "Result" && (!userResultType || resultHelpers.ContainsKey(function.Name.Text)) ? resultSymbol :
                 name == "Option" && !userOptionType ? optionSymbol : name;
             string GenericPattern(string name, IReadOnlyList<Token> parameters) => parameters.Count == 0 ? name :
                 name + "<" + string.Join(",", parameters.Select(parameter => parameter.Text)) + ">";
@@ -2695,6 +2760,9 @@ public static class Binder
                             original.Type == "<never>" || changes.Never ? "<never>" : originalType!);
                     case ValueSyntax valueSyntax:
                         var token = valueSyntax.Value;
+                        if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(token.Text) && !inaccessibleCaptures.Contains(token.Text) &&
+                            preludeNames.TryGetValue(token.Text, out var preludeValueName))
+                            token = token with { Text = preludeValueName };
                         if (token.Text.Length > 0 && (token.Text[0] is '\"' or '\''))
                         {
                             var text = DecodeText(token, token.OriginPath ?? path);
@@ -2728,6 +2796,9 @@ public static class Binder
                             Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
                         return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
+                        if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(call.Name.Text) && !inaccessibleCaptures.Contains(call.Name.Text) &&
+                            preludeNames.TryGetValue(call.Name.Text, out var preludeCallName))
+                            call = call with { Name = call.Name with { Text = preludeCallName } };
                         if (!locals.ContainsKey(call.Name.Text) && inaccessibleCaptures.Contains(call.Name.Text))
                             Fail("DS2026", call.Name, "Lambda capture is not supported.");
                         if (locals.ContainsKey(call.Name.Text))
@@ -3013,6 +3084,15 @@ public static class Binder
                 // piped expression once in the proper order.
                 var target = pipe.Right;
                 while (target is GroupSyntax group) target = group.Inner;
+                if (resultHelpers.ContainsKey(function.Name.Text))
+                {
+                    if (target is ValueSyntax preludeValue && !locals.ContainsKey(preludeValue.Value.Text) && !inaccessibleCaptures.Contains(preludeValue.Value.Text) &&
+                        preludeNames.TryGetValue(preludeValue.Value.Text, out var valueName))
+                        target = preludeValue with { Value = preludeValue.Value with { Text = valueName } };
+                    else if (target is CallSyntax preludeCall && !locals.ContainsKey(preludeCall.Name.Text) && !inaccessibleCaptures.Contains(preludeCall.Name.Text) &&
+                        preludeNames.TryGetValue(preludeCall.Name.Text, out var callName))
+                        target = preludeCall with { Name = preludeCall.Name with { Text = callName } };
+                }
                 if (target is ValueSyntax name && !locals.ContainsKey(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) &&
                     (signatures.ContainsKey(name.Value.Text) || cases.ContainsKey(name.Value.Text)))
@@ -3341,54 +3421,6 @@ public static class Binder
                 Parameters = function.Parameters.Count == 0 ? Array.Empty<string>() : function.Parameters.Select(p => p.Name.Text).ToArray(),
                 Expression = boundLocals.Count == 0 && result.Expression is BoundInt ? null : result.Expression,
                 TypeParameters = function.TypeParameters.Select(parameter => parameter.Text).ToArray()
-            });
-        }
-        // Bind prelude implementations to the same ordinary function IR as
-        // user code. Matching the tagged Result invokes only the selected
-        // callback; the call machinery evaluates callback expressions eagerly.
-        foreach (var helperName in usedResultHelpers)
-        {
-            var helper = resultHelpers[helperName];
-            var types = helper.TypeParameters.Select(token => token.Text).ToArray();
-            var a = types[0]; var e = types[^1];
-            var b = types.Length == 3 ? types[1] : "Unit";
-            var input = helper.Parameters[1].Type.Text; var output = helper.ReturnType.Text;
-            BoundExpression Invoke(string name, string type) => new BoundInvoke(new BoundReference("callback"), new BoundExpression[] { new BoundReference(name) }, type);
-            BoundExpression Construct(string variant, BoundExpression payload) => new BoundUnionConstruction(output, variant, new[] { payload });
-            BoundExpression PreserveAfter(BoundExpression callback)
-            {
-                var then = new BoundBlock(Array.Empty<BoundLocal>(), new BoundReference("result"))
-                {
-                    Statements = new BoundStatement[] { new BoundExpressionStatement(callback) }, ResultType = output
-                };
-                var otherwise = new BoundBlock(Array.Empty<BoundLocal>(), new BoundReference("result")) { ResultType = output };
-                return new BoundIf(new BoundBool(true), then, otherwise, output);
-            }
-            BoundExpression success = helperName switch
-            {
-                "andThen" => Invoke("value", output),
-                "map" => Construct("Success", Invoke("value", b)),
-                "tap" => PreserveAfter(Invoke("value", "Unit")),
-                "tapError" => new BoundReference("result"),
-                _ => Construct("Success", new BoundReference("value"))
-            };
-            BoundExpression error = helperName switch
-            {
-                "mapError" => Construct("Error", Invoke("error", b)),
-                "tapError" => PreserveAfter(Invoke("error", "Unit")),
-                "tap" => new BoundReference("result"),
-                _ => Construct("Error", new BoundReference("error"))
-            };
-            var arms = new[]
-            {
-                new BoundMatchArm(new BoundCasePattern(resultSymbol, "Success", new BoundPattern[] { new BoundBindingPattern("value", a) }), null, success, false),
-                new BoundMatchArm(new BoundCasePattern(resultSymbol, "Error", new BoundPattern[] { new BoundBindingPattern("error", e) }), null, error, false)
-            };
-            functions.Add(new BoundFunction(helperName, 0)
-            {
-                TypeParameters = types, ReturnType = output, Parameters = helper.Parameters.Select(parameter => parameter.Name.Text).ToArray(),
-                ParameterTypes = helper.Parameters.Select(parameter => parameter.Type.Text).ToArray(),
-                Expression = new BoundMatch(new BoundReference("result"), input, arms, output)
             });
         }
         // Generic parameters used in data positions must remain data-safe at
