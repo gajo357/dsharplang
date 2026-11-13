@@ -4,6 +4,12 @@ The original executable baseline is recorded in [bootstrap scope](../COMPILER_BO
 The matrix below includes subsequent implemented feature slices.
 This status describes tested implementation, not the full syntax draft.
 
+The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
+is a target addition tracked in #129–#136. Partial application, Result helpers,
+callable HTTP preprocessing and Logger are not implemented by importing that
+specification. The #35 plain-pipe and #36 tuple milestones below retain their
+tested scope; existing full-arity call rules remain in effect until #135 lands.
+
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |

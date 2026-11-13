@@ -1,6 +1,6 @@
 # D# implementation instructions
 
-**Updated:** 11 November 2026
+**Updated:** 13 November 2026
 **Repository:** https://github.com/gajo357/dsharplang
 
 ## Current source of truth
@@ -13,20 +13,22 @@ remains available in Git history at commit
 
 Read [AGENTS.md](../../AGENTS.md), [bootstrap scope](../COMPILER_BOOTSTRAP.md),
 [implementation status](DSharp_Implementation_Status.md) and the
-[syntax reference](DSharp_Syntax_Reference.md), revision 0.3. Selected requirements
-below and in syntax section 21.2 supersede conflicting older examples. Proposed
-syntax and APIs outside the implemented subset still need their relevant contract
-decision; this instruction update does not approve the entire draft.
+[syntax reference](DSharp_Syntax_Reference.md), revision 0.4, and the
+[pipes, partial application and logging target](DSharp_Pipes_and_Logging.md).
+Selected requirements below, syntax section 21.2 and that companion supersede
+conflicting older examples. Other proposed syntax and APIs still need their
+relevant contract decision; this update does not approve unrelated draft choices
+or establish implementation completion.
 
 The compiler is C#, with a hand-written lexer/parser, typed binding and generated
-C# on .NET SDK 10.0.100. Only the literal-function bootstrap is reported implemented.
-[Issue #7](https://github.com/gajo357/dsharplang/issues/7) tracks immutable local
-bindings; its open issue/approval label does not establish integrated implementation.
+C# on .NET SDK 10.0.100. The implementation status records the tested subset,
+including plain pipes and tuples; do not infer implementation support for partial
+application, async composition or Logger from the new target specification.
 
 ## Codex web lifecycle
 
 Follow the [implementation sequence](implementation/DSharp_Implementation_Sequence.md)
-and [task queue](implementation/DSharp_Task_Queue.md), starting with #8 then #7.
+and [task queue](implementation/DSharp_Task_Queue.md).
 Recheck current main and existing tasks/PRs to avoid duplicating completed or active
 work. Dependencies must be merged before dependent implementation starts.
 
@@ -109,8 +111,65 @@ Treat these as requirements once incorporated into the approved repository desig
 10. **Queue contracts:** a queue message root is a declared data `type` or Unit. Nested fields must be immutable and serializable; runtime capabilities, tasks, functions and connections are not payloads.
 11. **Handler outcomes:** every normal handler path reports success or error to the runtime/supervisor. Queue retry decisions are independent of returning a result to a caller.
 12. **First-class lambdas:** inferred/typed parameters, multiple parameters, block bodies, function values, immutable captures, returned lambdas and async lambdas. Captures must respect lifetime and non-escape rules.
-13. **Explicit composition:** handlers declare triggers; application code registers definitions and dependencies. No implicit handler discovery and no YAML application source of truth.
+13. **Explicit composition:** handlers declare triggers; application code registers definitions and dependencies. No implicit application-handler discovery and no YAML application source of truth. Logger is an explicit runtime-owned system-actor exception, not permission for packages to auto-activate handlers.
 14. **Discoverable contracts:** compiler diagnostics identify required `handle`/`trigger` members. Trigger types determine handler input and valid policies; editor features use the same semantic contract model.
 15. **Small language:** preserve braces, ordinary calls, inference, expressions and explicit failure handling. Do not add class inheritance, mutable record fields or undocumented convenience syntax.
 
 Detailed syntax, examples and provisional choices live in the companion reference. A list here is not a replacement for reading it.
+
+## 5. Composition and logging implementation targets
+
+The [pipes and logging specification](DSharp_Pipes_and_Logging.md) is the detailed
+target contract. Reconcile existing issue mappings before dispatch: LANG-18/#35
+remains the merged plain-pipe feature, LANG-41 adds partial application, LIB-04
+adds Result helpers, HTTP-03/#83 becomes callable preprocessing, LOG-01 through
+LOG-04 separate capture, delivery, storage and queries, and OPS-01/#91 reuses
+Logger for runtime instrumentation. Plan bounded children where a slice spans
+unimplemented language/runtime prerequisites. A documentation merge completes
+none of those implementation slices.
+
+- **Calls and pipes:** evaluate left/receiver/supplied argument expressions once
+  in source order. Partial application binds positional prefixes and delays the
+  body/task until all arguments arrive; retain ordinary multi-argument types.
+  Reject excess arguments, discarded function expressions and escaping builders
+  or resources. Resolve a unique callable before partial application; ambiguous
+  generics need context/annotations. Named partials, holes and guessed foreign
+  overload/default/variadic behavior are outside the initial feature.
+- **Result composition:** implement callback-first/value-last `andThen`, `map`,
+  `mapError`, `tap` and `tapError` as library functions, with the exact sync/async
+  matrix in the companion. Preserve errors, eager callback-expression creation,
+  at-most-once applicable callback invocation, faults/cancellation and distinct
+  null/Option payloads. Do not add implicit pipe await/unwrap, retry, flattening,
+  parallelism or durability.
+- **HTTP and runtime dispatch:** use `pipeline = callable` with ordinary pipes
+  and Result helpers, not `pipeline {}`. Check input/output and explicit HTTP
+  error mappings; the host invokes preprocessing once and `handle` only on
+  success. `call(worker)` and `enqueue(agent)` must preserve their existing
+  runtime contracts and lifetimes, with durable acceptance receipts distinct
+  from queued handler results. Wrapping middleware remains separate.
+- **Capture and scopes:** `Logger.log` captures structured immutable events and
+  performs a non-waiting transient submission, returning Unit. Validate literal/
+  constant templates and named fields; retain eager argument evaluation even at
+  disabled levels. Scope cleanup covers return, `?`, fault and cancellation;
+  concurrent invocations/hosts stay isolated. Capture a snapshot rather than a
+  mutable context reference. Never infer an Option JSON schema from logging.
+- **Delivery:** use the actor runtime, bounded per-host admission and per-output
+  state, immutable batches, bounded retries and one in-flight write per output.
+  Failed/blocked outputs must not block producer calls or healthy outputs.
+  Timeouts cannot cause overlapping retries; internal diagnostics bypass Logger.
+  Console at Info is the only unconfigured default. Explicit output lists
+  replace it, including an empty list, and lifecycle ordering protects the shared
+  store. Preserve every operational budget in the companion.
+- **Storage and search:** opt-in DatabaseLogOutput shares the queue RuntimeStore
+  with separately versioned tables, committed batches and event-ID deduplication.
+  Retention uses receive time and bounded expiry/capacity cleanup; it never
+  deletes business rows or shares handler transactions. LogReader is separate,
+  read-only, authenticated through the observer boundary, typed and parameterized.
+  Preserve numeric precision and missing/null distinctions, bind cursors to the
+  query/high-water sequence, and report timeouts/unsupported queries explicitly.
+
+Require executed generated-C# tests for language behavior, controlled clocks and
+blocked/failing outputs for delivery, and real-provider integration tests for
+database retention, queries and queue contention. Test documented log loss rather
+than claiming durable or exactly-once logging. Unrelated async, runtime, transport,
+serialization and interop prerequisites retain their existing decision gates.

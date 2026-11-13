@@ -4,8 +4,10 @@ A strongly typed, actor-first language for APIs, events, and background jobs on
 .NET.
 
 **Status:** a minimal executable compiler prototype plus language/runtime design.
-Only parameterless integer-literal functions are implemented. No agent runtime
-exists. DSharp is the working name; final language naming remains open.
+Implemented compiler features are listed in the [implementation status](docs/features/DSharp_Implementation_Status.md).
+No agent runtime exists. The [pipes and logging specification](docs/features/DSharp_Pipes_and_Logging.md)
+adds future targets, not implemented runtime behavior. DSharp is the working
+name; final language naming remains open.
 
 ## Why this language exists
 

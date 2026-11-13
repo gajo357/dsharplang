@@ -128,6 +128,10 @@ output; atomic replacement is a separate operation.
 
 ## HTTP pipelines
 
+The current [composition and logging target](features/DSharp_Pipes_and_Logging.md)
+uses `pipeline = expression` with an ordinary typed callable and explicit Result
+helpers. It replaces the older list-of-steps block, not wrapping middleware.
+
 A registered route connects compatible typed steps to an isolated handler.
 Typical steps authenticate, check permission, decode a body, and invoke business
 logic. Resource-specific authorization may follow decoding an identifier and
@@ -142,6 +146,12 @@ Middleware must also wrap downstream execution for tracing, logging, and scoped
 resources, including cleanup after success, failure, or cancellation. Value
 transformations alone are insufficient. No untyped request-property bag, casts,
 or global request context is required to connect steps.
+
+The same target specifies one host-owned Logger system actor with bounded,
+transient delivery and Info plus console as the default. Database output is
+opt-in and shares RuntimeStore; query work belongs to a separate LogReader.
+This system-facility exception does not activate arbitrary package handlers.
+The runtime remains future implementation work.
 
 Types verify required context is supplied. Authentication still verifies
 credentials at runtime; authorization still checks permissions at runtime.
