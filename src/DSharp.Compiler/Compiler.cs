@@ -1192,6 +1192,36 @@ public static class Binder
         foreach (var unionCase in standardOption.Cases)
             if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
                 cases.Add(unionCase.Name.Text, new() { (standardOption, unionCase) });
+        // Standard Result helpers are ordinary prelude functions. Their hidden
+        // generic signatures use the standard Result identity even when a user
+        // declaration shadows the source spelling Result. Source declarations
+        // and lexical locals retain precedence over these names.
+        var resultHelpers = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
+        var usedResultHelpers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var helperName in new[] { "andThen", "map", "mapError", "tap", "tapError" })
+        {
+            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName)) continue;
+            var helperTypeTokens = new[] { new Token("A", syntheticSpan), new Token("B", syntheticSpan), new Token("E", syntheticSpan) };
+            // tap and tapError do not use a second output type parameter.
+            if (helperName is "tap" or "tapError") helperTypeTokens = new[] { helperTypeTokens[0], helperTypeTokens[2] };
+            var scope = TypeScope(helperTypeTokens);
+            var a = scope["A"]; var e = scope["E"];
+            var b = scope.TryGetValue("B", out var output) ? output : "Unit";
+            string Result(string success, string error) => resultSymbol + "<" + success + "," + error + ">";
+            var input = Result(a, e);
+            var outputType = helperName switch { "andThen" or "map" => Result(b, e), "mapError" => Result(a, b), _ => input };
+            var callbackInput = helperName is "mapError" or "tapError" ? e : a;
+            var callbackOutput = helperName switch { "andThen" => Result(b, e), "map" or "mapError" => b, _ => "Unit" };
+            var name = new Token(helperName, syntheticSpan);
+            var helper = new FunctionSyntax(name, new Token(outputType, syntheticSpan), name)
+            {
+                TypeParameters = helperTypeTokens.Select(parameter => ScopedParameter(parameter, scope)).ToArray(),
+                Parameters = new[] { new ParameterSyntax(new Token("callback", syntheticSpan), new Token(TypeShape.FunctionName + "<" + callbackInput + "," + callbackOutput + ">", syntheticSpan)),
+                    new ParameterSyntax(new Token("result", syntheticSpan), new Token(input, syntheticSpan)) }
+            };
+            signatures.Add(helperName, helper);
+            resultHelpers.Add(helperName, helper);
+        }
         // Return inference is deliberately local to a checked, acyclic call
         // graph. Distinguish calls to lexical function values from calls to
         // module functions; the former cannot establish a static call graph.
@@ -1473,6 +1503,7 @@ public static class Binder
             return (calls, indirect);
         }
         var dependencyGraph = syntax.Functions.ToDictionary(function => function.Name.Text, function => AnalyzeDependencies(function), StringComparer.Ordinal);
+        foreach (var helper in resultHelpers.Keys) dependencyGraph.Add(helper, (new HashSet<string>(StringComparer.Ordinal), false));
         bool InRecursiveComponent(string root)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1643,7 +1674,22 @@ public static class Binder
                 if (returnPattern is not null && expectedResult is not null && typeParameters.Count > 0)
                 {
                     var inferred = new Dictionary<string, string>(substitutions, StringComparer.Ordinal);
-                    if (GenericTypes.TryUnify(returnPattern, expectedResult, parameters, inferred, fixedParameters))
+                    bool UnifyExpected(string pattern, string actual)
+                    {
+                        if (SupportedType(actual, activeTypeParameters))
+                            return GenericTypes.TryUnify(pattern, actual, parameters, inferred, fixedParameters);
+                        if (!GenericTypes.TryParse(pattern, out var formal) || !GenericTypes.TryParse(actual, out var given)) return false;
+                        // A contextual type may contain an outer unresolved type
+                        // variable. It provides no evidence yet; known siblings
+                        // can still constrain this constructor's parameters.
+                        if (given.Arguments.Count == 0) return true;
+                        if (formal.Arguments.Count == 0 && parameters.Contains(formal.Name)) return true;
+                        if (formal.Name != given.Name || formal.IsNullable != given.IsNullable || formal.Arguments.Count != given.Arguments.Count) return false;
+                        for (var i = 0; i < formal.Arguments.Count; i++)
+                            if (!UnifyExpected(formal.Arguments[i].ToString(), given.Arguments[i].ToString())) return false;
+                        return true;
+                    }
+                    if (UnifyExpected(returnPattern, expectedResult))
                     {
                         foreach (var entry in inferred) { substitutions[entry.Key] = entry.Value; fixedParameters.Add(entry.Key); }
                     }
@@ -2648,6 +2694,7 @@ public static class Binder
                         }
                         if (!locals.ContainsKey(token.Text) && signatures.TryGetValue(token.Text, out var namedFunction))
                         {
+                            if (resultHelpers.ContainsKey(token.Text)) { usedResultHelpers.Add(token.Text); resultUsed = true; }
                             var fullPattern = TypeShape.FunctionName + "<" + string.Join(",", namedFunction.Parameters.Select(p => p.Type.Text).Append(namedFunction.ReturnType.Text)) + ">";
                             var inferred = BindGenericArguments(namedFunction.TypeParameters, Array.Empty<Token>(), Array.Empty<Token>(), Array.Empty<ExpressionSyntax>(), token, fullPattern, expectedResult);
                             var fullType = Substitute(fullPattern, inferred.Substitutions, token);
@@ -2671,6 +2718,7 @@ public static class Binder
                                 call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         }
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
+                        if (resultHelpers.ContainsKey(call.Name.Text)) { usedResultHelpers.Add(call.Name.Text); resultUsed = true; }
                         // A dead call cannot supply return evidence, and its
                         // callee may not yet have an inferred signature. The
                         // final pass will bind and validate the entire call.
@@ -2895,7 +2943,7 @@ public static class Binder
                                 break;
                             }
                             case ReturnStatementSyntax ret:
-                                var returned = BindExpression(ret.Value, currentReturnType);
+                                var returned = BindExpression(ret.Value, currentReturnType ?? expectedResultType);
                                 if (currentReturnType is null)
                                 {
                                     if (inferenceReachable && returned.Type != "<never>") inferredReturns!.Add(returned.Type);
@@ -3156,13 +3204,14 @@ public static class Binder
                     if (parameterType is null) Fail("DS2026", parameter.Name, "Cannot infer lambda parameter type.");
                     parameterTypes.Add(parameterType!);
                 }
-                var expectedReturn = expected?.Arguments[^1].ToString();
+                var partialReturnHint = expected?.Arguments[^1].ToString();
+                var expectedReturn = partialReturnHint;
                 if (expectedReturn is not null && !SupportedType(expectedReturn, activeTypeParameters)) expectedReturn = null;
                 try
                 {
                     inaccessibleCaptures = new HashSet<string>(savedCaptures, StringComparer.Ordinal);
                     inaccessibleCaptures.UnionWith(savedLocals.Keys);
-                    (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns)
+                    (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns, string? bodyHint = null)
                     {
                         // The lambda sees its lexical ancestors while binding. Its
                         // actual immutable captures are computed from the final
@@ -3173,10 +3222,10 @@ public static class Binder
                         inferredReturns = returns;
                         hasReturn = false;
                         inferenceReachable = true;
-                        return BindBlock(lambda.Body, true, resultType);
+                        return BindBlock(lambda.Body, true, bodyHint ?? resultType);
                     }
                     var returns = new List<string>();
-                    var body = BindBody(expectedReturn, expectedReturn is null ? returns : null);
+                    var body = BindBody(expectedReturn, expectedReturn is null ? returns : null, partialReturnHint);
                     var returnType = expectedReturn;
                     if (returnType is null)
                     {
@@ -3270,6 +3319,54 @@ public static class Binder
                 TypeParameters = function.TypeParameters.Select(parameter => parameter.Text).ToArray()
             });
         }
+        // Bind prelude implementations to the same ordinary function IR as
+        // user code. Matching the tagged Result invokes only the selected
+        // callback; the call machinery evaluates callback expressions eagerly.
+        foreach (var helperName in usedResultHelpers)
+        {
+            var helper = resultHelpers[helperName];
+            var types = helper.TypeParameters.Select(token => token.Text).ToArray();
+            var a = types[0]; var e = types[^1];
+            var b = types.Length == 3 ? types[1] : "Unit";
+            var input = helper.Parameters[1].Type.Text; var output = helper.ReturnType.Text;
+            BoundExpression Invoke(string name, string type) => new BoundInvoke(new BoundReference("callback"), new BoundExpression[] { new BoundReference(name) }, type);
+            BoundExpression Construct(string variant, BoundExpression payload) => new BoundUnionConstruction(output, variant, new[] { payload });
+            BoundExpression PreserveAfter(BoundExpression callback)
+            {
+                var then = new BoundBlock(Array.Empty<BoundLocal>(), new BoundReference("result"))
+                {
+                    Statements = new BoundStatement[] { new BoundExpressionStatement(callback) }, ResultType = output
+                };
+                var otherwise = new BoundBlock(Array.Empty<BoundLocal>(), new BoundReference("result")) { ResultType = output };
+                return new BoundIf(new BoundBool(true), then, otherwise, output);
+            }
+            BoundExpression success = helperName switch
+            {
+                "andThen" => Invoke("value", output),
+                "map" => Construct("Success", Invoke("value", b)),
+                "tap" => PreserveAfter(Invoke("value", "Unit")),
+                "tapError" => new BoundReference("result"),
+                _ => Construct("Success", new BoundReference("value"))
+            };
+            BoundExpression error = helperName switch
+            {
+                "mapError" => Construct("Error", Invoke("error", b)),
+                "tapError" => PreserveAfter(Invoke("error", "Unit")),
+                "tap" => new BoundReference("result"),
+                _ => Construct("Error", new BoundReference("error"))
+            };
+            var arms = new[]
+            {
+                new BoundMatchArm(new BoundCasePattern(resultSymbol, "Success", new BoundPattern[] { new BoundBindingPattern("value", a) }), null, success, false),
+                new BoundMatchArm(new BoundCasePattern(resultSymbol, "Error", new BoundPattern[] { new BoundBindingPattern("error", e) }), null, error, false)
+            };
+            functions.Add(new BoundFunction(helperName, 0)
+            {
+                TypeParameters = types, ReturnType = output, Parameters = helper.Parameters.Select(parameter => parameter.Name.Text).ToArray(),
+                ParameterTypes = helper.Parameters.Select(parameter => parameter.Type.Text).ToArray(),
+                Expression = new BoundMatch(new BoundReference("result"), input, arms, output)
+            });
+        }
         // Generic parameters used in data positions must remain data-safe at
         // every call, even when the function returns Unit or forwards through
         // several generic helpers. Discover those requirements to a fixed point.
@@ -3354,7 +3451,7 @@ public static class Binder
             }
         } while (requirementsChanged);
         var byName = functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
-        return new(syntax.Name.Text, syntax.Functions.Select(function => byName[function.Name.Text]).ToArray())
+        return new(syntax.Name.Text, syntax.Functions.Select(function => byName[function.Name.Text]).Concat(usedResultHelpers.Select(name => byName[name])).ToArray())
         {
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
