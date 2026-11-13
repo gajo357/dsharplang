@@ -11,6 +11,12 @@ helpers; their async overloads, callable HTTP preprocessing, Logger and the
 remaining #129 integrations remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
+The synchronous Result helper bodies are also authored as D# in
+[`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds) and packaged with
+the compiler. The compiler still uses its existing C#-constructed helper bodies;
+[#142](https://github.com/gajo357/dsharplang/issues/142) tracks making the D#
+source the active implementation. Packaging alone does not complete that work.
+
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |

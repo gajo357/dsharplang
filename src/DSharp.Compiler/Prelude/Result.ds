@@ -1,0 +1,44 @@
+module Prelude
+
+fn andThen<A, B, E>(next: (A) -> Result<B, E>, value: Result<A, E>): Result<B, E> {
+    match value {
+        Result.Success(item) => next(item)
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
+fn map<A, B, E>(transform: (A) -> B, value: Result<A, E>): Result<B, E> {
+    match value {
+        Result.Success(item) => Result.Success(transform(item))
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
+fn mapError<A, B, E>(convert: (E) -> B, value: Result<A, E>): Result<A, B> {
+    match value {
+        Result.Success(item) => Result.Success(item)
+        Result.Error(error) => Result.Error(convert(error))
+    }
+}
+
+fn tap<A, E>(observe: (A) -> Unit, value: Result<A, E>): Result<A, E> {
+    match value {
+        // Match arms cannot yet contain a bare block. This branch keeps the
+        // observation and the unchanged result in the same lexical scope.
+        Result.Success(item) => if true {
+            observe(item)
+            value
+        } else { value }
+        Result.Error(error) => value
+    }
+}
+
+fn tapError<A, E>(observe: (E) -> Unit, value: Result<A, E>): Result<A, E> {
+    match value {
+        Result.Success(item) => value
+        Result.Error(error) => if true {
+            observe(error)
+            value
+        } else { value }
+    }
+}
