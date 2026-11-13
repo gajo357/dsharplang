@@ -1,15 +1,22 @@
 # D# — Distributed Sharp: Syntax and Type Reference
 
-**Version:** 0.3 — implementation handoff draft  
-**Date:** 11 November 2026  
+**Version:** 0.4 — implementation handoff draft
+**Date:** 13 November 2026
 **Companion:** Backend Language Feature Specification v0.2  
-**Status:** Language design and implementation handoff. A minimal literal-function
-compiler exists; see [implementation status](DSharp_Implementation_Status.md) and
-[bootstrap scope](../COMPILER_BOOTSTRAP.md). The remaining examples are design
-input, not a claim of implemented language/runtime support.
+**Status:** Language design and implementation handoff. See
+[implementation status](DSharp_Implementation_Status.md) for the tested compiler
+subset and [bootstrap scope](../COMPILER_BOOTSTRAP.md) for its starting point.
+Target examples below do not establish implemented language/runtime support.
 **Implementation brief:** [DSharp_Implementation_Instructions.md](DSharp_Implementation_Instructions.md).
+**Composition and logging target:** [Pipes, partial application and logging](DSharp_Pipes_and_Logging.md).
 
 **Decision boundary:** The user-selected behaviour listed in section 21.2 is authoritative design input. Exact syntax and library APIs marked proposed, illustrative or provisional must be frozen for the relevant milestone before implementation. A handoff document does not override repository automation permissions.
+
+The composition and logging companion specifies the initial targets for partial
+application, Result helpers, callable HTTP preprocessing and Logger. It supersedes
+older `pipeline {}` composition blocks, calls requiring all arguments, `Log.write`
+naming and default database logging. Incorporating these targets is not evidence
+that their compiler or runtime implementation is complete.
 
 D# combines F#-inspired inference, expressions and discriminated unions with C#-style braces, calls, comments and familiar operators. Its execution model centres on isolated agents, typed results and explicit application composition.
 
@@ -45,7 +52,7 @@ The established direction is: immutable values; explicit missing values; typed s
 ## 1. General syntax and naming
 
 - Braces group declarations, blocks and record values. Indentation improves readability but does not define scope.
-- Semicolons are not required and are omitted in this draft. Write one binding or statement per line. Expressions continue across lines inside delimiters or after an operator.
+- Semicolons are not required and are omitted in this draft. Write one binding or statement per line. Expressions continue across lines inside delimiters or after an operator; a newline before `|>` also continues the expression.
 - Use parentheses for calls and comma-separated argument lists.
 - Use `name: Type` for type annotations. Local types are normally inferred.
 - The final expression in a block is its value. `return` is available for an explicit early exit.
@@ -460,7 +467,7 @@ fn double(value: int) {
 }
 ```
 
-`fn` declares a function. Return types may be inferred for simple helpers; interface and handler contracts declare them explicitly. Calls use parentheses and are uncurried: `add(2, 3)`.
+`fn` declares a function. Return types may be inferred for simple helpers; interface and handler contracts declare them explicitly. Calls use parentheses and preserve ordinary multi-parameter function types: `add(2, 3)`. The partial-application target in section 9.8 lets a positional prefix produce a function for the remaining parameters without rewriting every function type into curried form.
 
 ### 9.2 Lambdas are first-class function values
 
@@ -540,7 +547,16 @@ let label = amount |> formatTotal
 let adjusted = amount |> (value => value + 10m)
 ```
 
-`value |> function` means `function(value)`. It does not implicitly await, unwrap results or destructure tuples. Typed middleware composition has explicit failure-aware rules in section 16.
+`value |> function` means `function(value)`. Chains associate left to right, and
+call/member access binds more tightly. Evaluate the left value once, then the
+right callable expression once, then apply it. The pipe supplies the first
+remaining parameter under the partial-application target; remaining parameters
+produce another function. A newline before `|>` continues the expression.
+
+Pipes do not implicitly await, unwrap Result or Option, remove null, destructure
+tuples, retry, parallelize or invoke a queue handler. Piping a function passes it
+as a value; reusable composition uses an explicit lambda. Result-aware behavior
+comes from ordinary helpers in section 9.9, including in HTTP preprocessing.
 
 ### 9.7 Extensions
 
@@ -553,6 +569,62 @@ extend Invoice {
 ```
 
 `self` is an ordinary receiver parameter typed by the extension target. Extensions add statically resolved functions, not state. All extension methods are public. Conflicting extension resolution remains a compiler-design topic.
+
+### 9.8 Automatic partial application
+
+For `(A, B, C) -> R`, `f(a)` has type `(B, C) -> R`, `f(a, b)` has type
+`(C) -> R`, and `f(a, b, c)`, `f(a)(b, c)` or `f(a)(b)(c)` executes the body.
+Evaluate the receiver and supplied arguments once in source order when forming
+the partial function; the body executes only when the remaining arguments arrive.
+Prefer configuration first and flowing data last, such as `take(count, text)`.
+
+```text
+let preview = text |> trim |> replace("old", "new") |> take(80)
+```
+
+`f()` invokes a zero-argument function; for a function needing arguments it binds
+an empty prefix and returns the callable without executing it. Too many arguments
+are an error, and discarding a function-valued expression as a statement is an
+error. Middle/final argument binding uses a lambda rather than holes.
+
+The target includes D# functions, function values, service/interface methods and
+supported extensions. Captured receivers retain dispatch and lifetime rules;
+partial application cannot let builders or scoped resources escape. An async
+partial starts no task until its arguments are complete and preserves `Task<R>`.
+Infer generics from supplied arguments, expected function type and the remainder
+of the pipe; ambiguity requires an annotation. Resolve a unique callable first.
+Partially supplied named calls require a lambda. Defaults, variadic/overloaded
+foreign calls and their partial application require separate interop rules.
+
+### 9.9 Result composition helpers
+
+These are standard library functions with callback first and flowing value last,
+not keywords or special pipe behavior:
+
+| Helper | Success behavior | Error behavior |
+| --- | --- | --- |
+| `andThen(next, result)` | Call the Result-returning next step | Preserve error, skip callback |
+| `map(transform, result)` | Wrap transformed value in Success | Preserve error |
+| `mapError(convert, result)` | Preserve success | Transform error |
+| `tap(observe, result)` | Call Unit observer, preserve success | Preserve error |
+| `tapError(observe, result)` | Preserve success | Call Unit observer, preserve error |
+
+`andThen` supports Result or Task-of-Result inputs with callbacks returning Result
+or Task-of-Result; any task makes the combined output a Task-of-Result. The other
+four helpers accept either input form but their callbacks stay synchronous. Await
+the input once and invoke the applicable callback at most once. `map` never
+flattens Result, Option or Task. Error types must agree or be explicitly mapped.
+
+Callback expressions are created eagerly even when the helper skips invoking
+them. Faults/cancellation follow the normal contract, without automatic conversion
+to Error, retries, parallelism or durability. `Success(null)` and `Success(None)`
+remain successes. See the [exact overload and acceptance contract](DSharp_Pipes_and_Logging.md#4-result-composition-through-ordinary-functions).
+
+`call(worker)` adapts a runtime-owned worker reference while preserving dispatch,
+concurrency, deadlines and worker-call errors. `enqueue(agent)` adapts a queued
+reference to its asynchronous durable-acceptance Result, whose success is a
+receipt, not a handler result. `call(queueAgent)` and direct `.handle` dispatch
+remain invalid.
 
 ## 10. Expressions, matching and control flow
 
@@ -897,10 +969,13 @@ agent CheckOverdueInvoices(invoices: InvoiceService) {
 agent CreateInvoice(invoices: InvoiceService) {
     trigger Http.post("/invoices")
 
-    pipeline {
-        Auth.authenticate
-        Auth.requirePermission<CreateInvoices>()
-        Http.decode<CreateInvoiceRequest>
+    pipeline = async raw => {
+        await (
+            raw
+            |> authenticateRequest
+            |> andThen(authorizeCreateInvoice)
+            |> andThen(decodeCreateInvoice)
+        )
     }
 
     handle(request: Authorized<CreateInvoiceRequest, CreateInvoices>)
@@ -910,7 +985,11 @@ agent CreateInvoice(invoices: InvoiceService) {
 }
 ```
 
-This proposes one typed envelope as the handler input, rather than automatically filling several unrelated method parameters. The envelope carries the validated body and authorization context explicitly.
+The contextual `pipeline` member holds an ordinary typed callable expression.
+There is no general `pipeline {}` expression or list-of-steps composition block.
+The example uses application/adaptor functions with explicitly compatible errors;
+their transport types remain part of DEC-05. One typed envelope supplies the
+handler input and carries the validated body and authorization context explicitly.
 
 For this example, the library step contracts conceptually connect as follows, with each step able to fail:
 
@@ -923,7 +1002,13 @@ For this example, the library step contracts conceptually connect as follows, wi
 
 `CreateInvoices` is a permission-marker type. With all declarations public, a user-constructible record named `Authorized` is not unforgeable authorization evidence. The type describes the pipeline input; runtime authentication and permission checks enforce access. Sensitive operations must enforce their policy, and any future runtime-owned capability design must specify validity independently of visibility modifiers. Do not treat a type name alone as proof that a check happened.
 
-Pipeline composition awaits asynchronous steps, forwards successful values and short-circuits failures. Unlike ordinary `|>`, it is result-aware. Different failure types require an explicit common error type or adapter; the pipeline must not silently erase them. The exact pipeline error union and HTTP status mapping API remain open.
+The host invokes the preprocessing callable once and invokes `handle` only on
+success. The compiler checks its input, successful output against `handle`, and
+explicit HTTP error mappings. Without preprocessing, the binding contract directly
+supplies the handler input. Ordinary pipes and section 9.9's Result helpers provide
+composition; `|>` itself stays unaware of Result and Task. Different failure types
+require explicit mapping. Exact transport/error types and HTTP status mapping APIs
+remain DEC-05 work.
 
 Route and query decoding, typed path parameters and response customization are follow-up syntax work. Request-specific authorization can be placed after loading a resource.
 
@@ -956,6 +1041,86 @@ This is a composition sketch; other dependencies referenced by enabled handlers 
 There is no preferred/default-service selection mechanism. Interface method defaults apply within the explicitly selected implementation.
 
 Configuration and secret-source APIs remain open. Values may come from JSON/environment variables while application wiring stays in code. No application YAML grammar is introduced here.
+
+### 17.1 Logger and output configuration
+
+The [logging target](DSharp_Pipes_and_Logging.md#6-what-logger-is) defines `Logger`
+as a runtime-owned system actor, registered once per application host. Its
+`Logger.log(level, template, field: value, ...)` API synchronously captures an
+immutable event and attempts non-waiting submission to a bounded transient
+mailbox, then returns Unit. Callers do not await delivery or construct queued
+messages. Database output persists after processing; it does not make admission
+durable. Business queue acknowledgement rules are unchanged.
+
+```text
+using scope = Logger.scope(tenantId: request.tenantId) {
+    Logger.log(Info, "Invoice {invoiceId} created", invoiceId: invoice.id)
+}
+```
+
+Levels are standard `LogLevel` cases: Trace, Debug, Info, Warning, Error and
+Critical. Templates are compile-time literals/constants with `{fieldName}`
+placeholders and escaped `{{`/`}}`; each placeholder requires an event field,
+duplicate fields are rejected and repeated placeholders evaluate their field once.
+Extra fields are allowed. Interpolated strings are not structured templates.
+Arguments are eagerly evaluated once in source order even for disabled levels;
+`Logger.isEnabled(level)` permits an explicit expensive-work guard.
+
+Fields accept immutable JSON-compatible scalars, nullable scalars, lists and
+string-keyed maps. Records, unions and Option require explicit selection/mapping;
+None is not silently null. Capture preserves numeric/boolean/null values and
+numeric precision. Oversize/deep values and nonfinite floats are dropped with an
+independent diagnostic/counter; a fault in a caller's field expression retains
+ordinary expression behavior.
+
+`Logger.scope` is a synchronous scoped caller-context helper, not an actor
+message. It follows `using` cleanup on every exit and flows through awaited calls
+without leaking between concurrent invocations. Merge outer, inner and event
+fields in that order and capture the final snapshot at submission. Runtime
+metadata is separate. Workers/queues transfer allowed correlation explicitly;
+diagnostic context never grants authorization.
+
+```text
+app Billing {
+    logging {
+        minimumLevel = Info
+        retention = 7d
+        outputs = [ConsoleLogOutput(), DatabaseLogOutput(store: runtimeStore)]
+    }
+}
+```
+
+No configuration means Info minimum and one console output, with no database,
+exporter or retention job. An explicit output list replaces that default; an empty
+list disables delivery. Output recipes resolve before traffic, are host-scoped,
+and remain fixed for that host lifetime. Bootstrap console events are not replayed.
+
+`LogOutput` is the service contract
+`async write(events: List<LogEvent>): Result<Unit, LogOutputError>`; success means
+the whole immutable batch met that output's delivery guarantee. There is no
+partial-batch acknowledgement or untracked background-success path. The actor
+bounds admission and each output's backlog, retries only the failed output, never
+overlaps a timed-out write with its retry, and lets healthy outputs progress.
+Delivery failure diagnostics bypass Logger and are rate-limited. Shutdown drains
+producers, then Logger, then outputs before closing a shared RuntimeStore.
+
+The opt-in database output uses that same RuntimeStore with separate versioned
+logging tables. Batches commit atomically and deduplicate stable event IDs.
+Retention defaults to seven days from database receive time, with explicit
+keep-forever and an initial 256-MiB logical retained-data budget. Cleanup never
+removes queue rows or participates in business transactions. Third-party outputs
+own/document their retention mechanism; the minimal write interface promises no
+remote retention control.
+
+The separate read-only `LogReader` provides typed, parameterized, bounded queries
+and stable cursor pagination for the authenticated observer. Missing fields and
+explicit null differ, numeric comparisons preserve numeric meaning, and timeouts
+are failures. History is unavailable when no query-capable output is configured;
+console output is not an indefinite searchable buffer. The companion specifies
+the complete [delivery budgets](DSharp_Pipes_and_Logging.md#10-what-the-actor-does),
+[event schema](DSharp_Pipes_and_Logging.md#11-event-data-and-json),
+[retention](DSharp_Pipes_and_Logging.md#12-database-storage-and-retention) and
+[query contract](DSharp_Pipes_and_Logging.md#13-searching-stored-logs).
 
 ## 18. Modules and public declarations
 
@@ -1017,7 +1182,7 @@ Package manifests, import aliases and F#/C# interop syntax remain deferred.
 | --- | --- |
 | `handle` | Required agent entry point. |
 | `trigger` | Trigger declaration inside an agent. |
-| `pipeline` | Typed preprocessing composition inside an agent. |
+| `pipeline` | Contextual HTTP preprocessing member whose value is an ordinary typed callable. |
 | `policy` | Execution-policy declaration. |
 | `retry` | Retry rule inside a policy. |
 | `bind` | Dependency binding inside application composition. |
@@ -1142,7 +1307,10 @@ Only workers are directly callable here. Queue submission uses the separate API 
 | Propagating an incompatible error union | Map the error or change the contract. |
 | Empty `handle(): Result<Unit, E> {}` | Return an explicit result. |
 | Ignoring a returned `Result` | Handle, propagate, return or forward it. |
+| Discarding a function-valued expression | Bind, return or pass the function; check for missing arguments. |
 | Incompatible pipeline steps | Output does not satisfy the next input contract. |
+| `Logger.log` template without a matching event field | Supply the named field explicitly; hidden scope fields do not satisfy placeholders. |
+| Duplicate logging fields or an interpolated structured template | Use unique named fields and a literal/constant placeholder template. |
 | Missing required interface method | Implement the method or provide an interface default body. |
 | Conflicting interface defaults | Resolve with an explicit service implementation. |
 | A mutable builder field, return value or capture | Builder cannot escape its creating method. |
@@ -1161,12 +1329,15 @@ Only workers are directly callable here. Queue submission uses the separate API 
 - Callable workers separated from queued agents; queue acceptance does not expose handler completion.
 - Queue roots restricted to declared data types or Unit, with recursively immutable and serializable contents.
 - First-class lambdas, including typed signatures, captures, returned functions and async bodies.
+- Positional-prefix partial application while preserving multi-parameter function types and capture/lifetime rules.
+- Plain value pipes, ordinary Result composition helpers and callable `pipeline = ...` HTTP preprocessing.
+- Host-scoped transient Logger, typed structured fields/scopes, console-only defaults and opt-in shared-RuntimeStore logging/search.
 
 ### 21.3 Remaining design work
 
 1. Finalize worker-call failure reporting and the provisional `CallError` wrapper.
 2. Confirm exact function-type and async spellings, parser precedence and generic disambiguation.
-3. Specify wrapping middleware, typed path/query binding, response mapping and pipeline error composition.
+3. Specify wrapping middleware, typed path/query binding and HTTP transport/error/response mappings; callable preprocessing and Result helper composition are specified in the companion.
 4. Define authorization enforcement and runtime capability validity under public-only declarations.
 5. Reconcile result-returning queued handlers with rescheduling and other supervisor-control operations.
 6. Finalize queue acceptance guarantees, receipt API, contract versioning and serialization constraints.
@@ -1189,7 +1360,7 @@ Programmers should discover agent requirements through compiler diagnostics, edi
 | Queue `agent` | Exactly one queue `trigger` and one `handle` | Queue `policy`, helper methods | Direct invocation or awaited handler completion |
 | Event `agent` | Exactly one event `trigger` and one `handle` | Subscription delivery policies, helper methods | Direct invocation or awaited handler completion |
 | Scheduled `agent` | Exactly one schedule `trigger` and one `handle` | Schedule/queue policies, helper methods | Direct invocation or awaited handler completion |
-| HTTP `agent` | Exactly one HTTP `trigger` and one `handle` | Typed `pipeline`, supported HTTP policies, helper methods | Inheriting queue retry rules implicitly |
+| HTTP `agent` | Exactly one HTTP `trigger` and one `handle` | Typed `pipeline = callable`, supported HTTP policies, helper methods | Inheriting queue retry rules implicitly |
 
 Exactly one trigger per `agent` is the proposed initial grammar constraint; sharing logic is done through services/workers. The compiler rejects unsupported declaration members and duplicate reserved members. It must not silently ignore a misspelled `handle`, `trigger` or policy field.
 

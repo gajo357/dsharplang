@@ -90,6 +90,13 @@ Exact declaration syntax and compiler-generated versus library-defined registrat
 
 ## 6. Typed pipelines, middleware and authentication
 
+The [pipes and logging specification](../features/DSharp_Pipes_and_Logging.md)
+sets the current target for ordinary pipes/partial calls, Result helpers and
+callable HTTP preprocessing (`pipeline = expression`), and for host-scoped
+Logger with console-only defaults and opt-in RuntimeStore output. It supersedes
+older conflicting composition/logging examples; implementation is tracked
+separately in the [status](../features/DSharp_Implementation_Status.md).
+
 HTTP request handling uses composable typed steps. A step receives a known input and produces the input required by the next step. The final handler receives exactly the typed data and identity context it declares.
 
 A typical pipeline authenticates a request, checks permission, decodes the body, and invokes the business handler. Resource-specific authorization may instead run after decoding an identifier and loading the relevant resource.

@@ -2,7 +2,9 @@
 
 Source: [Implementation sequence](https://github.com/gajo357/dsharplang/blob/main/docs/features/implementation/DSharp_Implementation_Sequence.md).
 
-These historical task briefs reuse existing GitHub issues; [#121](https://github.com/gajo357/dsharplang/issues/121) tracks explicit Option<T> separately from [#30](https://github.com/gajo357/dsharplang/issues/30), which remains open until generated nullable-generic behavior works through calls and stored data. They are prepared prompts, not launched Codex tasks. Launch one foundational implementation task at a time. Check current main, existing tasks/PRs and merged prerequisites before each launch. Follow the source sequence for dependency gates and parent issue splits. The default next candidate is #8; no open PRs were found when preparing this queue. A task or unmerged implementation may still exist outside GitHub.
+These task briefs are prepared prompts, not launched Codex tasks. Launch one foundational implementation task at a time. Check current main, existing tasks/PRs and merged prerequisites before each launch; do not use the original snapshot's next candidate as a current dispatch decision. Follow the source sequence for dependency gates and parent issue splits. [#121](https://github.com/gajo357/dsharplang/issues/121) tracks explicit Option<T> separately from [#30](https://github.com/gajo357/dsharplang/issues/30); syntax acceptance alone does not satisfy nullable-generic execution criteria.
+
+The [pipes, partial application and logging specification](../DSharp_Pipes_and_Logging.md) extends the target contracts. The new tasks at the end of this queue track that work; their presence does not claim implementation. Preserve completed #35's historical plain-pipe scope. Runtime setup and the remaining design dependencies still apply.
 
 ## P00 — Align the repository with Codex web
 
@@ -738,6 +740,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/35
 
 Plan: `docs/features/implementation/issue-35-plan.md`
 
+Historical completed plain-pipe scope. Do not reopen this task for partial application or Result helpers; use #129/#135 and #130/#136. Retain the no-implicit-await, unwrap or tuple-unpacking behavior.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/35.
 
@@ -943,6 +947,8 @@ Do not merge, deploy or start another issue.
 Issue: https://github.com/gajo357/dsharplang/issues/17
 
 Plan: `docs/features/implementation/issue-17-plan.md`
+
+Include the host-scoped Logger lifecycle: bootstrap console during initialization, configured outputs before admission, and Logger teardown after producers drain but before the shared RuntimeStore closes. Arbitrary package handlers still require explicit registration.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/17.
@@ -1252,6 +1258,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/15
 
 Plan: `docs/features/implementation/issue-15-plan.md`
 
+Reconcile the remaining transport and authorization contracts with `pipeline = callable` and ordinary Result helpers. The new specification fixes composition syntax; it does not finalize HTTP types, status mappings or authorization evidence.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/15.
 
@@ -1424,6 +1432,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/56
 
 Plan: `docs/features/implementation/issue-56-plan.md`
 
+Track `call(worker)` as a callable adapter preserving runtime dispatch, deadlines, concurrency and the complete worker-call error contract. No direct `.handle` dispatch or queued-agent request/reply shortcut.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/56.
 
@@ -1562,6 +1572,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/54
 
 Plan: `docs/features/implementation/issue-54-plan.md`
 
+Include the explicit standard-system-actor exception for Logger and startup logging recipes. This does not enable automatic registration of application or package handlers.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/54.
 
@@ -1595,6 +1607,8 @@ Do not merge, deploy or start another issue.
 Issue: https://github.com/gajo357/dsharplang/issues/58
 
 Plan: `docs/features/implementation/issue-58-plan.md`
+
+Register Logger once per host using the actor runtime. No configuration means Info plus console only; outputs and scopes are host-isolated. Follow #132 for bounded delivery and lifecycle details.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/58.
@@ -1835,6 +1849,8 @@ Do not merge, deploy or start another issue.
 Issue: https://github.com/gajo357/dsharplang/issues/61
 
 Plan: `docs/features/implementation/issue-61-plan.md`
+
+Track `enqueue(agent)` as a callable adapter returning the existing asynchronous durable acceptance Result and receipt, never the handler result. Awaiting success still waits for the durable commit.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/61.
@@ -2420,6 +2436,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/83
 
 Plan: `docs/features/implementation/issue-83-plan.md`
 
+Implement `pipeline = ordinaryCallable`, not a list-of-steps block or a new general pipeline expression. Reuse #130/#136 Result helpers for explicit failure-aware composition; validate handler input and HTTP error mappings. Wrapping middleware remains #84.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/83.
 
@@ -2522,6 +2540,8 @@ Issue: https://github.com/gajo357/dsharplang/issues/93
 
 Plan: `docs/features/implementation/issue-93-plan.md`
 
+Integrate the #132 shutdown order: drain producers, stop Logger admission and finish bounded output delivery, release outputs, then close shared RuntimeStore. Non-cooperating outputs must not cause overlapping retries or unbounded host shutdown.
+
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/93.
 
@@ -2557,6 +2577,8 @@ Do not merge, deploy or start another issue.
 Issue: https://github.com/gajo357/dsharplang/issues/91
 
 Plan: `docs/features/implementation/issue-91-plan.md`
+
+Reuse #131/#132 for captured LogEvents, Logger and output delivery. Own runtime instrumentation, metrics, tracing, redaction and boundary correlation; do not build a second logging subsystem or recurse through failed outputs.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/91.
@@ -2625,6 +2647,8 @@ Do not merge, deploy or start another issue.
 Issue: https://github.com/gajo357/dsharplang/issues/92
 
 Plan: `docs/features/implementation/issue-92-plan.md`
+
+Provide observer core and its read authorization independently of #134; the later LOG-04 task adds stored-log search through LogReader. With no query-capable output, history is unavailable. User fields such as tenantId are filters, not access control.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/92.
@@ -3233,5 +3257,242 @@ and open one draft PR with the plan, code, tests and acceptance evidence.
 Use Closes #73 only if that PR completes the implementation issue.
 If publishing the PR is unavailable, say so explicitly.
 
+Do not merge, deploy or start another issue.
+```
+
+
+## Pipes, partial application and logging additions
+
+These target tasks follow the [new specification](../DSharp_Pipes_and_Logging.md) and current [implementation sequence](DSharp_Implementation_Sequence.md). Parent numbers are tracking boundaries, not permission to combine all children into one implementation. Check live issue bodies before dispatch; none of these entries claims completed behavior.
+
+### #129 — LANG-41: Automatic partial application across supported callables
+
+Issue: https://github.com/gajo357/dsharplang/issues/129
+
+Plan: `docs/features/implementation/issue-129-plan.md`
+
+Dependencies: Core: #30, #33, #34, #35 and child #135. Later integrations wait for #41, #43, #44, #47, #40 and #45; foreign behavior remains governed by #16/#88/#89.
+
+Parent tracking task. Dispatch #135 for ordinary functions first. Keep this parent open until the async, method/default/extension and lifetime matrix is complete. Preserve declared multi-argument types, evaluation order and no implicit pipe awaiting/unwrapping.
+
+```text
+Plan the remaining bounded implementation slices for https://github.com/gajo357/dsharplang/issues/129.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-129-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Do not close this parent for planning or a partial implementation.
+Do not merge, deploy or start another issue.
+```
+
+### #130 — LIB-04: Result composition helpers and async overloads
+
+Issue: https://github.com/gajo357/dsharplang/issues/130
+
+Plan: `docs/features/implementation/issue-130-plan.md`
+
+Dependencies: #31 and #135; synchronous child #136 first. The async matrix waits for #41/#42 and approved library setup.
+
+Parent tracking task. Provide callback-first/data-last andThen, map, mapError, tap and tapError as ordinary symbols. Track all Result/Task combinations without retry, flattening by map, implicit Option/null unwrapping or error erasure. Worker/queue adapters remain #56/#61.
+
+```text
+Plan the remaining bounded implementation slices for https://github.com/gajo357/dsharplang/issues/130.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-130-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Do not close this parent for planning or a partial implementation.
+Do not merge, deploy or start another issue.
+```
+
+### #131 — LOG-01: Typed LogEvent, Logger templates and scope capture
+
+Issue: https://github.com/gajo357/dsharplang/issues/131
+
+Plan: `docs/features/implementation/issue-131-plan.md`
+
+Dependencies: Approved #9/#10 setup as applicable, #37/#38, #41/#45, #79 and #78. Boundary-specific context integration remains #91.
+
+Freeze the minimal immutable event/error schema and named-field lowering before dependent delivery work. Implement eager once-only field capture, checked templates, numeric/null precision and host-isolated scope snapshots with cleanup. Do not silently define a general variadic-call feature or Option wire encoding.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/131.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-131-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #131 only if this PR completes the bounded issue.
+Do not merge, deploy or start another issue.
+```
+
+### #132 — LOG-02: Host-owned Logger actor, console and output lifecycle
+
+Issue: https://github.com/gajo357/dsharplang/issues/132
+
+Plan: `docs/features/implementation/issue-132-plan.md`
+
+Dependencies: #131, #56/#58, #17 and approved runtime setup. Do not depend on #91, which consumes Logger.
+
+Use the actor runtime for one bounded transient Logger per host. Default to Info and console only; validate explicit startup outputs. Prove nonwaiting producer admission, independent failed-output retries, quarantine of timed-out writes, bounded backlogs and ordered shutdown. No durable-audit or exactly-once guarantee.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/132.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-132-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #132 only if this PR completes the bounded issue.
+Do not merge, deploy or start another issue.
+```
+
+### #133 — LOG-03: DatabaseLogOutput and bounded retention
+
+Issue: https://github.com/gajo357/dsharplang/issues/133
+
+Plan: `docs/features/implementation/issue-133-plan.md`
+
+Dependencies: #132, #59/#60, #64, #78 and approved provider setup.
+
+Use the existing RuntimeStore with separate logging migrations. Require atomic committed batches, event-ID deduplication, received-at retention and bounded capacity eviction. Logging remains outside business transactions. Use real-provider tests, including queue coexistence.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/133.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-133-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #133 only if this PR completes the bounded issue.
+Do not merge, deploy or start another issue.
+```
+
+### #134 — LOG-04: Typed LogReader and protected observer search
+
+Issue: https://github.com/gajo357/dsharplang/issues/134
+
+Plan: `docs/features/implementation/issue-134-plan.md`
+
+Dependencies: #133, #92 observer core and #85 read authorization. #92 must not depend on this extension.
+
+Implement a separate read-only LogReader and observer search with typed parameterized filters, precise null/missing/numeric semantics, bounded queries and high-water cursors. Preserve unavailable-history states and existing read authorization; user filters are not access control. Use real-provider tests.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/134.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-134-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #134 only if this PR completes the bounded issue.
+Do not merge, deploy or start another issue.
+```
+
+### #135 — LANG-41a: Partial application for ordinary functions and value pipes
+
+Issue: https://github.com/gajo357/dsharplang/issues/135
+
+Plan: `docs/features/implementation/issue-135-plan.md`
+
+Dependencies: #30, #33, #34, #35 and #36. Parent #129 tracks the wider matrix.
+
+Before implementation dispatch, inventory the exact old under-application rejection assertions, including 1 |> add(2), and prepare a narrowly reviewed baseline migration. Preserve regression intent and trusted verification; do not silently bypass old tests. Scope any required trusted-harness migration separately. Implement only ordinary positional-prefix calls, grouped invocation, empty-prefix behavior, generic context and ordinary pipes; methods/async/resource integrations remain with #129.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/135.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-135-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #135 only if this PR completes the bounded issue.
+Do not merge, deploy or start another issue.
+```
+
+### #136 — LIB-04a: Synchronous Result composition helpers
+
+Issue: https://github.com/gajo357/dsharplang/issues/136
+
+Plan: `docs/features/implementation/issue-136-plan.md`
+
+Dependencies: #31 and merged #135, plus the approved library setup boundary. Parent #130 retains async #41/#42 work.
+
+Implement only the synchronous helper matrix with precise generic signatures, once-only applicable callback invocation, eager callback-expression creation and explicit typed errors. Preserve Success(null), Success(None), Some(null), and nested Result/Option distinctions; do not add Task behavior or close #130.
+
+```text
+Implement the bounded slice in https://github.com/gajo357/dsharplang/issues/136.
+
+Follow AGENTS.md, the implementation sequence and DSharp_Pipes_and_Logging.md.
+Inspect current main, existing issue/PR state and merged prerequisites.
+Write docs/features/implementation/issue-136-plan.md before implementation.
+Use one dedicated branch and one draft PR for the selected bounded slice.
+
+Respect the scope and dependency notes above. If a runtime/library setup or
+public contract remains unresolved, report the gate and continue only independent
+scoped work. Preserve unrelated tests, the pinned SDK/dependencies and trusted
+verification. Run the required bootstrap/compiler/full-verifier commands and
+applicable approved runtime/provider tests; map acceptance criteria to evidence.
+Update implementation status only for tested behavior.
+
+Use Closes #136 only if this PR completes the bounded issue.
 Do not merge, deploy or start another issue.
 ```

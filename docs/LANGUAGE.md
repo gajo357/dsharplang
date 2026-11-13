@@ -1,13 +1,17 @@
 # Type system and syntax
 
-**Source precedence:** the selected requirements in syntax reference revision 0.3,
+**Source precedence:** the selected requirements in the current syntax reference,
 [section 21.2](features/DSharp_Syntax_Reference.md), and the handoff's section 4
 supersede older conflicting examples here. In particular, declarations are public,
 interfaces may supply method defaults, `T?` matches present values or null,
 `Success(value)` constructs results, local builders cannot escape, and callable
 workers differ from enqueue-only agents. No default-service selection is implied.
-Remaining syntax/API proposals stay provisional. Only the literal-function subset
-in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md) is currently executable.
+The [pipes and logging target](features/DSharp_Pipes_and_Logging.md) supersedes
+older composition/logging details: positional-prefix partial application,
+ordinary Result helpers, callable HTTP preprocessing and host-scoped Logger.
+Remaining syntax/API proposals stay provisional. See the
+[implementation status](features/DSharp_Implementation_Status.md) for currently
+executable behavior; importing a target specification does not implement it.
 
 This document separates established language semantics from syntax that has not
 been designed. It is based on [Feature specification v0.2](design/FEATURES.md),

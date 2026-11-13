@@ -3,7 +3,9 @@
 **Prepared:** 11 November 2026  
 **Repository:** [gajo357/dsharplang](https://github.com/gajo357/dsharplang)  
 **Inspected main commit:** [23fd22c65af7410ce87536b829232139462ef774](https://github.com/gajo357/dsharplang/commit/23fd22c65af7410ce87536b829232139462ef774)  
-**Coverage:** all 94 current feature/design/setup issues, #7 through #100.
+**Original coverage:** 94 feature/design/setup issues, #7 through #100. Later additions and reconciliations are recorded below; the original counts and starting-state descriptions are historical.
+
+**13 November 2026 update:** Incorporate the [pipes, partial application and logging target](../DSharp_Pipes_and_Logging.md). This changes the target and backlog, not implemented status. Main includes the plain-pipe #35 and tuple #36 work; the new partial application, helper and logging slices remain separate work. Use the current [implementation status](../DSharp_Implementation_Status.md) for tested behavior.
 
 ## 1. Execution model
 
@@ -23,15 +25,51 @@ This file is a roadmap, not an automatic GitHub issue scheduler. It does not lau
 
 ## 2. Starting point and interpretation
 
-The current compiler implements a small C#-generating bootstrap: parameterless int-literal functions, whitespace/single-line comments, diagnostics and CLI check/compile. The inspected implementation status reports those features as tested. This planning task did not rerun the compiler tests.
+At the original 11 November snapshot, the compiler implemented a small C#-generating bootstrap: parameterless int-literal functions, whitespace/single-line comments, diagnostics and CLI check/compile. That snapshot does not describe current main; later completion is recorded in implementation status and linked issue/PR evidence.
 
-Issue #7 is open and already has an approval label from the earlier workflow; its implementation is not on inspected main. All 94 tracked issues are open at this snapshot. Recheck current main, issue state and any linked PR before starting work.
+Issue #7 was open with an approval label at that snapshot, when all 94 tracked issues were open. Recheck current main, issue state and any linked PR before starting work; do not restart completed work from this historical description.
 
 Use issue numbers and dependencies, not the numeric order in GitHub's issue list. For example, #9 needs the decisions in #13 and #14 first. A planning PR being merged is not proof that its implementation children are complete.
 
 The sequence below satisfies all explicit dependency IDs currently recorded in the issues. Additional dependencies discovered during a per-issue plan must be recorded and resolved before that issue runs.
 
 The default order is conservative. Independent decisions can be drafted early, and optional work can move earlier when its own prerequisites are complete. Do not treat every phase as a mandatory barrier for unrelated work.
+
+### Pipes and logging additions
+
+The six new target briefs below supplement the original phase table. They do not
+reopen #35, change #30's nullable-generic completion criteria or merge Option
+semantics into nullable values. The target replaces `pipeline {}` composition
+with a callable-valued HTTP member, and uses `Logger.log` with console-only
+defaults and opt-in database output on the existing RuntimeStore.
+
+| Backlog ID | Placement and prerequisites | Completion boundary |
+| --- | --- | --- |
+| [LANG-41 / #129](https://github.com/gajo357/dsharplang/issues/129) | [Core child #135](https://github.com/gajo357/dsharplang/issues/135) after #30/#33/#34/#35/#36; async/method/default/extension and lifetime slices wait for #41–45/#47 as applicable | Positional prefix calls, evaluation order, generic inference and resource-safe captures across supported callable kinds |
+| [LIB-04 / #130](https://github.com/gajo357/dsharplang/issues/130) | [Synchronous child #136](https://github.com/gajo357/dsharplang/issues/136) after #31/#135; async matrix after #41/#42 | Five ordinary helpers, no implicit pipe unwrapping or automatic flattening/retry |
+| [LOG-01 / #131](https://github.com/gajo357/dsharplang/issues/131) | After scoped setup #9/#10, collections #37/#38, async #41, resources #45, standard values #79 and codec #78 | Typed LogEvent/template checking and host-isolated scope capture; no delivery claim |
+| [LOG-02 / #132](https://github.com/gajo357/dsharplang/issues/132) | After #131 and actor/host lifecycle #56/#58 with DEC-07/#17 | Standard transient actor, console, plugin lifecycle, bounded independent delivery and shutdown |
+| [LOG-03 / #133](https://github.com/gajo357/dsharplang/issues/133) | After #132, RuntimeStore/SQLite #59/#60, queue integration #64 and codec #78 | Opt-in shared-store logging, commit/deduplication, retention and real queue coexistence |
+| [LOG-04 / #134](https://github.com/gajo357/dsharplang/issues/134) | After #133 and existing observer/auth #92/#85 | Read-only typed LogReader plus protected observer search |
+
+Stage broad briefs into bounded children before implementation, and never mark
+their parent complete from a first slice. Async/method support cannot be claimed
+before those language features exist. HTTP-03/#83 depends on the required
+LANG-41/LIB-04 callable composition support; OPS-01/#91 reuses LOG-02 instead of
+implementing another logger. Core OPS-02/#92 does not depend on LOG-04: the latter
+adds log search afterward, avoiding a cycle through #91.
+
+The dependencies of core #135 are merged, but existing baseline tests deliberately
+reject underapplied calls such as `1 |> add(2)`. Scope and review a narrow migration
+of those obsolete expectations before dispatching #135. This documentation task
+changes no tests and grants no blanket verifier permissions. Core #135 and sync
+#136 can advance separately from later runtime/method children; their completion
+alone cannot close parents #129/#130.
+
+The logging/runtime slices still require explicitly enabled projects and trusted
+tests. Use real-provider tests for storage/query claims and controlled clocks,
+barriers and blocked outputs for delivery. Declaring these targets neither
+activates a database nor grants an audit/durability guarantee.
 
 ## 3. Start here
 
@@ -135,7 +173,7 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 **Outcome:** Functions can be passed and composed; collections remain immutable while local construction can be efficient.
 
 1. Freeze the relevant collection/key/equality contracts in #11. That issue also records numeric and standard-value decisions used later; implementing all those values is not required now.
-2. Implement capture-free lambdas (#33), immutable closures (#34), pipes/limited return inference (#35) and tuples (#36). Check callback arity, return scope and capture legality.
+2. Implement capture-free lambdas (#33), immutable closures (#34), pipes/limited return inference (#35) and tuples (#36). Check callback arity, return scope and capture legality. These foundations are now merged; LANG-41 adds positional-prefix partial application separately, and LIB-04 adds ordinary Result helpers. Do not reopen #35 for those additions.
 3. Implement immutable List (#37), Map/Set (#38), sequential iteration (#39), and method-local builders with non-escape checks (#40).
 4. Do not expose a builder before its escape restrictions work. Cover returns, wrappers, nested containers, captures, helper calls and foreign calls; freeze must create an independent immutable snapshot.
 
@@ -254,8 +292,8 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 
 **Outcome:** A real HTTP request passes through typed authentication/authorization/decoding into the exact handler input.
 
-1. Complete the HTTP-specific #10 setup child, then HTTP hosting (#81), typed path/query/body binding (#82), transformation pipelines (#83), wrapping middleware (#84), and runtime auth checks (#85).
-2. Preserve identity/context through transformations. Await async steps and stop on typed failure through explicit error mappings. Wrappers handle downstream cleanup, including faults/cancellation.
+1. Complete the HTTP-specific #10 setup child, then HTTP hosting (#81), typed path/query/body binding (#82), callable preprocessing (#83), wrapping middleware (#84), and runtime auth checks (#85). Merge the required LANG-41 partial-application and LIB-04 helper support before #83.
+2. Use `pipeline = callable` with ordinary pipes and Result helpers, not `pipeline {}`. The host invokes preprocessing once and calls handle only on success; absent preprocessing lets binding supply the handler input. Preserve identity/context and explicit HTTP error mappings. Wrappers still handle downstream cleanup, including faults/cancellation.
 3. Enforce access at runtime: a publicly constructible Authorized-shaped record is not sufficient proof that authentication or permission checks occurred.
 4. Finish health/readiness and bounded graceful draining (#93), including shutdown during HTTP and queued work.
 
@@ -269,10 +307,11 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 
 **Outcome:** The application is observable and testable, with protected operational controls.
 
-1. Split #91 into a telemetry contract and bounded instrumentation/export implementation children. Propagate correlation across request/worker/enqueue boundaries without leaking payloads or secrets.
+1. Implement LOG-01/02 before the #91 instrumentation slices. Reuse their LogEvent, scopes, Logger actor and output contract; #91 adds bounded metric/trace definitions and request/worker/queue correlation rather than another logger. Console is the default, database/cloud output is opt-in, and internal delivery diagnostics bypass the failed Logger path.
 2. Split #94 into a public testing API decision, worker/queue helpers and HTTP helpers. Reuse the existing deterministic runtime test primitives.
 3. Split #92 into the observer contract, read-only views and authorized control views. Reuse #71 APIs; do not write store tables directly from the dashboard.
-4. Keep the observer and exporters optional. Their failures must not redefine business outcomes.
+4. LOG-03 adds opt-in database logging to the existing RuntimeStore, with separate schema, deduplication, bounded retention and queue-contention tests. After the core observer #92 and LOG-03, LOG-04 adds typed LogReader search with protected reads, cursor/missing/null/numeric semantics and explicit no-store/timeout states. Do not make #92 depend on its later LOG-04 integration.
+5. Keep the observer and exporters optional. Their failures must not redefine business outcomes. Transient log admission is not durable auditing; database output succeeds after its own commit, outside business transactions.
 
 **Completion check:** A sample request and its queued work can be correlated, tested with fake dependencies/time, and inspected through a protected observer. Read and control permissions are tested separately.
 
@@ -332,7 +371,7 @@ Preserve the one-PR-per-issue convention as follows:
 | [#79](https://github.com/gajo357/dsharplang/issues/79) LIB-02 | Split uuid, time/duration and Bytes families if the selected APIs exceed a focused implementation. |
 | [#80](https://github.com/gajo357/dsharplang/issues/80) LIB-03 | Outbound HTTP contract first; then minimal client adapter. Circuit breaker remains a later design issue. |
 | [#86](https://github.com/gajo357/dsharplang/issues/86) HTTP-06 | Socket lifecycle first; bounded output buffering/order next. |
-| [#91](https://github.com/gajo357/dsharplang/issues/91) OPS-01 | Telemetry contract first; then scoped instrumentation/correlation and exporter adapters. |
+| [#91](https://github.com/gajo357/dsharplang/issues/91) OPS-01 | Reuse LOG-01/02; freeze remaining metric/trace contracts, then scoped instrumentation/correlation and adapters. |
 | [#92](https://github.com/gajo357/dsharplang/issues/92) OPS-02 | Observer contract, read-only views, then authorized control views. |
 | [#94](https://github.com/gajo357/dsharplang/issues/94) OPS-04 | Testing API contract, worker/queue helpers, then HTTP helpers. |
 | [#95](https://github.com/gajo357/dsharplang/issues/95) OPS-05 | Design only; select a concrete driver/outbox relay in later implementation children. |
@@ -584,11 +623,11 @@ Dependencies below are translated from the current issue bodies into actual GitH
 | P10 | [#76](https://github.com/gajo357/dsharplang/issues/76) · APP-03 | Implement lazy resource initialization and replacement | [#75](https://github.com/gajo357/dsharplang/issues/75) |
 | P11 | [#81](https://github.com/gajo357/dsharplang/issues/81) · HTTP-01 | Host explicitly registered HTTP agents | [#10](https://github.com/gajo357/dsharplang/issues/10), [#58](https://github.com/gajo357/dsharplang/issues/58), [#52](https://github.com/gajo357/dsharplang/issues/52), [#15](https://github.com/gajo357/dsharplang/issues/15) |
 | P11 | [#82](https://github.com/gajo357/dsharplang/issues/82) · HTTP-02 | Implement typed path, query and JSON body binding | [#81](https://github.com/gajo357/dsharplang/issues/81), [#78](https://github.com/gajo357/dsharplang/issues/78) |
-| P11 | [#83](https://github.com/gajo357/dsharplang/issues/83) · HTTP-03 | Implement typed asynchronous transformation pipelines | [#82](https://github.com/gajo357/dsharplang/issues/82), [#33](https://github.com/gajo357/dsharplang/issues/33), [#43](https://github.com/gajo357/dsharplang/issues/43) |
+| P11 | [#83](https://github.com/gajo357/dsharplang/issues/83) · HTTP-03 | Implement typed HTTP callable preprocessing | [#82](https://github.com/gajo357/dsharplang/issues/82), [#33](https://github.com/gajo357/dsharplang/issues/33), [#43](https://github.com/gajo357/dsharplang/issues/43), required [#129](https://github.com/gajo357/dsharplang/issues/129)/[#130](https://github.com/gajo357/dsharplang/issues/130) slices |
 | P11 | [#84](https://github.com/gajo357/dsharplang/issues/84) · HTTP-04 | Implement wrapping middleware and cleanup | [#83](https://github.com/gajo357/dsharplang/issues/83), [#45](https://github.com/gajo357/dsharplang/issues/45) |
 | P11 | [#85](https://github.com/gajo357/dsharplang/issues/85) · HTTP-05 | Implement runtime authentication and authorization checks | [#84](https://github.com/gajo357/dsharplang/issues/84), [#15](https://github.com/gajo357/dsharplang/issues/15) |
 | P11 | [#93](https://github.com/gajo357/dsharplang/issues/93) · OPS-03 | Implement health checks and bounded graceful draining | [#58](https://github.com/gajo357/dsharplang/issues/58), [#67](https://github.com/gajo357/dsharplang/issues/67), [#81](https://github.com/gajo357/dsharplang/issues/81) |
-| P12 | [#91](https://github.com/gajo357/dsharplang/issues/91) · OPS-01 | Implement correlated structured logs, metrics and tracing | [#10](https://github.com/gajo357/dsharplang/issues/10), [#64](https://github.com/gajo357/dsharplang/issues/64), [#81](https://github.com/gajo357/dsharplang/issues/81) |
+| P12 | [#91](https://github.com/gajo357/dsharplang/issues/91) · OPS-01 | Implement runtime instrumentation, metrics and tracing through Logger | [#10](https://github.com/gajo357/dsharplang/issues/10), [#64](https://github.com/gajo357/dsharplang/issues/64), [#81](https://github.com/gajo357/dsharplang/issues/81), [#132](https://github.com/gajo357/dsharplang/issues/132) |
 | P12 | [#94](https://github.com/gajo357/dsharplang/issues/94) · OPS-04 | Provide handler and application testing harnesses | [#10](https://github.com/gajo357/dsharplang/issues/10), [#64](https://github.com/gajo357/dsharplang/issues/64), [#83](https://github.com/gajo357/dsharplang/issues/83) |
 | P12 | [#92](https://github.com/gajo357/dsharplang/issues/92) · OPS-02 | Implement protected runtime observer dashboard | [#71](https://github.com/gajo357/dsharplang/issues/71), [#85](https://github.com/gajo357/dsharplang/issues/85), [#91](https://github.com/gajo357/dsharplang/issues/91) |
 | P13 | [#87](https://github.com/gajo357/dsharplang/issues/87) · INT-01 | Implement explicit NuGet reference and package resolution | [#10](https://github.com/gajo357/dsharplang/issues/10), [#46](https://github.com/gajo357/dsharplang/issues/46), [#16](https://github.com/gajo357/dsharplang/issues/16) |

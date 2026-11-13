@@ -1,10 +1,42 @@
 # D# feature implementation backlog
 
-Prepared 11 November 2026 for [gajo357/dsharplang](https://github.com/gajo357/dsharplang). This is a historical planning snapshot; its issue counts, bootstrap status, task order and permissions may be stale. Consult current implementation status, issue state, repository instructions and implementation sequence before use. The nullable and Option requirements below incorporate the later adopted contract.
+Prepared 11 November 2026 for [gajo357/dsharplang](https://github.com/gajo357/dsharplang). This is a historical planning snapshot; its issue counts, bootstrap status, task order and permissions may be stale. Consult current implementation status, issue state, repository instructions and implementation sequence before use. The nullable/Option and [pipes/logging](DSharp_Pipes_and_Logging.md) requirements below incorporate later target contracts.
 
-**94 issue briefs:** 1 existing issue, 38 compiler candidates, 9 design tasks, 3 environment/infrastructure templates, and 43 later runtime/library/tooling briefs. This is a planning catalog, not 94 approved implementation jobs. Several later briefs explicitly require smaller child issues before dispatch.
+**Original snapshot: 94 issue briefs:** 1 existing issue, 38 compiler candidates, 9 design tasks, 3 environment/infrastructure templates, and 43 later runtime/library/tooling briefs. Later additions are listed separately below. This is a planning catalog, not a list of approved implementation jobs. Several later briefs explicitly require smaller child issues before dispatch.
 
 No GitHub issues were created by producing this document. IDs such as LANG-02 are backlog identifiers, not GitHub issue numbers. Replace dependency IDs with real issue/PR links as issues are created.
+
+### 13 November 2026 reconciliation: pipes and logging
+
+The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
+adds LANG-41, LIB-04 and LOG-01–04 and revises HTTP-03/#83 and OPS-01/#91.
+The earlier statement about issue creation describes only the original snapshot.
+The new contracts are implementation targets, not evidence that the features run.
+LANG-18/#35 remains the completed plain-pipe foundation; partial application is
+tracked separately. Existing nullable-generic #30 and Option/LANG-40/#121 retain
+their own completion criteria.
+
+Calls gain positional-prefix partial application; result-aware composition uses
+ordinary library functions. HTTP preprocessing uses `pipeline = callable`, not a
+`pipeline {}` block. Logging uses host-scoped `Logger.log`, with a bounded
+transient actor and console-only default. Database logging is opt-in and uses the
+existing RuntimeStore; it does not make log admission durable. This reconciliation
+does not enable runtime projects, start handlers or change the compiler.
+
+| Backlog ID | GitHub tracking | First bounded slice |
+| --- | --- | --- |
+| LANG-41 | [#129](https://github.com/gajo357/dsharplang/issues/129) | [#135](https://github.com/gajo357/dsharplang/issues/135): ordinary functions and pipes |
+| LIB-04 | [#130](https://github.com/gajo357/dsharplang/issues/130) | [#136](https://github.com/gajo357/dsharplang/issues/136): synchronous Result helpers |
+| LOG-01 | [#131](https://github.com/gajo357/dsharplang/issues/131) | LogEvent, templates and scope capture |
+| LOG-02 | [#132](https://github.com/gajo357/dsharplang/issues/132) | Actor, console and output lifecycle |
+| LOG-03 | [#133](https://github.com/gajo357/dsharplang/issues/133) | Shared-store database output and retention |
+| LOG-04 | [#134](https://github.com/gajo357/dsharplang/issues/134) | LogReader and observer search |
+
+Core #135 depends on merged #30/#33/#34/#35/#36, and sync #136 depends on #31
+and #135. Existing tests intentionally reject underapplied calls (including
+`1 |> add(2)`). Before dispatching #135, scope a narrowly reviewed migration of
+those obsolete expectations; this documentation task changes no tests. Do not
+weaken unrelated tests or treat this as blanket permission to edit verification.
 
 ## What is already present
 
@@ -47,6 +79,7 @@ Afterward, build immutable data, matching, nullability and Result; then lambdas/
 
 - [Current implementation status](https://github.com/gajo357/dsharplang/blob/main/docs/features/DSharp_Implementation_Status.md): tested implementation.
 - [Syntax reference](https://github.com/gajo357/dsharplang/blob/main/docs/features/DSharp_Syntax_Reference.md): established choices plus explicitly provisional grammar/APIs.
+- [Pipes and logging target](DSharp_Pipes_and_Logging.md): partial application, Result helpers, HTTP callable preprocessing and the Logger/output/query contracts.
 - [Feature specification](https://github.com/gajo357/dsharplang/blob/main/docs/design/FEATURES.md): backend behavior and open design topics.
 - [Repository agent instructions](https://github.com/gajo357/dsharplang/blob/main/AGENTS.md), [automation policy](https://github.com/gajo357/dsharplang/blob/main/.github/ai/policy.json), [workflow instructions](https://github.com/gajo357/dsharplang/blob/main/docs/AI_WORKFLOWS.md): actual execution permissions and checks.
 
@@ -57,12 +90,12 @@ This document proposes order and issue scope. It does not override those sources
 - Immutable data and nested collections; local mutable builders never escape their creating invocation.
 - Public-only declarations; no class/service implementation inheritance.
 - Native `T?` and `null`, separate from explicit `Option<T>` with `None` and `Some(T)`. Nullable application is idempotent. Track nullable generics in [#30](https://github.com/gajo357/dsharplang/issues/30) and Option in [#121](https://github.com/gajo357/dsharplang/issues/121).
-- Every normal handler path returns `Result`; queue success carries Unit under the current draft.
+- Every normal application handler path returns `Result`; queue success carries Unit under the current draft. Logger's typed Unit-returning submission API and internal system-actor outcomes are the explicit runtime-facility exception.
 - Only workers expose awaited handler results. Queue acceptance is different from completion; direct `.handle` access is forbidden.
 - Queue/event/scheduled payload roots are declared data types or Unit, with recursively immutable serializable fields.
 - Individual interface methods may have default bodies; this does not select a default service implementation.
 - First-class lambdas obey data/capture/lifetime restrictions.
-- Code-based explicit registration; no automatic discovery or application YAML.
+- Code-based explicit registration; no automatic discovery or application YAML. The standard Logger is registered once by each host; arbitrary packages do not gain handler auto-activation.
 - At-least-once durable execution; recovery/retries do not undo external side effects.
 - gRPC stays out of this implementation plan.
 
@@ -72,7 +105,7 @@ This document proposes order and issue scope. It does not override those sources
 | --- | --- |
 | Lexical syntax, primitives, comments | DEC-01, DEC-02; LANG-02/04/06/07/31/32/33/38 |
 | Bindings, records, unions, nullable, Result | LANG-01, LANG-05, LANG-08–15 |
-| Lambdas, generic functions, pipes, tuples | LANG-13, LANG-16–19, LANG-25 |
+| Lambdas, generic functions, pipes, tuples | LANG-13, LANG-16–19, LANG-25, LANG-41; LIB-04 |
 | Immutable collections and local builders | LANG-20–23 |
 | Async, scoped resources, services/default methods | LANG-24–28; DEC-07; APP-04 |
 | Modules and extensions | LANG-29/30; DEC-02 |
@@ -85,7 +118,7 @@ This document proposes order and issue scope. It does not override those sources
 | JSON, immutable standard values, outbound HTTP | LIB-01–03 |
 | HTTP, middleware, authentication, WebSockets | DEC-05/08; HTTP-01–06 |
 | C#/F# NuGet interoperability | DEC-06; INT-01–04 |
-| Observability, observer, testing, outbox | OPS-01–05 |
+| Observability, observer, testing, outbox | LOG-01–04; OPS-01–05 |
 | Packaging/project boundaries and tests | SET-02/03; INT-01 |
 
 ## Issue index
@@ -124,6 +157,7 @@ Status is planning readiness, not implementation completion. “Split / freeze f
 | [LANG-17](#lang-17-implement-immutable-closure-capture-and-returned-closures) | Implement immutable closure capture and returned closures | LANG-16, LANG-08 | Candidate; dependencies first |
 | [LANG-18](#lang-18-implement-value-piping-and-simple-return-type-inference) | Implement value piping and simple return-type inference | LANG-16, LANG-03, DEC-02 | Candidate; dependencies first |
 | [LANG-19](#lang-19-implement-tuples-and-tuple-destructuring) | Implement tuples and tuple destructuring | LANG-08, LANG-16 | Candidate; dependencies first |
+| [LANG-41](#lang-41-implement-automatic-partial-application) | Implement automatic partial application (#129; core #135) | LANG-13, LANG-16–19; staged method/async/lifetime prerequisites | Core test migration before dispatch; later children required |
 | [LANG-20](#lang-20-implement-immutable-list-values-and-core-operations) | Implement immutable List values and core operations | LANG-13, LANG-16, DEC-01 | Candidate; dependencies first |
 | [LANG-21](#lang-21-implement-immutable-map-and-set-values) | Implement immutable Map and Set values | LANG-20, DEC-01 | Candidate; dependencies first |
 | [LANG-22](#lang-22-implement-sequential-forin-iteration) | Implement sequential for/in iteration | LANG-20, LANG-07 | Candidate; dependencies first |
@@ -170,7 +204,7 @@ Status is planning readiness, not implementation completion. “Split / freeze f
 | [LIB-03](#lib-03-design-and-implement-an-outbound-http-client-adapter) | Design and implement an outbound HTTP client adapter | SET-03, DEC-06, DEC-07, LANG-28 | Split / freeze first |
 | [HTTP-01](#http-01-host-explicitly-registered-http-agents) | Host explicitly registered HTTP agents | SET-03, RUN-03, LANG-35, DEC-05 | Runtime/tooling setup required |
 | [HTTP-02](#http-02-implement-typed-path-query-and-json-body-binding) | Implement typed path, query and JSON body binding | HTTP-01, LIB-01 | Runtime/tooling setup required |
-| [HTTP-03](#http-03-implement-typed-asynchronous-transformation-pipelines) | Implement typed asynchronous transformation pipelines | HTTP-02, LANG-16, LANG-26 | Runtime/tooling setup required |
+| [HTTP-03](#http-03-implement-typed-asynchronous-transformation-pipelines) | Implement HTTP callable preprocessing | HTTP-02, LANG-16, LANG-26, LANG-41, LIB-04 | Runtime/tooling setup required |
 | [HTTP-04](#http-04-implement-wrapping-middleware-and-cleanup) | Implement wrapping middleware and cleanup | HTTP-03, LANG-28 | Runtime/tooling setup required |
 | [HTTP-05](#http-05-implement-runtime-authentication-and-authorization-checks) | Implement runtime authentication and authorization checks | HTTP-04, DEC-05 | Runtime/tooling setup required |
 | [HTTP-06](#http-06-implement-typed-websocket-connection-handling) | Implement typed WebSocket connection handling | HTTP-01, DEC-08 | Split / freeze first |
@@ -178,7 +212,12 @@ Status is planning readiness, not implementation completion. “Split / freeze f
 | [INT-02](#int-02-implement-the-safe-c-value-and-method-adapter-subset) | Implement the safe C# value and method adapter subset | INT-01, LANG-26, LANG-28 | Runtime/tooling setup required |
 | [INT-03](#int-03-implement-clr-async-error-and-delegate-adapters) | Implement CLR async, error and delegate adapters | INT-02, LANG-25 | Runtime/tooling setup required |
 | [INT-04](#int-04-implement-the-initial-f-nuget-adapter-subset) | Implement the initial F# NuGet adapter subset | INT-03 | Runtime/tooling setup required |
-| [OPS-01](#ops-01-implement-correlated-structured-logs-metrics-and-tracing) | Implement correlated structured logs, metrics and tracing | SET-03, RUN-09, HTTP-01 | Split / freeze first |
+| [LIB-04](#lib-04-implement-result-composition-helpers) | Implement Result composition helpers (#130; sync #136) | LANG-14, core #135; LANG-24/25 for async coverage | New target; staged sync/async work |
+| [LOG-01](#log-01-implement-logevent-templates-and-scope-capture) | Implement LogEvent, templates and scope capture | Relevant setup, collections, async, scoped resources and standard encodings | Runtime setup and bounded slices required |
+| [LOG-02](#log-02-implement-logger-actor-console-and-output-lifecycle) | Implement Logger actor, console and output lifecycle | LOG-01, RUN-01, RUN-03, DEC-07 | Runtime setup required |
+| [LOG-03](#log-03-implement-database-log-output-and-retention) | Implement database log output and retention | LOG-02, RUN-04/05/09, LIB-01 | Real-provider tests required |
+| [LOG-04](#log-04-implement-logreader-and-observer-search) | Implement LogReader and observer search | LOG-03, OPS-02, HTTP-05 | Real-provider/auth tests required |
+| [OPS-01](#ops-01-implement-correlated-structured-logs-metrics-and-tracing) | Implement runtime instrumentation, metrics and tracing through Logger | SET-03, RUN-09, HTTP-01, LOG-02 | Split / freeze first |
 | [OPS-02](#ops-02-implement-protected-runtime-observer-dashboard) | Implement protected runtime observer dashboard | RUN-16, HTTP-05, OPS-01 | Split / freeze first |
 | [OPS-03](#ops-03-implement-health-checks-and-bounded-graceful-draining) | Implement health checks and bounded graceful draining | RUN-03, RUN-12, HTTP-01 | Runtime/tooling setup required |
 | [OPS-04](#ops-04-provide-handler-and-application-testing-harnesses) | Provide handler and application testing harnesses | SET-03, RUN-09, HTTP-03 | Split / freeze first |
@@ -1225,7 +1264,7 @@ Only immutable data captures in this first slice. Resource/service/worker capabi
 
 ## LANG-18: Implement value piping and simple return-type inference
 
-**Planning status:** Candidate; dependencies first.
+**Planning status:** Historical foundation, implemented by [#35](https://github.com/gajo357/dsharplang/issues/35). See current implementation status for tested limits. LANG-41 tracks the newly specified partial application separately.
 
 ### Goal
 
@@ -1247,7 +1286,7 @@ Allowed: `src/DSharp.Compiler/**/*.cs`, necessary `src/DSharp.Cli/**/*.cs`, new 
 
 ### Non-goals
 
-No failure-aware middleware composition, currying or recursive inference.
+No result-aware pipe operator, automatic partial application in this original slice, or recursive inference. LIB-04 supplies ordinary Result helpers; LANG-41 supplies partial application.
 
 ### Verification
 
@@ -2727,6 +2766,12 @@ AC3: Round-trip nested eligible data and reject functions, tasks, resources and 
 
 AC4: Report structured path-aware errors without leaking secret values or executing application constructors with side effects.
 
+AC5: Option in #121 does not itself define a JSON or HTTP representation. Decide
+wire encoding explicitly in the applicable contract and preserve `None` versus
+`Some(null)` where options are supported. Logger fields require explicit mapping;
+logging does not adopt a core Option wire schema. Preserve large integer/decimal
+precision and report provider limitations rather than silently rounding.
+
 ### Constraints
 
 BLOCKED until the relevant SET-02/03 setup. Before approval, insert exact enabled source/test paths and pinned dependencies. Preserve existing tests, compiler behavior, invocation and immutability rules; no blanket workflow permissions.
@@ -2889,15 +2934,15 @@ Typed envelope shape and boundary error/status mappings come from DEC-05.
 
 ### Goal
 
-Compose functions and service methods into checked request transformations.
+Bind HTTP preprocessing to an ordinary typed callable with `pipeline = expression`, using normal pipes and the LIB-04 Result helpers.
 
-Dependencies: HTTP-02, LANG-16, LANG-26. Convert these IDs to merged PR/issue links before dispatch.
+Dependencies: HTTP-02/#82, LANG-16/#33, LANG-26/#43, LANG-41 and LIB-04, plus the DEC-05 transport/error contract and the relevant HTTP setup child.
 
 ### Acceptance criteria
 
-AC1: Check input/output/error connections using the shared compiler contract and explicit error adapters.
+AC1: Check callable input, successful output against the exact handle input, and explicit HTTP error mappings; reject legacy `pipeline {}` composition.
 
-AC2: Await asynchronous steps, pass success onward and short-circuit typed failures.
+AC2: Invoke preprocessing once and call handle only on success. Use ordinary synchronous/asynchronous Result helpers; absent preprocessing lets binding supply the handler input directly.
 
 AC3: Prove identity/context survives decoding and that incompatible inputs or erased errors are compile errors.
 
@@ -2907,7 +2952,7 @@ BLOCKED until the relevant SET-02/03 setup. Before approval, insert exact enable
 
 ### Non-goals
 
-No wrapping continuations or implicit error-to-string conversion.
+No general pipeline block, result-aware pipe operator, wrapping continuations or implicit error-to-string conversion. Wrapping middleware remains HTTP-04.
 
 ### Verification
 
@@ -2915,7 +2960,7 @@ Before dispatch, insert trusted subsystem commands from setup plus compiler regr
 
 ### Decisions already made
 
-Pipeline composition is explicitly failure-aware; ordinary |> semantics do not change.
+The contextual pipeline member is a callable-valued declaration slot, not a separate composition language. See [the target specification](DSharp_Pipes_and_Logging.md#5-services-workers-and-http). Runtime authorization and DEC-05 transport contracts remain separate requirements.
 
 ## HTTP-04: Implement wrapping middleware and cleanup
 
@@ -3167,21 +3212,21 @@ Start with DEC-06's explicitly selected subset. Package implementation language 
 
 **Planning status:** Split / freeze first.
 
-**Before dispatch:** Approve the telemetry schema first. Instantiate host/request instrumentation and queue correlation/export separately if needed.
+**Before dispatch:** Reuse LOG-01/02 and approve the remaining metric/trace contracts. Instantiate host/request instrumentation and queue correlation/export separately if needed.
 
 ### Goal
 
-Connect request, worker and queue attempts through approved diagnostic context.
+Connect request, worker and queue attempts through approved diagnostic context, reusing the standard Logger rather than building another logging stack.
 
-Dependencies: SET-03, RUN-09, HTTP-01. Convert these IDs to merged PR/issue links before dispatch.
+Dependencies: SET-03/#10, RUN-09/#64, HTTP-01/#81 and LOG-02.
 
 ### Acceptance criteria
 
-AC1: First freeze a small telemetry schema, correlation propagation, cardinality rules and redaction contract.
+AC1: Reuse LOG-01's LogEvent and scope contract; freeze remaining metric/trace schema, cardinality and redaction rules without redefining Logger fields or delivery.
 
 AC2: Emit lifecycle/outcome/duration events and queue depth/retry metrics without serializing secrets or full message payloads by default.
 
-AC3: Test propagation across async/worker/enqueue boundaries and isolate exporter failure from business handling.
+AC3: Test propagation across async/worker/enqueue boundaries and isolate exporter failure from business handling. Logger/output-internal diagnostics bypass the failed delivery path and are rate-limited.
 
 ### Constraints
 
@@ -3197,7 +3242,7 @@ Before dispatch, insert trusted subsystem commands from setup plus compiler regr
 
 ### Decisions already made
 
-Create the schema decision child before implementing adapters. Telemetry integrations remain optional.
+Logger is the host-scoped, bounded transient system actor from LOG-02; console is the default and database/cloud outputs are opt-in. Metrics/tracing and boundary instrumentation reuse it. LOG-03 owns database delivery, and LOG-04 adds search after the core observer. Do not make OPS-02 depend on LOG-04 and create a dependency cycle.
 
 ## OPS-02: Implement protected runtime observer dashboard
 
@@ -3532,6 +3577,266 @@ These are recorded so “every feature” does not silently expand the first imp
 | Cloud provisioning, deployment manifests and packaging distribution | Separate infrastructure/product work; declarations do not automatically provision cloud resources. |
 | Final CLI branding/package manifest/file extension | Current prototype conventions are usable; permanent public contract remains a decision. |
 | Native AOT | Deferred; current backend is managed .NET. |
+
+## Pipes and logging additions — 13 November 2026
+
+These briefs implement [the target specification](DSharp_Pipes_and_Logging.md).
+Their creation does not enable runtime projects or mark language/runtime support
+implemented. Preserve one bounded plan and PR per implementation slice; split a
+brief before dispatch when its staged prerequisites require it.
+
+## LANG-41: Implement automatic partial application
+
+**Planning status:** Parent [#129](https://github.com/gajo357/dsharplang/issues/129); first child [#135](https://github.com/gajo357/dsharplang/issues/135) stages ordinary functions before later callable kinds.
+
+### Goal
+
+For fixed-arity `(A, B, C) -> R`, make `f(a)` a `(B, C) -> R` and `f(a,b)` a
+`(C) -> R`, retaining the declared multi-argument function type.
+
+Dependencies: LANG-13/#30, LANG-16/#33, LANG-17/#34, LANG-18/#35 and LANG-19/#36 for the
+ordinary-function slice. Async/method/default/extension and lifetime coverage
+waits for LANG-24–28/#41–45 and LANG-30/#47 as applicable; do not claim those
+kinds complete before their implementation exists.
+
+### Acceptance criteria
+
+AC1: Support positional prefixes, grouped calls and pipes supplying the first remaining argument; a newline before `|>` continues the expression. Reject excess arguments and discarded function-valued statements.
+
+AC2: Evaluate the callable receiver and supplied arguments once in source order when forming the partial function. Invoke its body only once all arguments arrive; `f()` supplies an empty prefix unless the function has zero parameters.
+
+AC3: Infer generic arguments from supplied values and expected/rest-of-pipe context without declaration-order overload selection. Preserve async task deferral, receiver dispatch and resource/builder lifetime restrictions as those callable kinds become available.
+
+### Constraints
+
+Use compiler/CLI sources, new feature tests, examples and feature documentation.
+Preserve existing tests, SDK, dependencies and C# generation. Method/async work
+must have its prerequisites and scoped tests; no workflow/project/verifier edits.
+The obsolete underapplication-rejection tests need a narrowly reviewed migration
+before child #135 dispatch; unrelated tests and verifier checks remain intact.
+
+### Non-goals
+
+No argument holes, automatic type-level currying, partially named calls, guessed
+foreign overload/default/variadic semantics or general variadic partial application.
+
+### Verification
+
+Run the required repository checks and executed generated-C# tests for grouped
+calls, receiver/argument effects, generic ambiguity and delayed task creation.
+Include negative escape checks and distinguish one tuple argument from several.
+
+### Decisions already made
+
+The pipe stays ordinary application. Configuration/dependencies conventionally
+precede the flowing data. Fully supplied supported calls retain their behavior.
+
+## LIB-04: Implement Result composition helpers
+
+**Planning status:** Parent [#130](https://github.com/gajo357/dsharplang/issues/130); synchronous child [#136](https://github.com/gajo357/dsharplang/issues/136) may precede async overloads.
+
+### Goal
+
+Provide `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary standard
+functions with callback first and flowing Result last.
+
+Dependencies: LANG-14/#31 and core partial application #135 for synchronous child #136;
+LANG-24/#41 and LANG-25/#42 for the complete async matrix. Library placement must
+use the enabled project boundary or a separately approved setup child.
+
+### Acceptance criteria
+
+AC1: Implement the success/error callback behavior in section 4 of the target. Preserve errors, invoke only the applicable callback once, and require a shared andThen error type or an explicit mapError.
+
+AC2: Cover all four Result/Task<Result> × Result/Task<Result>-returning andThen combinations. Other helpers accept Result or Task<Result> with synchronous callbacks; tap observers return Unit.
+
+AC3: Await task sources once; preserve ordinary eager callback-expression evaluation, exceptions and cancellation. `map` wraps without flattening; Success(null) and Success(None) remain successes.
+
+### Constraints
+
+Preserve plain pipe semantics, Option tags and nullable normalization. Add no
+runtime scheduling, retry, queue, transaction or implicit exception-to-Error layer.
+Use exact enabled library/compiler paths and checks in each bounded plan.
+
+### Non-goals
+
+No async tap callbacks, automatic error unions, retries, parallelism or durability.
+
+### Verification
+
+Execute sync/async matrix tests with callback counters and controlled tasks;
+exercise typed errors, cancellation/faults, nested Result/Option/Task and null.
+
+### Decisions already made
+
+These helpers are library symbols, not keywords or special Result-aware pipes.
+Worker/queue adapters preserve their separate dispatch and acceptance contracts.
+
+## LOG-01: Implement LogEvent, templates and scope capture
+
+**Planning status:** [#131](https://github.com/gajo357/dsharplang/issues/131); runtime setup and bounded compiler/runtime slices required.
+
+### Goal
+
+Define typed immutable LogEvent data and the `Logger.log`/`Logger.scope` capture
+boundary from sections 6–8 and 11 of the target.
+
+Dependencies: relevant SET-02/#9 and SET-03/#10 setup; LANG-20/21/#37/#38,
+LANG-24/#41, LANG-28/#45, standard values #79 and JSON codec #78. This contract
+must not depend on LOG-02 delivery, which consumes its captured events.
+
+### Acceptance criteria
+
+AC1: Check literal/constant templates, matching named fields, duplicates, escaped braces and interpolation diagnostics. Evaluate every supplied expression once in source order even for disabled levels.
+
+AC2: Freeze supported JSON-compatible field values without implicit record/union/Option serialization or numeric precision loss. Preserve template, message, origin, stable identity and runtime metadata separately; validate size/depth and nonfinite values through independent drop diagnostics.
+
+AC3: Implement host-isolated immutable scope chains and capture snapshots; merge outer, inner and event fields in that order. Dispose scopes on normal/early/Result/fault/cancellation exits and explicitly transfer allowed context across runtime boundaries.
+
+### Constraints
+
+Use enabled compiler/runtime paths only. Logger named-field syntax is a designated
+API, not general variadic partial application. Source expression faults retain
+ordinary semantics; invalid event data must not fault business handling.
+
+### Non-goals
+
+No automatic Option wire schema, hidden template dependencies on scopes, or
+scope/correlation fields as authorization evidence. Delivery belongs to LOG-02.
+
+### Verification
+
+Execute compiler diagnostics and generated calls; test await/concurrent host scope
+isolation, cleanup and frozen snapshots with controlled barriers.
+
+### Decisions already made
+
+`Logger.log` returns Unit after synchronous capture and a non-waiting submission
+attempt. It promises neither durable acceptance nor eventual processing.
+
+## LOG-02: Implement Logger actor, console and output lifecycle
+
+**Planning status:** [#132](https://github.com/gajo357/dsharplang/issues/132); runtime setup required.
+
+### Goal
+
+Run one host-scoped standard Logger actor using existing actor infrastructure,
+with bounded transient admission and independent output delivery.
+
+Dependencies: LOG-01/#131, RUN-01/#56, RUN-03/#58, DEC-07/#17 and the enabled
+runtime/output project boundary. Runtime instrumentation in OPS-01 depends on
+this facility, not the reverse.
+
+### Acceptance criteria
+
+AC1: Default to Info and one console JSON-lines output, with no database. Validate startup settings; explicit outputs replace the default and an empty list disables delivery. Bootstrap output is not replayed; host/test instances stay isolated.
+
+AC2: Implement the section 10 event/byte/batch/time budgets, independent per-output backlogs, three attempts, deadline/quarantine rules, stable event IDs and overflow counters. At most one write per output may run, including after timeout.
+
+AC3: Return producer calls without waiting for output I/O. Keep healthy outputs progressing when another blocks; bypass Logger for rate-limited internal diagnostics. Drain under the host deadline after producers, then release outputs before the shared store.
+
+### Constraints
+
+Use the existing actor scheduler/supervision. LogOutput accepts immutable batches
+and reports whole-batch success or a typed failure. Keep state actor-owned and
+all active batches/tasks/retries within the specified bounds.
+
+### Non-goals
+
+No second actor framework, durable mailbox, exactly-once/audit guarantee, default
+database/cloud exporter or arbitrary package auto-activation.
+
+### Verification
+
+Use fake outputs, controlled clocks/barriers, blocked-output progress tests and
+shutdown/fault/retry tests. Demonstrate documented transient crash loss.
+
+### Decisions already made
+
+Console-only defaults and the runtime system-actor registration exception do not
+change explicit registration rules for application handlers.
+
+## LOG-03: Implement database log output and retention
+
+**Planning status:** [#133](https://github.com/gajo357/dsharplang/issues/133); runtime setup and real-provider tests required.
+
+### Goal
+
+Provide opt-in DatabaseLogOutput on the application's existing RuntimeStore,
+with separate logging schema/migrations and bounded retention maintenance.
+
+Dependencies: LOG-02/#132, RUN-04/#59, RUN-05/#60, RUN-09/#64 and LIB-01/#78.
+Other database providers follow their own setup/conformance issues.
+
+### Acceptance criteria
+
+AC1: Commit immutable event batches atomically, deduplicating stable event IDs, preserving typed JSON and the section 12 indexes. Do not create a database per queue or a durable job per log event.
+
+AC2: Default to seven-day visibility measured from received_at, with startup/periodic bounded cleanup and explicit keep-forever. Enforce the default 256 MiB logical retained-log budget; count capacity eviction separately from expiration.
+
+AC3: Exclude expired events from normal queries before deletion. Test coexistence with queue claims and shared migrations; log failures cannot roll back handler/business transactions or remove queue rows.
+
+### Constraints
+
+Logging remains outside business/queue transactions. No remote work under an
+open storage transaction, aggressive whole-file compaction or implicit promise
+about disk/backups deletion. The mailbox remains transient.
+
+### Non-goals
+
+No mandatory separate logging database, default activation or remote-provider
+retention promise beyond that provider's documented capability.
+
+### Verification
+
+Use the real initial provider for commit, retry deduplication, retention, capacity,
+restart and queue-contention integration tests; mocks alone are insufficient.
+
+### Decisions already made
+
+Database output success means commit. Delivery failure is isolated from business
+handling; retained bytes do not describe the whole database file or its WAL.
+
+## LOG-04: Implement LogReader and observer search
+
+**Planning status:** [#134](https://github.com/gajo357/dsharplang/issues/134); real-provider and authenticated observer integration required.
+
+### Goal
+
+Expose a separate read-only LogReader service and integrate typed, bounded log
+search into the existing observer.
+
+Dependencies: LOG-03/#133, OPS-02/#92 and HTTP-05/#85. Core OPS-02 does not depend on
+LOG-04; this is its subsequent log-search integration.
+
+### Acceptance criteria
+
+AC1: Implement time bounds/choice, level/category/correlation and AND-combined typed field predicates, with default page size 100 and maximum 500. Bind queries as parameters and validate field paths; no executable predicates or SQL inputs.
+
+AC2: Preserve missing versus explicit null and numeric comparison semantics. Opaque cursors bind the query and first-page high-water sequence; tolerate retention deletion and reject unsupported provider semantics or timeouts explicitly.
+
+AC3: Require observer read authorization, show history unavailable without a query-capable output, and isolate failures from queue work. Tenant filter values are not access control; Logger does not execute queries.
+
+### Constraints
+
+Use the existing observer/service contract and real-provider integration tests.
+No implicit public HTTP route, silently truncated successful query or long-lived
+snapshot guarantee.
+
+### Non-goals
+
+No arbitrary boolean/full-text language, cross-cloud search, automatic index for
+every field, or unbounded console history buffer.
+
+### Verification
+
+Test JSON missing/null/precision, cursor stability under insert/retention,
+authorization, empty/no-store states, provider limits and bounded timeouts.
+
+### Decisions already made
+
+The async reader returns `Result<LogPage, LogQueryError>`; LogPage has immutable
+events and a nullable next cursor. Query state never changes Logger delivery.
 
 ## Completion rule
 
