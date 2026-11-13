@@ -21,6 +21,7 @@ This status describes tested implementation, not the full syntax draft.
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
+| Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -193,6 +194,14 @@ capture fields are private and readonly. Function values are not data and cannot
 be captured, including through generic calls. Mutable builders, resources and
 capabilities remain outside this slice. See [the example](../../examples/immutable-closures.ds)
 and [implementation plan](implementation/issue-34-plan.md).
+[Issue #35](https://github.com/gajo357/dsharplang/issues/35) adds ordinary
+value pipes and omitted return annotations for functions whose dependencies and
+reachable exits satisfy the adopted inference rules. Pipes pass a value as one
+argument; they do not implicitly unwrap Result values, await tasks or destructure
+tuples. Recursive, indirect or unresolved inference and cyclic checked-type
+dependencies require an annotation. Explicitly typed recursive functions remain
+supported. See [the example](../../examples/pipes-inference.ds) and
+[implementation plan](implementation/issue-35-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
