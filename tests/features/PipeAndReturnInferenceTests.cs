@@ -5,12 +5,12 @@ using System.Text.RegularExpressions;
 using DSharp.Compiler;
 using Xunit;
 
-namespace DSharp.Tests;
+namespace D;
 
-public sealed class PipeAndReturnInferenceTests
+public sealed class PipeTests
 {
-    [Fact(DisplayName = "Pipes and inferred returns/execution")]
-    public async Task PipesEvaluateOnceInOrderAndInferenceUsesCheckedBodies()
+    [Fact(DisplayName = "Pipe")]
+    public async Task Run()
     {
         const string source = """
             module Demo
@@ -102,6 +102,36 @@ public sealed class PipeAndReturnInferenceTests
                     true => typedNullable()
                 }
             }
+            fn literalMatchTrue() {
+                match true {
+                    true => if true { return 42 } else { return 41 }
+                    false => null
+                }
+            }
+            fn literalMatchFalse() {
+                match false {
+                    true => null
+                    false => if true { return 42 } else { return 41 }
+                }
+            }
+            fn literalSingleton() {
+                match 1 {
+                    1 => if true { return 42 } else { return 41 }
+                    _ => null
+                }
+            }
+            fn falseGuardNull() {
+                match true {
+                    _ when false => null
+                    _ => if true { return 42 } else { return 41 }
+                }
+            }
+            fn falseGuardRecursive() {
+                match true {
+                    _ when false => falseGuardRecursive()
+                    _ => if true { return 42 } else { return 41 }
+                }
+            }
             fn deadPropIf(): Result<int, string> {
                 Success((if true { return Error("x") } else { 42 })?)
             }
@@ -182,6 +212,8 @@ public sealed class PipeAndReturnInferenceTests
                 (literalNever() == 42) && (literalNeverTyped() == 42) &&
                 (coveredNeverMatch(true) == 42) && (coveredNeverMatch(false) == 41) &&
                 (coveredNullable(true) == 42) && (coveredNullable(false) == 41) &&
+                (literalMatchTrue() == 42) && (literalMatchFalse() == 42) &&
+                (literalSingleton() == 42) && (falseGuardNull() == 42) && (falseGuardRecursive() == 42) &&
                 (textResultCode(deadPropIf()) == 42) && (textResultCode(deadPropMatch(true)) == 42) &&
                 (textResultCode(deadPropMatch(false)) == 41) &&
                 (deadRecord() == 42) && (deadUpdate() == 42) && (deadGenericArgument() == 42) &&
@@ -201,6 +233,11 @@ public sealed class PipeAndReturnInferenceTests
             Assert.Equal(typeof(int?), type.GetMethod("inferConstantNullable", publicStatic)!.ReturnType);
             Assert.Equal(typeof(int?), type.GetMethod("inferNullableFromDeadCall", publicStatic)!.ReturnType);
             Assert.Equal(typeof(int), type.GetMethod("literalNever", publicStatic)!.ReturnType);
+            Assert.Equal(typeof(int), type.GetMethod("literalMatchTrue", publicStatic)!.ReturnType);
+            Assert.Equal(typeof(int), type.GetMethod("literalMatchFalse", publicStatic)!.ReturnType);
+            Assert.Equal(typeof(int), type.GetMethod("literalSingleton", publicStatic)!.ReturnType);
+            Assert.Equal(typeof(int), type.GetMethod("falseGuardNull", publicStatic)!.ReturnType);
+            Assert.Equal(typeof(int), type.GetMethod("falseGuardRecursive", publicStatic)!.ReturnType);
             Assert.Equal(1, Invoke(type, "readSourceOrder"));
             Assert.Equal(2, Invoke(type, "readFactoryOrder"));
             Assert.Equal(42, Invoke(type, "early"));
@@ -232,6 +269,7 @@ public sealed class PipeAndReturnInferenceTests
             "fn pick(first: int, second: int): int { first }\nfn f() { pick(if true { return 42 } else { return 41 }, if true { return true } else { 0 }) }",
             "fn pick(first: int, second: int): int { first }\nfn f(flag: bool) { pick(if flag { return 42 } else { return 41 }, if flag { return null } else { 0 }) }",
             "fn f(flag: bool) { match flag { _ => 42\n true => if flag { return null } else { return null } } }",
+            "fn f() { match true { _ when false => if true { return null } else { return null }\n _ => if true { return 42 } else { return 41 } } }",
             "fn f(flag: bool) { match flag { true => 42\n true => if flag { return null } else { return null }\n false => 0 } }",
             "fn f(value: int?) { match value { null => 42\n null => if true { return null } else { return null }\n present => present } }",
             "type Choice { | Some(bool)\n | None }\nfn f(value: Choice) { match value { Choice.Some(true) => 42\n Choice.Some(false) => 41\n Choice.Some(_) => if true { return null } else { return null }\n Choice.None => 0 } }",

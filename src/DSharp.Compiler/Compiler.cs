@@ -1319,21 +1319,46 @@ public static class Binder
                         // if some reachable arm can actually complete.
                         var coverageForCompletion = new List<PatternSyntax>();
                         var hasCompletingReachableArm = false;
+                        ExpressionSyntax literalSource = match.Scrutinee;
+                        while (literalSource is GroupSyntax literalGroup) literalSource = literalGroup.Inner;
+                        PatternSyntax? singleton = literalSource switch
+                        {
+                            ValueSyntax value when value.Value.Text is "true" or "false" ||
+                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) ||
+                                value.Value.Text.StartsWith('"') || value.Value.Text.StartsWith('\'') => new LiteralPatternSyntax(value.Value),
+                            UnarySyntax { Operator.Text: "-", Operand: ValueSyntax value } unary when
+                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
+                            UnitSyntax unit => new UnitPatternSyntax(unit.Unit),
+                            NullSyntax nullValue => new NullPatternSyntax(nullValue.Null),
+                            _ => null
+                        };
+                        bool LiteralArmPossible(PatternSyntax pattern)
+                        {
+                            if (singleton is not LiteralPatternSyntax point || pattern is not LiteralPatternSyntax literal) return true;
+                            if (point.Literal.Text is "true" or "false" && literal.Literal.Text is "true" or "false")
+                                return point.Literal.Text == literal.Literal.Text;
+                            if (int.TryParse((point.Minus is null ? "" : "-") + point.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var a) &&
+                                int.TryParse((literal.Minus is null ? "" : "-") + literal.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var b)) return a == b;
+                            return true; // Different spellings of text literals can denote the same value.
+                        }
+                        bool Covered(List<PatternSyntax> previous, PatternSyntax target) =>
+                            previous.Any(pattern => Subsumes(pattern, target) || singleton is not null && Subsumes(pattern, singleton));
                         foreach (var candidate in match.Arms)
                         {
-                            if (coverageForCompletion.Any(pattern => Subsumes(pattern, candidate.Pattern))) continue;
-                            if ((candidate.Guard is null || !NeverExpression(candidate.Guard)) && !NeverExpression(candidate.Value))
+                            if (!LiteralArmPossible(candidate.Pattern) || Covered(coverageForCompletion, candidate.Pattern)) continue;
+                            if ((candidate.Guard is null || !NeverExpression(candidate.Guard) && LiteralBool(candidate.Guard) != false) && !NeverExpression(candidate.Value))
                                 hasCompletingReachableArm = true;
                             if (candidate.Guard is null) coverageForCompletion.Add(candidate.Pattern);
                         }
                         foreach (var arm in match.Arms)
                         {
-                            if (!includeUnreachable && earlierPatterns.Any(pattern => Subsumes(pattern, arm.Pattern)) &&
+                            if (!includeUnreachable && (!LiteralArmPossible(arm.Pattern) || Covered(earlierPatterns, arm.Pattern)) &&
                                 (!includeDeadBranches || !hasCompletingReachableArm || NeverExpression(arm.Value))) continue;
                             var armNames = new HashSet<string>(names, StringComparer.Ordinal);
                             PatternNames(arm.Pattern, armNames);
                             if (arm.Guard is not null) Expression(arm.Guard, armNames);
-                            if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard)) Expression(arm.Value, armNames);
+                            if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard) &&
+                                (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames);
                             if (arm.Guard is null) earlierPatterns.Add(arm.Pattern);
                             if (!includeUnreachable && !includeDeadBranches && arm.Guard is null && arm.Pattern is WildcardPatternSyntax) break;
                         }
@@ -2129,8 +2154,17 @@ public static class Binder
                                 unionCase.PayloadTypes.Select(type => type.Text).ToArray())).ToArray())
                             { TypeParameters = union.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray();
                         var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
+                        BoundPattern? singletonPattern = scrutinee.Expression switch
+                        {
+                            BoundBool or BoundInt or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundUnary { Operator: "-", Operand: BoundInt } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundNull => new BoundNullPattern(),
+                            _ => null
+                        };
                         string? matchResultType = null;
                         var hasReachableCompletingArm = false;
+                        var hasDefinitelyCompletingArm = false;
+                        var hasUncertainCompletingArm = false;
                         foreach (var arm in match.Arms)
                         {
                             var introduced = new List<string>();
@@ -2141,8 +2175,15 @@ public static class Binder
                             {
                                 inferenceReachable = armReachable;
                                 var pattern = BindPattern(arm.Pattern, scrutineeType!, introduced);
-                                var armPossible = MatchCoverage.IsUseful(scrutineeType!, boundArms.Where(item => item.Guard is null)
-                                    .Select(item => item.Pattern).ToArray(), pattern, coverageUnions, out var definite);
+                                var previousPatterns = boundArms.Where(item => item.Guard is null).Select(item => item.Pattern).ToArray();
+                                var armPossible = MatchCoverage.IsUseful(scrutineeType!, previousPatterns, pattern, coverageUnions, out var definite);
+                                if (armPossible && singletonPattern is not null)
+                                {
+                                    var pointUncovered = MatchCoverage.IsUseful(scrutineeType!, previousPatterns, singletonPattern, coverageUnions, out var pointDefinite);
+                                    var pointOutsideArm = MatchCoverage.IsUseful(scrutineeType!, new[] { pattern }, singletonPattern, coverageUnions, out var armDefinite);
+                                    if (pointDefinite && !pointUncovered || armDefinite && pointOutsideArm) armPossible = false;
+                                    else definite &= pointDefinite && armDefinite;
+                                }
                                 armReachable &= armPossible;
                                 uncertainArm = armReachable && !definite;
                                 inferenceReachable = armReachable;
@@ -2155,11 +2196,17 @@ public static class Binder
                                     guard = Coerce(boundGuard.Expression, "bool", boundGuard.Type);
                                     guardNever = boundGuard.Type == "<never>";
                                 }
-                                inferenceReachable = armReachable && !guardNever;
+                                var guardFalse = arm.Guard is not null && LiteralCondition(arm.Guard) == false;
+                                inferenceReachable = armReachable && !guardNever && !guardFalse;
                                 var value = BindExpression(arm.Value, expectedResult);
                                 if (uncertainArm && inferredReturns is not null && inferredReturns.Count > evidenceBeforeArm)
                                     Fail("DS2027", arm.Value.Token, "An explicit return type is required when match-arm reachability cannot be proven.");
-                                if (armPossible && !guardNever && value.Type != "<never>") hasReachableCompletingArm = true;
+                                if (armPossible && !guardNever && !guardFalse && value.Type != "<never>")
+                                {
+                                    hasReachableCompletingArm = true;
+                                    if (definite) hasDefinitelyCompletingArm = true;
+                                    else hasUncertainCompletingArm = true;
+                                }
                                 if (!guardNever && value.Type != "<never>")
                                 {
                                     if (matchResultType is null) matchResultType = value.Type;
@@ -2181,6 +2228,8 @@ public static class Binder
                             }
                         }
                         inferenceReachable = savedMatchReachable;
+                        if (inferredReturns is not null && hasUncertainCompletingArm && !hasDefinitelyCompletingArm)
+                            Fail("DS2027", match.Match, "An explicit return type is required when match completion cannot be proven.");
                         if (!MatchCoverage.IsExhaustive(scrutineeType!,
                             boundArms.Where(arm => arm.Guard is null).Select(arm => arm.Pattern).ToArray(), coverageUnions))
                             Fail("DS2020", match.Match, "Match patterns are not exhaustive.");

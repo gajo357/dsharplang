@@ -70,3 +70,6 @@ Actions. Record actual results and fix CI on the same PR branch.
 - `bash .github/ai/verify.sh` passed documentation and 20 automation tests;
   the isolated compiler stage could not download its pinned image locally
   (`Forbidden`). GitHub Actions runs the unchanged isolated verification.
+- The first GitHub compiler run passed all tests but exceeded the test-report
+  size limit. The new test's reporting identifiers were shortened without
+  removing assertions or changing existing tests or the verifier.
