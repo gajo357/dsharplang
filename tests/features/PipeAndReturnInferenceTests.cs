@@ -254,7 +254,7 @@ public sealed class PipeAndReturnInferenceTests
             "fn f(): int { 42 |> 1 }",
             "fn takes(value: int): int { value }\nfn f(): int { let r: Result<int,int> = Success(42)\n r |> takes }",
             "fn takes(a: int, b: int): int { a + b }\nfn f(): int { 42 |> takes }",
-            "fn add(a: int, b: int): int { a + b }\nfn f(): int { 1 |> add(2) }",
+            "fn add(a: int, b: int): int { a + b }\nfn f(): int { 1 |> add(2, 3) }",
             "fn f(): int { 42 |> missing }",
             "fn f(): int { null |> (value => 42) }",
             "fn f() { null }\nfn use(): int? { f() }",
