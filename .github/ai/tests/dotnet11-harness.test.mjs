@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { isReviewedBase, migrateContent } from '../migrate-dotnet11-harness.mjs';
 
-test('trusted SDK migration accepts both reviewed event bases only', () => {
+test('trusted SDK migration accepts reviewed event bases only', () => {
   assert.equal(isReviewedBase('f22efb53fdedbb17339d798d61c9d25577497cd8'), true);
   assert.equal(isReviewedBase('5e0c1d366a9f434501ec3c5dbe32cbe65def90b3'), true);
+  assert.equal(isReviewedBase('32e2047a4b1cdc5f6feb57ed6591c67ecba81e7c'), true);
   assert.equal(isReviewedBase('unreviewed-base'), false);
 });
 

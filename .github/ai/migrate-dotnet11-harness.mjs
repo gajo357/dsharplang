@@ -6,11 +6,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// GitHub can deliver a pull-request event with the earlier base SHA after main
-// has advanced. Both reviewed bases have identical allowlisted verifier files.
+// GitHub can deliver a pull-request event with an earlier base SHA after main
+// has advanced. These reviewed bases have identical allowlisted verifier files.
 const baseRevisions = new Set([
   'f22efb53fdedbb17339d798d61c9d25577497cd8',
   '5e0c1d366a9f434501ec3c5dbe32cbe65def90b3',
+  '32e2047a4b1cdc5f6feb57ed6591c67ecba81e7c',
 ]);
 export function isReviewedBase(revision) { return baseRevisions.has(revision); }
 const files = [
