@@ -291,6 +291,7 @@ internal static class MultiFileResolver
                     case ListSyntax list: return list with { Elements = list.Elements.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case InvokeSyntax invocation: return invocation with { Receiver = Expression(invocation.Receiver, scope, typeParameters), Arguments = invocation.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case UnarySyntax unary: return unary with { Operand = Expression(unary.Operand, scope, typeParameters) };
+                    case AwaitSyntax awaited: return awaited with { Operand = Expression(awaited.Operand, scope, typeParameters) };
                     case BinarySyntax binary: return binary with { Left = Expression(binary.Left, scope, typeParameters), Right = Expression(binary.Right, scope, typeParameters) };
                     case CoalesceSyntax coalesce: return coalesce with { Left = Expression(coalesce.Left, scope, typeParameters), Right = Expression(coalesce.Right, scope, typeParameters) };
                     case PipeSyntax pipe: return pipe with { Left = Expression(pipe.Left, scope, typeParameters), Right = Expression(pipe.Right, scope, typeParameters) };

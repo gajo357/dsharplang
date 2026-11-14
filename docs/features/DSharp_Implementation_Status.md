@@ -52,6 +52,7 @@ external interoperability guarantee follows from this lowering. See the
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
 | Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit | Source evaluates once, elements are visited in order, iteration captures are independent, and return/Result propagation leave the enclosing function or lambda |
 | Method-local mutable builders | `MutableList<T>()` and `MutableMap<K,V>()` with local aliases, Unit-valued `add`/`set`, and `freeze`; escape and lambda capture rejected | Frozen lists and structurally keyed maps remain unchanged by subsequent mutations; builders created inside a lambda belong to its invocation |
+| Async functions and await | Explicit `async fn` with logical return annotation; `Task<T>` calls and `await` in async functions | Tasks suspend and resume without blocking; nested expressions, early return, Result propagation and same-invocation builders preserve their behavior |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -211,6 +212,12 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #41](https://github.com/gajo357/dsharplang/issues/41) adds explicitly
+annotated async functions, task-valued calls and `await`. Async return inference,
+async lambdas and task storage in immutable data remain separate work; awaits
+inside synchronous functions or lambdas are rejected. See the
+[D# example](../../examples/async-functions.ds) and
+[plan](implementation/issue-41-plan.md).
 [Issue #40](https://github.com/gajo357/dsharplang/issues/40) adds local mutable
 list and map builders. Only recognized operations and local aliases can use a
 builder; returns, ordinary calls, data storage and lambda capture are rejected.

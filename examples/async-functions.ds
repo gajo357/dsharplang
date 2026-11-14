@@ -1,0 +1,11 @@
+module Demo
+
+// The annotation is the logical result; calling double returns Task<int>.
+async fn double(value: int): int {
+    value * 2
+}
+
+async fn answer(): int {
+    let value = await double(21)
+    value
+}

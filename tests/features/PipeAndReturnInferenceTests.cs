@@ -283,7 +283,7 @@ public sealed class PipeAndReturnInferenceTests
             "fn f() { false && (if true { return null } else { true }) }",
             "fn f() { true || (if true { return null } else { false }) }",
             "fn f(): int { let tuple = (1, 2)\n tuple |> (value => value) }",
-            "fn use(value: Task<int>): int { 42 }\nfn f(task: Task<int>): int { task |> use }"
+            "fn use(value: int): int { 42 }\nfn f(task: Task<int>): int { task |> use }"
         };
         for (var index = 0; index < cases.Length; index++)
         {
