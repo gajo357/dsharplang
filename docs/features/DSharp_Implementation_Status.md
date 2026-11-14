@@ -183,7 +183,10 @@ remain pending. Issue #30 stays open for its complete acceptance criteria. See
 `Option<T>`, a distinct tagged choice with `None` and `Some(T)`. `Some(null)`
 requires a nullable payload type; nested options retain each case. JSON and
 HTTP mappings remain undecided. The nullable and Option changes are documented
-in the [implementation plan](implementation/nullable-option-plan.md).
+in the [implementation plan](implementation/nullable-option-plan.md). The
+[record example](../../examples/option_records.ds) exercises optional update
+fields, nested options and generic records with nullable payloads. Its cases
+are also covered by generated-code execution and diagnostic tests.
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;
