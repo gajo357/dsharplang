@@ -1,8 +1,8 @@
 # Issue 43: Interfaces and explicit services
 
-**Base:** `103a146bc1a4a6d7a69d4f675e4cc76131bcd48f` (merged #30 and #41).
+**Base:** `28589c857a80f6fcf7f3b07ed01a5b8f715cbb39` (merged #30, #41 and #166).
 **Issue:** [#43](https://github.com/gajo357/dsharplang/issues/43).
-**Status:** Contract proposal and implementation plan; no compiler behavior yet.
+**Status:** The maintainer explicitly adopted the contract; implementation complete for review.
 
 ## Why a contract is needed
 
@@ -11,12 +11,11 @@ The syntax reference §12 illustrates a service implementing one interface, whil
 leaves service declaration, construction, call and dispatch syntax open, and
 DEC-02 does not adopt those rules. The task queue and AGENTS.md prohibit silently
 choosing public grammar or semantics. The accompanying
-[contract proposal](issue-43-contract.md) makes a bounded choice reviewable;
-it is not adopted merely by merging this plan. Obtain explicit maintainer adoption
-before implementation. #42's task-valued list gap is independently tracked and
-is not a listed #43 dependency.
+[contract](issue-43-contract.md) makes a bounded choice reviewable. The maintainer
+explicitly adopted it in conversation. #42's task-valued list gap is independently
+tracked and is not a listed #43 dependency.
 
-## Scope once adopted
+## Implementation scope
 
 Support typed interface signatures and services implementing one or more
 interfaces, checked method conformance, explicit constructor dependencies,
@@ -78,3 +77,16 @@ The local commands used the pinned 11.0.100 SDK on `PATH`,
 `DOTNET_CLI_HOME=/tmp/dsharp-dotnet11-home`,
 `NUGET_PACKAGES=/tmp/dsharp-dotnet11-packages`, and
 `npm_config_cache=/tmp/dsharp-npm-cache` for writable sandbox caches.
+
+### Implementation verification
+
+- `bash scripts/verify-compiler.sh` passed all 18 compiler tests and 375
+  feature tests, including the new service acceptance coverage.
+- The acceptance tests compile generated C# with warnings treated as errors and
+  exercise explicit dependencies, polymorphic and async dispatch, imports,
+  evaluation order, diagnostics, and capability non-escape.
+- `examples/interfaces-services.ds` is checked, compiled and run as a D#
+  example; its `Demo.answer()` returns 42.
+- `bash .github/ai/verify.sh` passed documentation and all 25 automation tests;
+  its isolated compiler stage is checked by GitHub CI because the local image
+  registry returns `Forbidden`.

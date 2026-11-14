@@ -40,9 +40,12 @@ internal static class MultiFileResolver
         void Fail(Token token, string code, string message) => throw new SourceError(new(code, Path(token), token.Span, message));
         void Add(string module, string name, string kind, Token location, string? union = null, string? nameOverride = null)
         {
+            static bool IsType(string symbolKind) => symbolKind is "record" or "union" or "interface" or "service";
+            static bool IsValue(string symbolKind) => symbolKind is "function" or "record" or "service";
             var same = symbols.FirstOrDefault(s => s.Module == module && s.Name == name &&
                 ((kind == "case" && s.Kind == "case" && s.Union == union) ||
-                 (kind != "case" && s.Kind != "case" && (kind == s.Kind || kind == "record" || s.Kind == "record"))));
+                 (kind != "case" && s.Kind != "case" &&
+                    (kind == s.Kind || IsType(kind) && IsType(s.Kind) || IsValue(kind) && IsValue(s.Kind)))));
             if (same is not null)
                 Fail(location, "DS2001", $"Duplicate declaration '{module}.{name}'; first declared at {Path(same.Location)}({same.Location.Span.Line},{same.Location.Span.Column}).");
             symbols.Add(new(module, name, nameOverride ?? Fresh(), kind, location, union));
@@ -53,6 +56,8 @@ internal static class MultiFileResolver
             foreach (var function in file.Functions) Add(file.Name.Text, function.Name.Text, "function", function.Name);
             foreach (var record in file.Records) Add(file.Name.Text, record.Name.Text, "record", record.Name);
             foreach (var union in file.Unions) Add(file.Name.Text, union.Name.Text, "union", union.Name);
+            foreach (var contract in file.Interfaces) Add(file.Name.Text, contract.Name.Text, "interface", contract.Name);
+            foreach (var service in file.Services) Add(file.Name.Text, service.Name.Text, "service", service.Name);
         }
         foreach (var file in files.OrderBy(f => f.Name.Text, StringComparer.Ordinal).ThenBy(f => Path(f.Name), StringComparer.Ordinal))
             foreach (var union in file.Unions)
@@ -64,6 +69,8 @@ internal static class MultiFileResolver
         var functions = new List<FunctionSyntax>();
         var records = new List<RecordDeclarationSyntax>();
         var unions = new List<UnionDeclarationSyntax>();
+        var interfaces = new List<InterfaceDeclarationSyntax>();
+        var services = new List<ServiceDeclarationSyntax>();
         foreach (var file in files)
         {
             var current = file.Name.Text;
@@ -99,8 +106,8 @@ internal static class MultiFileResolver
                     if (!shape.IsFunction && !shape.IsTuple && !parameters.Contains(name) && name is not ("int" or "bool" or "char" or "string" or "Unit"))
                     {
                         var dot = name.LastIndexOf('.');
-                        var found = dot < 0 ? Lookup(token, name, s => s.Kind is "record" or "union") :
-                            Qualified(token, name[..dot], name[(dot + 1)..], s => s.Kind is "record" or "union");
+                        var found = dot < 0 ? Lookup(token, name, s => s.Kind is "record" or "union" or "interface" or "service") :
+                            Qualified(token, name[..dot], name[(dot + 1)..], s => s.Kind is "record" or "union" or "interface" or "service");
                         if (found is not null) name = found.Internal;
                     }
                     return shape with { Name = name, Arguments = shape.Arguments.Select(Visit).ToArray() };
@@ -108,7 +115,7 @@ internal static class MultiFileResolver
                 return token with { Text = Visit(type).ToString() };
             }
             Token[] Types(IReadOnlyList<Token> values, IReadOnlySet<string> typeParameters) => values.Select(t => ResolveType(t, typeParameters)).ToArray();
-            Symbol? ValueName(Token location) => Lookup(location, location.Text, s => s.Kind is "function" or "record" or "case");
+            Symbol? ValueName(Token location) => Lookup(location, location.Text, s => s.Kind is "function" or "record" or "case" or "service");
             ExpressionSyntax CaseValue(Symbol value, Token name) => new FieldAccessSyntax(new ValueSyntax(Rename(name, value.Union!)), Rename(name, value.Internal));
             ExpressionSyntax CaseCall(Symbol value, Token name, Token open, IReadOnlyList<ExpressionSyntax> args, IReadOnlyList<Token> typeArgs) =>
                 new MemberCallSyntax(new ValueSyntax(Rename(name, value.Union!)), Rename(name, value.Internal), open, args) { TypeArguments = typeArgs };
@@ -197,12 +204,17 @@ internal static class MultiFileResolver
                     case ValueSyntax value:
                         if (scope.Contains(value.Value.Text)) return value;
                         var foundValue = ValueName(value.Value);
-                        return foundValue?.Kind switch { "function" => new ValueSyntax(Rename(value.Value, foundValue.Internal)), "case" => CaseValue(foundValue, value.Value), _ => value };
+                        return foundValue?.Kind switch { "function" or "service" => new ValueSyntax(Rename(value.Value, foundValue.Internal)), "case" => CaseValue(foundValue, value.Value), _ => value };
                     case CallSyntax call:
                         var callArguments = call.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray();
                         var callTypes = Types(call.TypeArguments, typeParameters);
                         if (scope.Contains(call.Name.Text)) return call with { Arguments = callArguments, TypeArguments = callTypes };
                         var foundCall = ValueName(call.Name);
+                        // An unconstrained type parameter cannot name a service
+                        // constructor; preserve the source spelling so binding
+                        // applies the same rule as single-file compilation.
+                        if (foundCall?.Kind == "service" && typeParameters.Contains(call.Name.Text))
+                            return call with { Arguments = callArguments, TypeArguments = callTypes };
                         // A visible nominal type shadows a standard builder
                         // constructor. Preserve its identity so the binder
                         // cannot mistake a user record or union for the
@@ -210,22 +222,22 @@ internal static class MultiFileResolver
                         if ((call.Name.Text is "MutableList" or "MutableMap") && !typeParameters.Contains(call.Name.Text))
                         {
                             var builderType = foundCall?.Kind == "record" ? foundCall :
-                                foundCall is null ? Lookup(call.Name, call.Name.Text, s => s.Kind == "union") : null;
+                                foundCall is null ? Lookup(call.Name, call.Name.Text, s => s.Kind is "union" or "interface") : null;
                             if (builderType is not null)
                                 return call with { Name = Rename(call.Name, builderType.Internal), Arguments = callArguments, TypeArguments = callTypes };
                         }
-                        return foundCall?.Kind switch { "function" => call with { Name = Rename(call.Name, foundCall.Internal), Arguments = callArguments, TypeArguments = callTypes }, "case" => CaseCall(foundCall, call.Name, call.OpenParen, callArguments, callTypes), _ => call with { Arguments = callArguments, TypeArguments = callTypes } };
+                        return foundCall?.Kind switch { "function" or "service" => call with { Name = Rename(call.Name, foundCall.Internal), Arguments = callArguments, TypeArguments = callTypes }, "case" => CaseCall(foundCall, call.Name, call.OpenParen, callArguments, callTypes), _ => call with { Arguments = callArguments, TypeArguments = callTypes } };
                     case MemberCallSyntax member:
                         var memberArgs = member.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray();
                         var memberTypes = Types(member.TypeArguments, typeParameters);
                         if (PathParts(member.Receiver, out var prefix))
                         {
                             var path = prefix.Append(member.Member).ToArray();
-                            // Module qualification selects a module function;
-                            // a case uses its declaring union as an additional
-                            // qualifier, even when it shares the function name.
-                            var qualified = ResolvePath(path, scope, s => s.Kind == "function");
-                            if (qualified?.Kind == "function") return new CallSyntax(Rename(member.Member, qualified.Internal), member.OpenParen, memberArgs) { TypeArguments = memberTypes };
+                            // Module qualification selects a module function or
+                            // service constructor. A case uses its declaring
+                            // union as an additional qualifier.
+                            var qualified = ResolvePath(path, scope, s => s.Kind is "function" or "service");
+                            if (qualified?.Kind is "function" or "service") return new CallSyntax(Rename(member.Member, qualified.Internal), member.OpenParen, memberArgs) { TypeArguments = memberTypes };
                             if (prefix.Count >= 2 && !scope.Contains(prefix[0].Text))
                             {
                                 var module = string.Join(".", prefix.Take(prefix.Count - 1).Select(p => p.Text));
@@ -243,14 +255,15 @@ internal static class MultiFileResolver
                                     return member with { Arguments = memberArgs, TypeArguments = memberTypes };
                                 var union = Lookup(prefix[0], prefix[0].Text, s => s.Kind == "union");
                                 if (union is not null) return member with { Receiver = new ValueSyntax(Rename(prefix[0], union.Internal)), Member = CaseName(union, member.Member), Arguments = memberArgs, TypeArguments = memberTypes };
-                                // A visible source record also shadows an intrinsic
+                                // A visible source type also shadows an intrinsic
                                 // factory qualifier; preserve its identity so the
-                                // binder diagnoses a non-callable member instead of
-                                // silently selecting standard Map or Set.
+                                // binder does not silently select standard Map or Set.
                                 if ((prefix[0].Text is "Map" or "Set") && !typeParameters.Contains(prefix[0].Text))
                                 {
-                                    var record = ValueName(prefix[0]);
-                                    if (record?.Kind == "record") return member with { Receiver = new ValueSyntax(Rename(prefix[0], record.Internal)), Arguments = memberArgs, TypeArguments = memberTypes };
+                                    var visible = ValueName(prefix[0]);
+                                    var nominal = visible?.Kind is "record" or "service" ? visible :
+                                        visible is null ? Lookup(prefix[0], prefix[0].Text, s => s.Kind == "interface") : null;
+                                    if (nominal is not null) return member with { Receiver = new ValueSyntax(Rename(prefix[0], nominal.Internal)), Arguments = memberArgs, TypeArguments = memberTypes };
                                 }
                             }
                         }
@@ -258,8 +271,8 @@ internal static class MultiFileResolver
                     case FieldAccessSyntax field:
                         if (PathParts(field, out var fieldPath))
                         {
-                            var qualified = ResolvePath(fieldPath, scope, s => s.Kind == "function");
-                            if (qualified?.Kind == "function") return new ValueSyntax(Rename(field.Field, qualified.Internal));
+                            var qualified = ResolvePath(fieldPath, scope, s => s.Kind is "function" or "service");
+                            if (qualified?.Kind is "function" or "service") return new ValueSyntax(Rename(field.Field, qualified.Internal));
                             if (fieldPath.Count >= 3 && !scope.Contains(fieldPath[0].Text))
                             {
                                 var module = string.Join(".", fieldPath.Take(fieldPath.Count - 2).Select(p => p.Text));
@@ -323,6 +336,45 @@ internal static class MultiFileResolver
                 var parameters = union.TypeParameters.Select(t => t.Text).ToHashSet(StringComparer.Ordinal);
                 unions.Add(union with { Name = Rename(union.Name, symbol.Internal), Cases = union.Cases.Select(c => c with { Name = CaseName(symbol, c.Name), PayloadTypes = Types(c.PayloadTypes, parameters) }).ToArray() });
             }
+            foreach (var contract in file.Interfaces)
+            {
+                var symbol = symbols.Single(s => s.Module == current && s.Kind == "interface" && s.Name == contract.Name.Text);
+                var typeParameters = new HashSet<string>(StringComparer.Ordinal);
+                interfaces.Add(contract with
+                {
+                    Name = Rename(contract.Name, symbol.Internal),
+                    Methods = contract.Methods.Select(method => method with
+                    {
+                        Parameters = method.Parameters.Select(parameter => parameter with { Type = ResolveType(parameter.Type, typeParameters) }).ToArray(),
+                        ReturnType = ResolveType(method.ReturnType, typeParameters)
+                    }).ToArray()
+                });
+            }
+            foreach (var service in file.Services)
+            {
+                var symbol = symbols.Single(s => s.Module == current && s.Kind == "service" && s.Name == service.Name.Text);
+                var typeParameters = new HashSet<string>(StringComparer.Ordinal);
+                var dependencies = service.Dependencies.Select(dependency => dependency with
+                    { Type = ResolveType(dependency.Type, typeParameters) }).ToArray();
+                services.Add(service with
+                {
+                    Name = Rename(service.Name, symbol.Internal),
+                    Dependencies = dependencies,
+                    Interfaces = Types(service.Interfaces, typeParameters),
+                    Methods = service.Methods.Select(method =>
+                    {
+                        var scope = dependencies.Select(dependency => dependency.Name.Text).ToHashSet(StringComparer.Ordinal);
+                        foreach (var parameter in method.Parameters) scope.Add(parameter.Name.Text);
+                        return method with
+                        {
+                            Parameters = method.Parameters.Select(parameter => parameter with
+                                { Type = parameter.Type is null ? null : ResolveType(parameter.Type, typeParameters) }).ToArray(),
+                            ReturnType = method.ReturnType is null ? null : ResolveType(method.ReturnType, typeParameters),
+                            Body = Block(method.Body, scope, typeParameters)
+                        };
+                    }).ToArray()
+                });
+            }
             foreach (var function in file.Functions)
             {
                 var symbol = symbols.Single(s => s.Module == current && s.Kind == "function" && s.Name == function.Name.Text);
@@ -332,6 +384,9 @@ internal static class MultiFileResolver
                 functions.Add(function with { Name = Rename(function.Name, symbol.Internal), ReturnType = ResolveType(function.ReturnType, parameters), Parameters = function.Parameters.Select(p => p with { Type = ResolveType(p.Type, parameters) }).ToArray(), Body = body, Expression = body?.Result ?? (function.Expression is null ? null : Expression(function.Expression, scope, parameters)), Bindings = body?.Bindings ?? function.Bindings });
             }
         }
-        return new ModuleResolution(new ModuleSyntax(files[0].Name, functions) { Records = records, Unions = unions }, exports);
+        var typeDisplayNames = symbols.Where(symbol => symbol.Kind is "interface" or "service")
+            .ToDictionary(symbol => symbol.Internal, symbol => symbol.Module + "." + symbol.Name, StringComparer.Ordinal);
+        return new ModuleResolution(new ModuleSyntax(files[0].Name, functions)
+            { Records = records, Unions = unions, Interfaces = interfaces, Services = services, TypeDisplayNames = typeDisplayNames }, exports);
     }
 }

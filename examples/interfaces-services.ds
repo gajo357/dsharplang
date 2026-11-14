@@ -1,0 +1,34 @@
+module Demo
+
+interface Price {
+    calculate(value: int): int
+}
+
+interface CanQuote {
+    eligible(value: int): bool
+}
+
+service Fixed(amount: int): Price, CanQuote {
+    calculate(value) { amount }
+    eligible(value) { value > 0 }
+}
+
+service Doubled(amount: int): Price {
+    calculate(value) { amount * 2 }
+}
+
+service WithFee(underlying: Price, fee: int): Price {
+    calculate(value) { underlying.calculate(value) + fee }
+}
+
+fn use(pricer: Price): int { pricer.calculate(0) }
+
+fn answer(): int {
+    let first: Price = Fixed(20)
+    let second: Price = Doubled(11)
+    let quote: CanQuote = Fixed(20)
+    let decorated: Price = WithFee(first, 2)
+    if quote.eligible(1) && use(decorated) == 22 {
+        use(first) + use(second)
+    } else { 0 }
+}

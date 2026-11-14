@@ -1,15 +1,15 @@
 # Issue 43: Proposed interface and service contract
 
-**Status: proposal for maintainer review; not adopted or implemented.**
+**Status: adopted by the maintainer and implemented for issue #43.**
 **Issue:** [#43](https://github.com/gajo357/dsharplang/issues/43).
 **Base:** `103a146bc1a4a6d7a69d4f675e4cc76131bcd48f`.
 
 This is a bounded proposal for the remaining declaration, construction and call
 rules needed by #43. The [syntax reference](../DSharp_Syntax_Reference.md#12-interfaces-and-default-methods)
 illustrates one implemented interface but does not settle the multi-interface
-form, collisions or construction. Merging this proposal does not adopt it. The
-existing compiler does not yet implement these examples. Explicit maintainer
-adoption is required before implementing the proposed contract.
+form, collisions or construction. The maintainer explicitly adopted this
+proposal in conversation after reviewing it. The compiler implements the
+scoped contract below.
 
 ## Illustrative D#
 
@@ -54,7 +54,7 @@ fn answer(): int {
 fn injected(): int { use(WithFee(Fixed(20), 2)) }
 ```
 
-If adopted and implemented, `answer()` should return 42 and `injected()` should
+When implemented, `answer()` should return 42 and `injected()` should
 return 22. `Fixed` implements both interfaces; `Doubled` is an alternative
 `Price`. The caller explicitly constructs and passes the intended instance.
 Nothing discovers or registers a default service. These names are examples, not
@@ -143,7 +143,7 @@ standard APIs.
   partial application of methods are deferred to [#129](https://github.com/gajo357/dsharplang/issues/129),
   which retains its receiver-capture and async-deferral requirements.
 
-## Evidence required if adopted
+## Required implementation evidence
 
 | Acceptance criterion | Required evidence |
 | --- | --- |
