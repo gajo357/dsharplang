@@ -81,6 +81,7 @@ public sealed record UnionDeclarationSyntax(Token Name, IReadOnlyList<UnionCaseS
 }
 public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
+public sealed record AwaitSyntax(Token Keyword, ExpressionSyntax Operand) : ExpressionSyntax(Keyword);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public sealed record CoalesceSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
 public sealed record PipeSyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
@@ -110,6 +111,7 @@ public sealed record BoundMapSetOperation(BoundExpression Receiver, string Recei
 public sealed record BoundBuilderFactory(string Type, string CollectionType) : BoundExpression;
 public sealed record BoundBuilderOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
+public sealed record BoundAwait(BoundExpression Operand, string Type) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
 // Keep this conversion explicit rather than relying on C#'s generic T? rules.
@@ -202,6 +204,7 @@ public sealed record FunctionSyntax(Token Name, Token ReturnType, Token Literal)
     public IReadOnlyList<ParameterSyntax> Parameters { get; init; } = Array.Empty<ParameterSyntax>();
     public IReadOnlyList<LetBindingSyntax> Bindings { get; init; } = Array.Empty<LetBindingSyntax>();
     public bool InferReturnType { get; init; }
+    public bool IsAsync { get; init; }
 }
 public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Functions)
 {
@@ -226,6 +229,7 @@ public sealed record BoundFunction(string Name, int Value)
     public IReadOnlyList<string> Parameters { get; init; } = Array.Empty<string>();
     public IReadOnlyList<BoundLocal> Locals { get; init; } = Array.Empty<BoundLocal>();
     public string? ResultLocal { get; init; }
+    public bool IsAsync { get; init; }
 }
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
@@ -237,6 +241,7 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public string? SetSymbol { get; init; }
     public string? MutableListSymbol { get; init; }
     public string? MutableMapSymbol { get; init; }
+    public string? TaskSymbol { get; init; }
 }
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
@@ -632,6 +637,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var op = Take();
             left = new UnarySyntax(op, Expression(line is null ? null : Current.Span.Line, 8, stopAtBlock, stopAtMatchArrow));
         }
+        else if (Current.Text == "await")
+        {
+            var keyword = Take();
+            left = new AwaitSyntax(keyword, Expression(line is null ? null : Current.Span.Line, 8, stopAtBlock, stopAtMatchArrow));
+        }
         else if (Current.Text == "[")
         {
             var open = Take();
@@ -782,6 +792,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     {
         IfSyntax or ForSyntax or MatchSyntax or GroupSyntax or TupleSyntax or ListSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
+        AwaitSyntax awaited => AllowsContinuation(awaited.Operand),
         _ => false
     };
     private PatternSyntax Pattern()
@@ -943,7 +954,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var unions = new List<UnionDeclarationSyntax>();
         while (Current.Text != "")
         {
-            var declarationDocs = Documentation("fn", "type");
+            var declarationDocs = Documentation("fn", "async", "type");
             if (Current.Text == "type")
             {
                 Take(); var recordName = Identifier(); var typeParameters = TypeParameters(); Expect("{");
@@ -990,6 +1001,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 records.Add(new(recordName, fields) { DocumentationComments = declarationDocs, TypeParameters = typeParameters });
                 continue;
             }
+            var isAsync = Current.Text == "async";
+            if (isAsync) Take();
             Expect("fn"); var function = Identifier(); var functionTypeParameters = TypeParameters(); Expect("(");
             var parameters = new List<ParameterSyntax>();
             if (Current.Text != ")")
@@ -1013,7 +1026,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "}" && type.Text == "int" && body.Result is UnitSyntax missing &&
                 body.Statements.All(statement => statement is LetStatementSyntax or TupleLetStatementSyntax))
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
-            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType });
+            functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType, IsAsync = isAsync });
         }
         if (functions.Count == 0 && records.Count == 0 && unions.Count == 0) throw Error("Expected at least one declaration.");
         return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Imports = imports };
@@ -1065,6 +1078,7 @@ public static class Binder
         var setSymbol = "$" + (userTypeSymbolCount + 4).ToString(CultureInfo.InvariantCulture);
         var mutableListSymbol = "$" + (userTypeSymbolCount + 5).ToString(CultureInfo.InvariantCulture);
         var mutableMapSymbol = "$" + (userTypeSymbolCount + 6).ToString(CultureInfo.InvariantCulture);
+        var taskSymbol = "$" + (userTypeSymbolCount + 7).ToString(CultureInfo.InvariantCulture);
         var resultUsed = false;
         var optionUsed = false;
         var listUsed = false;
@@ -1072,6 +1086,7 @@ public static class Binder
         var setUsed = false;
         var mutableListUsed = false;
         var mutableMapUsed = false;
+        var taskUsed = syntax.Functions.Any(function => function.IsAsync);
         var userResultType = syntax.Records.Any(record => record.Name.Text == "Result") ||
             syntax.Unions.Any(union => union.Name.Text == "Result");
         var userOptionType = syntax.Records.Any(record => record.Name.Text == "Option") ||
@@ -1086,6 +1101,8 @@ public static class Binder
             syntax.Unions.Any(union => union.Name.Text == "MutableList");
         var userMutableMapType = syntax.Records.Any(record => record.Name.Text == "MutableMap") ||
             syntax.Unions.Any(union => union.Name.Text == "MutableMap");
+        var userTaskType = syntax.Records.Any(record => record.Name.Text == "Task") ||
+            syntax.Unions.Any(union => union.Name.Text == "Task");
         var typeSymbolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionTypeScopes = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         Dictionary<string, string> TypeScope(IReadOnlyList<Token> parameters)
@@ -1114,6 +1131,7 @@ public static class Binder
                 else if (name == "Set" && !userSetType) { name = setSymbol; setUsed = true; }
                 else if (name == "MutableList" && !userMutableListType) name = mutableListSymbol;
                 else if (name == "MutableMap" && !userMutableMapType) name = mutableMapSymbol;
+                else if (name == "Task" && !userTaskType) { name = taskSymbol; taskUsed = true; }
                 return value with { Name = name, Arguments = value.Arguments.Select(Rebind).ToArray() };
             }
             return token with { Text = Rebind(shape).ToString() };
@@ -1151,7 +1169,7 @@ public static class Binder
                 ReturnType = ScopedType(function.ReturnType, scope)
             };
         }).ToArray();
-        nextTypeSymbol += 7; // Reserve the intrinsic nominal identities after source symbols.
+        nextTypeSymbol += 8; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
         var resultScope = TypeScope(resultTypeTokens);
@@ -1174,7 +1192,7 @@ public static class Binder
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : value.Name == taskSymbol ? "Task" : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -1205,7 +1223,7 @@ public static class Binder
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["int"] = 0, ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
-            [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1
+            [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1
         };
         foreach (var record in syntax.Records) arities.Add(record.Name.Text, record.TypeParameters.Count);
         foreach (var union in syntax.Unions) arities.Add(union.Name.Text, union.TypeParameters.Count);
@@ -1252,7 +1270,9 @@ public static class Binder
             }
             bool ExecutionTypesOnly(TypeShape value)
             {
-                if (!value.IsFunction && value.Arguments.Any(argument => argument.ContainsFunction)) return false;
+                bool ContainsTask(TypeShape item) => item.Name == taskSymbol || item.Arguments.Any(ContainsTask);
+                if (!value.IsFunction && value.Name != taskSymbol &&
+                    value.Arguments.Any(argument => argument.ContainsFunction || ContainsTask(argument))) return false;
                 if ((value.Name == mapSymbol || value.Name == setSymbol) &&
                     (value.Arguments.Count == 0 || !EligibleKey(value.Arguments[0], new HashSet<string>(StringComparer.Ordinal)))) return false;
                 return value.Arguments.All(ExecutionTypesOnly);
@@ -1261,7 +1281,9 @@ public static class Binder
         }
         bool IsBuilder(TypeShape shape) => shape.Name == mutableListSymbol || shape.Name == mutableMapSymbol;
         bool ContainsBuilder(TypeShape shape) => IsBuilder(shape) || shape.Arguments.Any(ContainsBuilder);
-        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape);
+        bool ContainsTask(TypeShape shape) => shape.Name == taskSymbol || shape.Arguments.Any(ContainsTask);
+        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape);
+        string CallableResult(FunctionSyntax function) => function.IsAsync ? taskSymbol + "<" + function.ReturnType.Text + ">" : function.ReturnType.Text;
         foreach (var record in syntax.Records)
         {
             var typeParameters = Parameters(record.TypeParameters);
@@ -1294,6 +1316,7 @@ public static class Binder
         foreach (var function in syntax.Functions)
         {
             var typeParameters = Parameters(function.TypeParameters);
+            if (function.IsAsync && function.InferReturnType) Fail("DS2027", function.Name, "Async functions require an explicit logical result type.");
             if (!signatures.TryAdd(function.Name.Text, function)) Fail("DS2001", function.Name, "Duplicate function declaration.");
             if (records.TryGetValue(function.Name.Text, out var conflictingRecord))
                 Fail("DS2015", function.Name.Span.Start > conflictingRecord.Name.Span.Start ? function.Name : conflictingRecord.Name,
@@ -1436,6 +1459,7 @@ public static class Binder
                 TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                 ListSyntax list => list.Elements.Any(NeverExpression),
                 ForSyntax loop => NeverExpression(loop.Source),
+                AwaitSyntax awaited => NeverExpression(awaited.Operand),
                 PropagateSyntax propagation => NeverExpression(propagation.Operand),
                 IfSyntax conditional => NeverExpression(conditional.Condition) ||
                     (LiteralBool(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -1677,6 +1701,7 @@ public static class Binder
                         Expression(coalesce.Left, names);
                         if (includeUnreachable || !NeverExpression(coalesce.Left)) Expression(coalesce.Right, names);
                         break;
+                    case AwaitSyntax awaited: Expression(awaited.Operand, names); break;
                     case PropagateSyntax propagation: Expression(propagation.Operand, names); break;
                     case FieldAccessSyntax access: Expression(access.Receiver, names); break;
                     case ConditionalFieldAccessSyntax access: Expression(access.Receiver, names); break;
@@ -1811,6 +1836,7 @@ public static class Binder
             var boundLocals = new List<BoundLocal>();
             var tupleBindingCount = 0;
             bool hasReturn = false;
+            bool awaitAllowed = function.IsAsync;
             string? currentReturnType = function.ReturnType.Text;
             List<string>? inferredReturns = null;
             bool inferenceReachable = true;
@@ -1930,6 +1956,7 @@ public static class Binder
                     TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                     ListSyntax list => list.Elements.Any(NeverExpression),
                     ForSyntax loop => NeverExpression(loop.Source),
+                    AwaitSyntax awaited => NeverExpression(awaited.Operand),
                     PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -2275,6 +2302,7 @@ public static class Binder
                 BoundMapSetOperation collection => collection.Type,
                 BoundBuilderFactory builder => builder.Type,
                 BoundBuilderOperation builder => builder.Type,
+                BoundAwait awaited => awaited.Type,
                 BoundLambda lambda => lambda.Type,
                 BoundFunctionReference reference => reference.Type,
                 BoundPartial partial => partial.Type,
@@ -2292,7 +2320,7 @@ public static class Binder
                     SubstitutionsFor(access.ReceiverType, record.Name.Text, record.TypeParameters) is { } substitutions
                         ? Substitute(field.Type.Text, substitutions, field.Type) : null,
                 BoundCall call when signatures.TryGetValue(call.Name, out var target) && !target.InferReturnType =>
-                    Substitute(target.ReturnType.Text, target.TypeParameters.Select((parameter, index) => (parameter.Text, call.TypeArguments[index]))
+                    Substitute(CallableResult(target), target.TypeParameters.Select((parameter, index) => (parameter.Text, call.TypeArguments[index]))
                         .ToDictionary(pair => pair.Text, pair => pair.Item2, StringComparer.Ordinal), target.ReturnType),
                 BoundNever never => never.Type,
                 BoundIf conditional => conditional.Type,
@@ -2769,6 +2797,17 @@ public static class Binder
                         var tupleType = new TypeShape(TypeShape.TupleName, tupleTypes.Select(type => type!).ToArray(), false).ToString();
                         if (!SupportedType(tupleType, activeTypeParameters)) Fail("DS2026", tuple.Open, "Tuple elements must be immutable data values.");
                         return (new BoundTuple(tupleElements.Select(element => element!).ToArray(), tupleType), tupleNever ? "<never>" : tupleType);
+                    case AwaitSyntax awaited:
+                        if (!awaitAllowed) Fail("DS2026", awaited.Keyword, "Await is allowed only inside an async function.");
+                        var awaitHint = expectedResult is not null && SupportedType(expectedResult, activeTypeParameters)
+                            ? taskSymbol + "<" + expectedResult + ">" : null;
+                        var awaitOperand = BindExpression(awaited.Operand, awaitHint);
+                        var awaitedType = awaitOperand.Type == "<never>" ? KnownType(awaitOperand.Expression) : awaitOperand.Type;
+                        if (awaitedType is null || !GenericTypes.TryParse(awaitedType, out var taskShape) ||
+                            taskShape.Name != taskSymbol || taskShape.IsNullable || taskShape.Arguments.Count != 1)
+                            Fail("DS2026", awaited.Keyword, "Await requires a non-nullable Task value.");
+                        return (new BoundAwait(awaitOperand.Expression, taskShape!.Arguments[0].ToString()),
+                            awaitOperand.Type == "<never>" ? "<never>" : taskShape.Arguments[0].ToString());
                     case LambdaSyntax lambda:
                         return BindLambda(lambda, expectedResult);
                     case InvokeSyntax invocation:
@@ -3107,7 +3146,7 @@ public static class Binder
                         if (!locals.ContainsKey(token.Text) && signatures.TryGetValue(token.Text, out var namedFunction))
                         {
                             if (resultHelpers.ContainsKey(token.Text)) { usedResultHelpers.Add(token.Text); resultUsed = true; }
-                            var fullPattern = TypeShape.FunctionName + "<" + string.Join(",", namedFunction.Parameters.Select(p => p.Type.Text).Append(namedFunction.ReturnType.Text)) + ">";
+                            var fullPattern = TypeShape.FunctionName + "<" + string.Join(",", namedFunction.Parameters.Select(p => p.Type.Text).Append(CallableResult(namedFunction))) + ">";
                             var inferred = BindGenericArguments(namedFunction.TypeParameters, Array.Empty<Token>(), Array.Empty<Token>(), Array.Empty<ExpressionSyntax>(), token, fullPattern, expectedResult);
                             var fullType = Substitute(fullPattern, inferred.Substitutions, token);
                             return (new BoundFunctionReference(token.Text, fullType, namedFunction.TypeParameters.Select(p => inferred.Substitutions[p.Text]).ToArray()) { Location = token }, fullType);
@@ -3143,7 +3182,8 @@ public static class Binder
                             return (new BoundUnit(), "<never>");
                         if (call.Arguments.Count > target!.Parameters.Count) Fail("DS2012", call.Name, "Incorrect number of arguments.");
                         var isPartialCall = call.Arguments.Count < target.Parameters.Count;
-                        var callPattern = isPartialCall ? TypeShape.FunctionName + "<" + string.Join(",", target.Parameters.Skip(call.Arguments.Count).Select(p => p.Type.Text).Append(target.ReturnType.Text)) + ">" : target.ReturnType.Text;
+                        var callableResult = CallableResult(target);
+                        var callPattern = isPartialCall ? TypeShape.FunctionName + "<" + string.Join(",", target.Parameters.Skip(call.Arguments.Count).Select(p => p.Type.Text).Append(callableResult)) + ">" : callableResult;
                         var resolvedCall = BindGenericArguments(target.TypeParameters,
                             call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(),
                             target.Parameters.Take(call.Arguments.Count).Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name,
@@ -3156,7 +3196,7 @@ public static class Binder
                                 TypeArguments = target.TypeParameters.Select(parameter => resolvedCall.Substitutions[parameter.Text]).ToArray(),
                                 Location = call.Name
                             }, "<never>");
-                        var callResultType = Substitute(target.ReturnType.Text, resolvedCall.Substitutions, target.ReturnType);
+                        var callResultType = Substitute(callableResult, resolvedCall.Substitutions, target.ReturnType);
                         if (!SupportedType(callResultType, activeTypeParameters)) Fail("DS2026", call.Name, "Function values cannot be stored in data types.");
                         if (isPartialCall)
                         {
@@ -3444,6 +3484,9 @@ public static class Binder
                             if (operandType is not null && GenericTypes.TryParse(operandType, out var equalityShape) && equalityShape.IsFunction &&
                                 !(equalityShape.IsNullable && (left.Type == "<null>" || right.Type == "<null>")))
                                 Fail("DS2026", binary.Operator, "Function value equality is not supported; nullable functions may be compared with null.");
+                            if (operandType is not null && GenericTypes.TryParse(operandType, out var taskEquality) && taskEquality.Name == taskSymbol &&
+                                !(taskEquality.IsNullable && (left.Type == "<null>" || right.Type == "<null>")))
+                                Fail("DS2026", binary.Operator, "Task equality is not supported; nullable tasks may be compared with null.");
                             if (operandType is not null && IsNullable(operandType) && !SupportedType(operandType, activeTypeParameters))
                                 Fail("DS2023", binary.Operator, "Nullable unconstrained type parameters are not supported.");
                             if (operandType == "Unit") Fail("DS2002", binary.Operator, "Unit equality is not supported.");
@@ -3703,6 +3746,7 @@ public static class Binder
                     TupleSyntax tuple => tuple.Elements.Any(Never),
                     ListSyntax list => list.Elements.Any(Never),
                     ForSyntax loop => Never(loop.Source),
+                    AwaitSyntax awaited => Never(awaited.Operand),
                     IfSyntax conditional => Never(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
                          LiteralCondition(conditional.Condition) == false ? NeverBlock(conditional.Else) :
@@ -3872,6 +3916,7 @@ public static class Binder
                 var savedReturns = inferredReturns;
                 var savedHasReturn = hasReturn;
                 var savedReachable = inferenceReachable;
+                var savedAwaitAllowed = awaitAllowed;
                 var parameterTypes = new List<string>();
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var (parameter, index) in lambda.Parameters.Select((parameter, index) => (parameter, index)))
@@ -3894,6 +3939,7 @@ public static class Binder
                 if (expectedReturn is not null && !SupportedType(expectedReturn, activeTypeParameters)) expectedReturn = null;
                 try
                 {
+                    awaitAllowed = false;
                     inaccessibleCaptures = new HashSet<string>(savedCaptures, StringComparer.Ordinal);
                     inaccessibleCaptures.UnionWith(savedLocals.Keys);
                     (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns, string? bodyHint = null)
@@ -3960,6 +4006,7 @@ public static class Binder
                     inferredReturns = savedReturns;
                     hasReturn = savedHasReturn;
                     inferenceReachable = savedReachable;
+                    awaitAllowed = savedAwaitAllowed;
                 }
             }
             var sourceBody = function.Body ?? new BlockSyntax(function.Bindings, function.Expression ?? new ValueSyntax(function.Literal));
@@ -3996,6 +4043,7 @@ public static class Binder
                 Locals = boundLocals.Count == 0 ? Array.Empty<BoundLocal>() : boundLocals,
                 Body = body.Block.Statements.Count == 0 ? null : body.Block with { Result = resultExpression },
                 HasReturn = hasReturn,
+                IsAsync = function.IsAsync,
                 ResultLocal = (result.Expression as BoundReference)?.Name,
                 ReturnType = function.ReturnType.Text,
                 ParameterTypes = function.Parameters.Select(p => p.Type.Text).ToArray(),
@@ -4028,7 +4076,7 @@ public static class Binder
                 {
                     if (inData && shape.Arguments.Count == 0 && ownerParameters.Contains(shape.Name) && required.Add(shape.Name))
                         requirementsChanged = true;
-                    var childData = inData || (!shape.IsFunction && shape.Arguments.Count > 0);
+                    var childData = inData || (!shape.IsFunction && shape.Name != taskSymbol && shape.Arguments.Count > 0);
                     foreach (var argument in shape.Arguments) Scan(argument, childData);
                 }
                 void Visit(object? node)
@@ -4053,8 +4101,8 @@ public static class Binder
                         {
                             if (!dataRequirements[callee.Name].Contains(callee.TypeParameters[i]) ||
                                 !GenericTypes.TryParse(call.TypeArguments[i], out var argument)) continue;
-                            if (argument.ContainsFunction)
-                                Fail("DS2026", call.Location ?? new Token(call.Name, syntheticSpan), "Function type is not valid for this generic operation.");
+                            if (argument.ContainsFunction || ContainsTask(argument))
+                                Fail("DS2026", call.Location ?? new Token(call.Name, syntheticSpan), "Execution type is not valid for this generic data operation.");
                             Need(argument);
                         }
                     }
@@ -4064,8 +4112,8 @@ public static class Binder
                         {
                             if (!dataRequirements[referenced.Name].Contains(referenced.TypeParameters[i]) ||
                                 !GenericTypes.TryParse(reference.TypeArguments[i], out var argument)) continue;
-                            if (argument.ContainsFunction)
-                                Fail("DS2026", reference.Location ?? new Token(reference.Name, syntheticSpan), "Function type is not valid for this generic operation.");
+                            if (argument.ContainsFunction || ContainsTask(argument))
+                                Fail("DS2026", reference.Location ?? new Token(reference.Name, syntheticSpan), "Execution type is not valid for this generic data operation.");
                             Need(argument);
                         }
                     }
@@ -4096,6 +4144,7 @@ public static class Binder
             SetSymbol = setUsed ? setSymbol : null,
             MutableListSymbol = mutableListUsed ? mutableListSymbol : null,
             MutableMapSymbol = mutableMapUsed ? mutableMapSymbol : null,
+            TaskSymbol = taskUsed ? taskSymbol : null,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
@@ -4275,6 +4324,7 @@ public static class CSharpEmitter
                     current.Name == "Unit" ? unitType : current.Name == module.ListSymbol ? listTypeName! :
                     current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
                     current.Name == module.MutableListSymbol ? mutableListTypeName! : current.Name == module.MutableMapSymbol ? mutableMapTypeName! :
+                    current.Name == module.TaskSymbol ? "global::System.Threading.Tasks.Task" :
                     recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
                 if (current.Arguments.Count > 0)
                 {
@@ -4641,7 +4691,7 @@ public static class CSharpEmitter
                 {
                     var function = module.Functions.Single(item => item.Name == export.InternalName);
                     SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
-                    output.Append("    public static ").Append(CType(function.ReturnType)).Append(" @").Append(export.Name)
+                    output.Append("    public static ").Append(function.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(export.Name)
                         .Append(TypeParameterList(function.TypeParameters)).Append("(");
                     var arguments = new List<string>();
                     for (var i = 0; i < function.Parameters.Count; i++)
@@ -4672,6 +4722,32 @@ public static class CSharpEmitter
                 .Where(property => property.GetIndexParameters().Length == 0)
                 .Any(property => NeedsLambdaReturn(property.GetValue(node)));
         }
+        // Generated expression helpers form real C# function boundaries.
+        // Propagate suspension through each one that contains an await; a
+        // source lambda is its own (currently synchronous) boundary.
+        bool ContainsAwait(object? node)
+        {
+            if (node is null or string || node is BoundLambda) return false;
+            if (node is BoundAwait) return true;
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) if (ContainsAwait(item)) return true;
+                return false;
+            }
+            var type = node.GetType();
+            return type.Name.StartsWith("Bound", StringComparison.Ordinal) && type.GetProperties()
+                .Where(property => property.GetIndexParameters().Length == 0)
+                .Any(property => ContainsAwait(property.GetValue(node)));
+        }
+        string HelperResult(string type, object node) => ContainsAwait(node)
+            ? "async global::System.Threading.Tasks.Task<" + CType(type) + ">" : CType(type);
+        string HelperCall(string name, object node) => ContainsAwait(node) ? "(await " + name + "())" : name + "()";
+        // The conservative walk can see an await in a block's unreachable
+        // result, which EmitBlock correctly omits. Ensure that an async helper
+        // still contains an await in the generated code in that case.
+        string HelperBody(object node) => ContainsAwait(node)
+            ? "()\n            {\n            await global::System.Threading.Tasks.Task.CompletedTask;\n"
+            : "()\n            {\n";
         if (module.Functions.Any(f => f.HasReturn || NeedsLambdaReturn(f)))
         {
             output.Append("    private sealed class ").Append(signalType).Append("<T> : global::System.Exception\n")
@@ -4701,7 +4777,7 @@ public static class CSharpEmitter
         foreach (var function in module.Functions)
         {
             SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
-            output.Append("    public static ").Append(CType(function.ReturnType)).Append(" @").Append(function.Name)
+            output.Append("    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
                 .Append(TypeParameterList(function.TypeParameters)).Append("(");
             for (var i = 0; i < function.Parameters.Count; i++)
             {
@@ -4709,12 +4785,15 @@ public static class CSharpEmitter
                 output.Append(CType(function.ParameterTypes.Count == 0 ? "int" : function.ParameterTypes[i])).Append(" __dsharp_param_").Append(i.ToString(CultureInfo.InvariantCulture));
             }
             output.Append(")");
-            if (function.Expression is null && function.Locals.Count == 0 && function.Body is null && !function.HasReturn)
+            if (!function.IsAsync && function.Expression is null && function.Locals.Count == 0 && function.Body is null && !function.HasReturn)
             {
                 output.Append(" => ").Append(function.Value.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                 continue;
             }
             output.Append("\n    {\n");
+            // Keep even an async function with no source await asynchronous in
+            // CLR exception/completion semantics without a CS1998 warning.
+            if (function.IsAsync) output.Append("        await global::System.Threading.Tasks.Task.CompletedTask;\n");
             if (function.HasReturn) output.Append("        try\n        {\n");
             output.Append("        checked\n        {\n");
             var localNames = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -4797,6 +4876,7 @@ public static class CSharpEmitter
                 switch (expression)
                 {
                     case BoundUnit: return "default(" + unitType + ")";
+                    case BoundAwait awaited: return "(await (" + EmitExpression(awaited.Operand) + "))";
                     case BoundTuple tuple: return "(" + string.Join(", ", tuple.Elements.Select(EmitExpression)) + ")";
                     case BoundTupleItem item: return "(" + EmitExpression(item.Tuple) + ").Item" + (item.Index + 1).ToString(CultureInfo.InvariantCulture);
                     case BoundList list:
@@ -4805,7 +4885,7 @@ public static class CSharpEmitter
                         var literalElementType = literalShape.Arguments[0].ToString();
                         var literalId = (listCount++).ToString(CultureInfo.InvariantCulture);
                         var literalHelper = "__dsharp_list_literal_" + literalId;
-                        output.Append("            ").Append(CType(list.Type)).Append(" ").Append(literalHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(list.Type, list)).Append(" ").Append(literalHelper).Append(HelperBody(list));
                         var elementNames = new List<string>();
                         for (var i = 0; i < list.Elements.Count; i++)
                         {
@@ -4816,7 +4896,7 @@ public static class CSharpEmitter
                         }
                         output.Append("            return ").Append(CType(list.Type)).Append(".__dsharp_create(new ")
                             .Append(CType(literalElementType)).Append("[] { ").Append(string.Join(", ", elementNames)).Append(" });\n            }\n");
-                        return literalHelper + "()";
+                        return HelperCall(literalHelper, list);
                     case BoundBuilderFactory builder:
                         return "new " + CType(builder.Type) + "()";
                     case BoundBuilderOperation builder:
@@ -4832,7 +4912,7 @@ public static class CSharpEmitter
                         var operationId = (listCount++).ToString(CultureInfo.InvariantCulture);
                         var operationHelper = "__dsharp_list_operation_" + operationId;
                         var operationReceiver = "__dsharp_list_receiver_" + operationId;
-                        output.Append("            ").Append(CType(listOperation.Type)).Append(" ").Append(operationHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(listOperation.Type, listOperation)).Append(" ").Append(operationHelper).Append(HelperBody(listOperation));
                         var operationValue = EmitExpression(listOperation.Receiver);
                         output.Append("            ").Append(CType(listOperation.ReceiverType)).Append(" ").Append(operationReceiver).Append(" = ").Append(operationValue).Append(";\n");
                         var operationArgumentTypes = listOperation.Operation switch
@@ -4864,7 +4944,7 @@ public static class CSharpEmitter
                         };
                         output.Append("            return ").Append(operationReceiver).Append(".__dsharp_").Append(listOperation.Operation)
                             .Append(operationTypeArguments).Append("(").Append(string.Join(", ", operationArgumentNames)).Append(");\n            }\n");
-                        return operationHelper + "()";
+                        return HelperCall(operationHelper, listOperation);
                     case BoundMapSetFactory factory:
                         if (factory.Operation is "map.empty" or "set.empty")
                         {
@@ -4877,12 +4957,12 @@ public static class CSharpEmitter
                         var factoryId = (listCount++).ToString(CultureInfo.InvariantCulture);
                         var factoryHelper = "__dsharp_collection_factory_" + factoryId;
                         var factoryArg = "__dsharp_collection_argument_" + factoryId;
-                        output.Append("            ").Append(CType(factory.Type)).Append(" ").Append(factoryHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(factory.Type, factory)).Append(" ").Append(factoryHelper).Append(HelperBody(factory));
                         var factoryValue = EmitExpression(factory.Arguments[0]);
                         output.Append("            ").Append(CType(module.ListSymbol + "<" + factoryShape.Arguments[0] + ">"))
                             .Append(" ").Append(factoryArg).Append(" = ").Append(factoryValue).Append(";\n")
                             .Append("            return ").Append(CType(factory.Type)).Append(".__dsharp_from(").Append(factoryArg).Append(");\n            }\n");
-                        return factoryHelper + "()";
+                        return HelperCall(factoryHelper, factory);
                     case BoundMapSetOperation collectionOperation:
                         if (!GenericTypes.TryParse(collectionOperation.ReceiverType, out var collectionShape) ||
                             (collectionShape.Name != module.MapSymbol && collectionShape.Name != module.SetSymbol))
@@ -4902,7 +4982,7 @@ public static class CSharpEmitter
                         var collectionId = (listCount++).ToString(CultureInfo.InvariantCulture);
                         var collectionHelper = "__dsharp_collection_operation_" + collectionId;
                         var collectionReceiver = "__dsharp_collection_receiver_" + collectionId;
-                        output.Append("            ").Append(CType(collectionOperation.Type)).Append(" ").Append(collectionHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(collectionOperation.Type, collectionOperation)).Append(" ").Append(collectionHelper).Append(HelperBody(collectionOperation));
                         var collectionValue = EmitExpression(collectionOperation.Receiver);
                         output.Append("            ").Append(CType(collectionOperation.ReceiverType)).Append(" ").Append(collectionReceiver).Append(" = ").Append(collectionValue).Append(";\n");
                         var collectionArguments = new List<string>();
@@ -4915,7 +4995,7 @@ public static class CSharpEmitter
                         }
                         output.Append("            return ").Append(collectionReceiver).Append(".__dsharp_").Append(collectionOperation.Operation)
                             .Append("(").Append(string.Join(", ", collectionArguments)).Append(");\n            }\n");
-                        return collectionHelper + "()";
+                        return HelperCall(collectionHelper, collectionOperation);
                     case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
                     case BoundLambda lambda:
                         var lambdaId = (lambdaCount++).ToString(CultureInfo.InvariantCulture);
@@ -5008,7 +5088,7 @@ public static class CSharpEmitter
                         var partialId = (partialCount++).ToString(CultureInfo.InvariantCulture);
                         var partialHelper = "__dsharp_partial_" + partialId;
                         var partialReceiver = "__dsharp_partial_receiver_" + partialId;
-                        output.Append("            ").Append(CType(partial.Type)).Append(" ").Append(partialHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(partial.Type, partial)).Append(" ").Append(partialHelper).Append(HelperBody(partial));
                         var capturedReceiver = EmitExpression(partial.Receiver);
                         output.Append("            ").Append(CType(partial.ReceiverType)).Append(" ").Append(partialReceiver).Append(" = ").Append(capturedReceiver).Append(";\n");
                         var capturedArguments = new List<string>();
@@ -5023,7 +5103,7 @@ public static class CSharpEmitter
                         output.Append("            return ((").Append(CType(partial.Type)).Append(")((")
                             .Append(string.Join(", ", remainingNames)).Append(") => ").Append(partialReceiver).Append(".Invoke(")
                             .Append(string.Join(", ", capturedArguments.Concat(remainingNames))).Append(")));\n            }\n");
-                        return partialHelper + "()";
+                        return HelperCall(partialHelper, partial);
                     case BoundInvoke invocation:
                         var callable = EmitExpression(invocation.Receiver);
                         var invocationArguments = invocation.Arguments.Select(EmitExpression).ToArray();
@@ -5032,7 +5112,7 @@ public static class CSharpEmitter
                         var pipeId = (pipeCount++).ToString(CultureInfo.InvariantCulture);
                         var pipeHelper = "__dsharp_pipe_" + pipeId;
                         var pipeValue = "__dsharp_pipe_value_" + pipeId;
-                        output.Append("            ").Append(CType(pipe.Type)).Append(" ").Append(pipeHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(pipe.Type, pipe)).Append(" ").Append(pipeHelper).Append(HelperBody(pipe));
                         var pipedValue = EmitExpression(pipe.Value);
                         output.Append("            ").Append(CType(pipe.ValueType)).Append(" ").Append(pipeValue).Append(" = ").Append(pipedValue).Append(";\n");
                         var pipeReceiver = EmitExpression(pipe.Receiver);
@@ -5045,19 +5125,19 @@ public static class CSharpEmitter
                                 .Append(pipeCallable).Append(".Invoke(").Append(pipeValue).Append(", ").Append(string.Join(", ", names)).Append(")));\n            }\n");
                         }
                         else output.Append("            return (").Append(pipeReceiver).Append(").Invoke(").Append(pipeValue).Append(");\n            }\n");
-                        return pipeHelper + "()";
+                        return HelperCall(pipeHelper, pipe);
                     case BoundPropagation propagation:
                         var propagationId = (propagationCount++).ToString(CultureInfo.InvariantCulture);
                         var propagationHelper = "__dsharp_propagate_" + propagationId;
                         var propagationValue = "__dsharp_propagate_value_" + propagationId;
-                        output.Append("            ").Append(CType(propagation.Type)).Append(" ").Append(propagationHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(propagation.Type, propagation)).Append(" ").Append(propagationHelper).Append(HelperBody(propagation));
                         var propagationOperand = EmitExpression(propagation.Operand);
                         output.Append("            ").Append(CType(propagation.OperandType)).Append(" ").Append(propagationValue).Append(" = ").Append(propagationOperand).Append(";\n")
                             .Append("            if (").Append(propagationValue).Append(".__dsharp_tag == 1)\n")
                             .Append("                _ = ").Append(raiseMethod).Append("<").Append(CType(propagation.ReturnType)).Append(">(")
                             .Append(CType(propagation.ReturnType)).Append(".__dsharp_case_1(").Append(propagationValue).Append(".__dsharp_case_1_item_0));\n")
                             .Append("            return ").Append(propagationValue).Append(".__dsharp_case_0_item_0;\n            }\n");
-                        return propagationHelper + "()";
+                        return HelperCall(propagationHelper, propagation);
                     case BoundNullableLift lift: return "(" + CType(lift.Type) + ")(object)(" + EmitExpression(lift.Expression) + ")";
                     case BoundInt literal:
                         // C# constant overflow/division errors must instead be D#
@@ -5068,17 +5148,17 @@ public static class CSharpEmitter
                         return name;
                     case BoundNever never:
                         var neverHelper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
-                        output.Append("            ").Append(CType(never.Type)).Append(" ").Append(neverHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(never.Type, never)).Append(" ").Append(neverHelper).Append(HelperBody(never));
                         var neverValue = EmitExpression(never.Expression);
                         output.Append("            _ = ").Append(neverValue).Append(";\n            throw new global::System.InvalidOperationException(\"Noncompleting expression completed.\");\n            }\n");
-                        return neverHelper + "()";
+                        return HelperCall(neverHelper, never);
                     case BoundFor loop:
                         var forId = (forCount++).ToString(CultureInfo.InvariantCulture);
                         var forHelper = "__dsharp_for_" + forId;
                         var forSource = "__dsharp_for_source_" + forId;
                         var forIndex = "__dsharp_for_index_" + forId;
                         var forItem = "__dsharp_for_item_" + forId;
-                        output.Append("            ").Append(unitType).Append(" ").Append(forHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult("Unit", loop)).Append(" ").Append(forHelper).Append(HelperBody(loop));
                         var sourceValue = EmitExpression(loop.Source);
                         output.Append("            ").Append(CType(loop.SourceType)).Append(" ").Append(forSource).Append(" = ").Append(sourceValue).Append(";\n")
                             .Append("            int ").Append(forIndex).Append(" = 0;\n")
@@ -5107,22 +5187,22 @@ public static class CSharpEmitter
                         foreach (var local in loop.Body.Locals) localNames.Remove(local.Name);
                         localNames.Remove(loop.Name);
                         output.Append("            }\n            return default(").Append(unitType).Append(");\n            }\n");
-                        return forHelper + "()";
+                        return HelperCall(forHelper, loop);
                     case BoundIf conditional:
                         var helper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
-                        output.Append("            ").Append(CType(conditional.Type)).Append(" ").Append(helper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(conditional.Type, conditional)).Append(" ").Append(helper).Append(HelperBody(conditional));
                         var condition = EmitExpression(conditional.Condition);
                         output.Append("            if (").Append(condition).Append(")\n            {\n");
                         EmitBlock(conditional.Then, conditional.Type);
                         output.Append("            }\n            else\n            {\n");
                         EmitBlock(conditional.Else, conditional.Type);
                         output.Append("            }\n            }\n");
-                        return helper + "()";
+                        return HelperCall(helper, conditional);
                     case BoundMatch match:
                         var matchId = (matchCount++).ToString(CultureInfo.InvariantCulture);
                         var matchHelper = "__dsharp_match_" + matchId;
                         var matchValue = "__dsharp_match_value_" + matchId;
-                        output.Append("            ").Append(CType(match.Type)).Append(" ").Append(matchHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(match.Type, match)).Append(" ").Append(matchHelper).Append(HelperBody(match));
                         var scrutinee = EmitExpression(match.Scrutinee);
                         output.Append("            ").Append(CType(match.ScrutineeType)).Append(" ").Append(matchValue).Append(" = ").Append(scrutinee).Append(";\n")
                             .Append("            _ = ").Append(matchValue).Append(";\n");
@@ -5153,7 +5233,7 @@ public static class CSharpEmitter
                             foreach (var armName in armNames) localNames.Remove(armName);
                         }
                         output.Append("            throw new global::System.InvalidOperationException(\"Exhaustive match had no matching arm.\");\n            }\n");
-                        return matchHelper + "()";
+                        return HelperCall(matchHelper, match);
                     case BoundText text:
                         if (text.IsChar)
                         {
@@ -5176,7 +5256,7 @@ public static class CSharpEmitter
                         var coalesceId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
                         var coalesceHelper = "__dsharp_nullable_" + coalesceId;
                         var coalesceValue = "__dsharp_nullable_value_" + coalesceId;
-                        output.Append("            ").Append(CType(coalesce.Type)).Append(" ").Append(coalesceHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(coalesce.Type, coalesce)).Append(" ").Append(coalesceHelper).Append(HelperBody(coalesce));
                         var coalesceLeft = EmitExpression(coalesce.Left);
                         output.Append("            ").Append(CType(coalesce.ContainedType + "?")).Append(" ").Append(coalesceValue).Append(" = ").Append(coalesceLeft).Append(";\n");
                         var coalescePresent = IsValueType(coalesce.ContainedType) ? coalesceValue + ".HasValue" :
@@ -5186,12 +5266,12 @@ public static class CSharpEmitter
                         output.Append("            if (").Append(coalescePresent).Append(") return ").Append(coalescePresentValue).Append(";\n");
                         var coalesceFallback = EmitExpression(coalesce.Right);
                         output.Append("            return ").Append(coalesceFallback).Append(";\n            }\n");
-                        return coalesceHelper + "()";
+                        return HelperCall(coalesceHelper, coalesce);
                     case BoundConditionalFieldAccess optionalField:
                         var optionalId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
                         var optionalHelper = "__dsharp_nullable_" + optionalId;
                         var optionalValue = "__dsharp_nullable_value_" + optionalId;
-                        output.Append("            ").Append(CType(optionalField.Type)).Append(" ").Append(optionalHelper).Append("()\n            {\n");
+                        output.Append("            ").Append(HelperResult(optionalField.Type, optionalField)).Append(" ").Append(optionalHelper).Append(HelperBody(optionalField));
                         var optionalReceiver = EmitExpression(optionalField.Receiver);
                         var optionalResult = optionalValue + ".@" + optionalField.Field;
                         if (IsTypeParameter(optionalField.FieldType) && optionalField.Type == optionalField.FieldType + "?")
@@ -5199,7 +5279,7 @@ public static class CSharpEmitter
                         output.Append("            ").Append(CType(optionalField.ReceiverType)).Append(" ").Append(optionalValue).Append(" = ").Append(optionalReceiver).Append(";\n")
                             .Append("            if (global::System.Object.ReferenceEquals(").Append(optionalValue).Append(", null)) return default(").Append(CType(optionalField.Type)).Append(");\n")
                             .Append("            return ").Append(optionalResult).Append(";\n            }\n");
-                        return optionalHelper + "()";
+                        return HelperCall(optionalHelper, optionalField);
                     case BoundRecordConstruction construction:
                         var definition = module.Records.Single(record => record.Name == Nominal(construction.Type));
                         var fields = construction.Fields.Select(field =>
