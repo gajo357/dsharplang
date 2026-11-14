@@ -6,10 +6,17 @@ using Xunit;
 
 namespace DSharp.Tests;
 
-public sealed class ListAcceptanceTests
+public sealed class ListTests
 {
-    [Fact(DisplayName = "Immutable lists preserve values and order")]
-    public async Task ListsPreserveDataAndOrderThroughOperations()
+    [Fact(DisplayName = "List")]
+    public async Task Run()
+    {
+        await Cases();
+        Diagnostics();
+        await Modules();
+    }
+
+    private static async Task Cases()
     {
         // Mirrors examples/list.ds; the isolated verifier stages feature tests
         // but deliberately does not stage the examples directory.
@@ -144,8 +151,7 @@ public sealed class ListAcceptanceTests
         });
     }
 
-    [Fact(DisplayName = "Immutable list diagnostics")]
-    public void InvalidListsAndOperationsAreRejected()
+    private static void Diagnostics()
     {
         var cases = new[]
         {
@@ -172,8 +178,7 @@ public sealed class ListAcceptanceTests
         }
     }
 
-    [Fact(DisplayName = "Immutable lists in multiple modules")]
-    public async Task ListElementsResolveImportedFunctions()
+    private static async Task Modules()
     {
         var files = new[]
         {

@@ -48,7 +48,9 @@ D# example and feature tests cover records, nested lists, generic nullable
 elements, `List<Option<T?>>`, structural equality, diagnostics, callback order
 and multi-file references. The CLI checked and compiled the example, and the
 generated `answer()` returned true. Bootstrap and compiler verification passed:
-18 baseline and 370 feature tests. Documentation and all 25 automation tests
-passed. The local isolated verifier could not download its pinned Docker image
+18 baseline and 368 feature tests. The new list checks are grouped in one test;
+all cases and assertions are retained. The test assembly output path is shorter
+to keep CI reports within the existing size limit without changing verification.
+Documentation and all 25 automation tests passed. The local isolated verifier could not download its pinned Docker image
 (`Forbidden`); GitHub Actions runs the unchanged verifier. Issue #30 remains
 open for its complete nullable-generic acceptance criteria.
