@@ -2,8 +2,8 @@
 
 **Base:** `c9b96384473b20b9f19aa9cecc46a07877a38513` (merged #40).
 **Decision:** The maintainer explicitly adopted DEC-07 as proposed and requested
-this implementation. Its adoption record is in [PR #162](https://github.com/gajo357/dsharplang/pull/162),
-which must be merged before this implementation PR.
+this implementation. Its adoption record was merged in
+[PR #162](https://github.com/gajo357/dsharplang/pull/162).
 
 ## Existing contracts and dependencies
 
@@ -45,22 +45,24 @@ After implementing, run `bash .github/ai/bootstrap.sh`,
 `bash scripts/verify-compiler.sh` and `bash .github/ai/verify.sh`, compile and
 execute the D# example, record actual results and fix any CI failure on the same PR.
 
-## Current verification and test conflict
+## Verification and test reconciliation
 
 - Bootstrap passed. The CLI checked and compiled `examples/async-functions.ds`;
   running its generated async `Demo.answer()` returned 42.
 - The focused generated-code async acceptance test passed, including controlled
   suspension, failures, cancellation, builder lifetime, nested tasks, generic
   nullable results, multi-file type shadowing and explicit task-valued pipes.
-- `bash scripts/verify-compiler.sh`: the 18 compiler tests passed; the feature
-  suite reported 371 passed and one failure. The pre-existing
+- The initial `bash scripts/verify-compiler.sh` run passed 18 compiler tests;
+  its feature suite reported 371 passed and one failure. The pre-existing
   `PipeAndReturnInferenceTests` scenario 33 expects a `Task<int>` piped to a
   function accepting `Task<int>` to fail because Task types were unsupported.
   With this feature the program is valid under ordinary pipe semantics. The new
-  acceptance test executes this exact case without implicit await. Replacing that
-  old scenario's parameter type with `int` would continue to verify that a pipe
-  cannot implicitly await, but #41's scope and AGENTS.md prohibit changing old
-  tests. Resolve that explicit conflict before claiming complete verification.
+  acceptance test executes this exact case without implicit await. The maintainer
+  requested the CI fix directly on this PR after reviewing that conflict, allowing
+  the one-line existing-test migration: its receiving parameter is now `int`, so
+  it continues to verify that a pipe cannot implicitly await. No verifier changed.
+  After the fix, `bash scripts/verify-compiler.sh` passed all 18 compiler tests
+  and 372 feature tests.
 - `bash .github/ai/verify.sh`: documentation and all 25 automation tests passed;
   the isolated compiler step could not download its pinned SDK container image
   locally because the registry returned `Forbidden`. GitHub CI must run it.
