@@ -56,6 +56,7 @@ external interoperability guarantee follows from this lowering. See the
 | Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
 | Interfaces and services | Explicit interfaces, services implementing one or more interfaces, checked methods and constructor dependencies | Interface-typed calls dispatch to the supplied service instance; async methods and explicit dependencies retain their usual behavior |
 | Default interface methods | Checked method bodies alongside required signatures; explicit service methods resolve conflicts and take precedence | Default bodies call methods on the selected service instance, including async dispatch |
+| Directly constructed scoped resources | Fresh `resource` declarations, `using ... report`, explicit cleanup and receiver-only scoped handles | Sync/async release runs on tested exits; secondary cleanup faults are reported without masking the primary outcome |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -233,6 +234,15 @@ it. Conflicting defaults require an explicit service method. A bodyless signatur
 also requires an explicit method, including when another implemented interface
 provides a same-named default. See the [D# example](../../examples/default-interface-methods.ds)
 and [implementation plan](implementation/issue-44-plan.md).
+The first slice of [#45](https://github.com/gajo357/dsharplang/issues/45) adds
+fresh, directly constructed D# resources with explicit cleanup reporters. Cleanup
+runs once on tested exits, including async suspension, typed errors, faults and
+cancellation. Handles cannot escape; async operations are immediately awaited.
+Enclosing return types and top-level scope results must be concrete, resource
+dependencies follow service dependency restrictions, and reporter diagnostics
+contain the resource name rather than exception details. Provider-returned owned
+resources remain open work. See the [D# example](../../examples/scoped-resources.ds)
+and [contract](implementation/issue-45-contract.md).
 [Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
 expressions and blocks. Their explicit `async` marker permits `await` in the
 lambda itself, and the resulting function value returns a Task. Immutable

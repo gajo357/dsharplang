@@ -1,0 +1,17 @@
+module Demo
+
+// The resource owns its cleanup; the using scope calls release exactly once.
+resource Cursor(value: int) {
+    read(): int { value }
+    release(): Unit { () }
+}
+
+fn answer(onCleanup: (string) -> Unit): int {
+    using cursor = Cursor(40) report onCleanup {
+        cursor.read() + 2
+    }
+}
+
+fn run(): int {
+    answer((resourceName: string) => ())
+}

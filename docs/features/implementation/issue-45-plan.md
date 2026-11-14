@@ -2,7 +2,7 @@
 
 **Base:** `a9fe0b5` (merged #44 / PR #168).
 **Issue:** [#45](https://github.com/gajo357/dsharplang/issues/45).
-**Status:** Needs decision; this branch records a contract proposal only.
+**Status:** The maintainer approved the owned-resource and explicit-reporter direction; the bounded direct-construction slice is implemented for review.
 
 ## Prerequisites and scope
 
@@ -15,13 +15,35 @@ example is proposed rather than adopted, and foreign disposal adapters are part
 of the separately unadopted DEC-06. No resource type or cleanup protocol exists
 in the current compiler.
 
-Before code, define how scoped resources are declared and acquired, their allowed
-uses and transfers, how sync versus async cleanup is selected, and how an earlier
-typed failure, fault or cancellation is preserved and a cleanup failure is
-observable. These affect public syntax, ownership and runtime behavior. The
-[contract proposal](issue-45-contract.md) makes the decisions reviewable and
-identifies any choices requiring the maintainer. This proposal does not implement
-or close #45.
+The maintainer approved the owned-resource and explicit-reporter direction.
+The [contract](issue-45-contract.md) records the broader design and remaining
+provider-transfer choices. This PR implements the bounded slice below; #45 stays
+open until provider-returned owned resources and their acceptance tests land.
+
+## Adopted first implementation slice
+
+The maintainer approved proceeding with owned resources and an explicit cleanup
+reporter. Implement fresh D# `resource Name(dependencies) { ... }` declarations
+and `using handle = Name(args) report reporter { ... }`; the compiler alone
+invokes exactly one `release(): Unit` or `async release(): Unit`. The reporter
+is an already-bound non-null `(string) -> Unit` function, passed by identifier;
+it receives a safe resource-name diagnostic for each secondary cleanup fault.
+A function reference or arbitrary expression is not evaluated as a reporter.
+The callable may fault: a generated combined fault must retain the primary,
+cleanup and reporter failures. Source handles are receiver-only, cannot be
+aliased or passed/returned/captured/stored, and async operations are immediately
+awaited. Only direct fresh resource construction is accepted; ordinary services
+are never implicitly owned. Provider-returned owned tokens, including acquisition
+through `Task` or `Result`, remain separate work, so this slice must not close
+#45. Do not claim general resource borrowing or foreign adapter behavior.
+
+For an escaping top-level Result Error, an exception, or cancellation plus a
+cleanup fault, report that cleanup once and preserve the primary outcome when
+reporting succeeds. For normal success or successful early return, surface a
+cleanup fault. Reporter faults surface a combined failure retaining all causes.
+Nested scopes release in reverse order. Neither a handled nor nested Error value
+is treated as an escaping failure. The compiler's internal return signals must
+retain their semantics across cleanup.
 
 ## Intended implementation steps
 
@@ -67,3 +89,20 @@ Commands used SDK 11.0.100 from `/workspace/work/dotnet11`,
 `DOTNET_CLI_HOME=/tmp/dsharp-dotnet11-home`,
 `NUGET_PACKAGES=/tmp/dsharp-dotnet11-packages` and
 `npm_config_cache=/tmp/dsharp-npm-cache` for writable caches.
+
+### Direct-construction slice verification
+
+- `bash .github/ai/bootstrap.sh` passed.
+- `bash scripts/verify-compiler.sh` passed 18 compiler and 377 feature tests,
+  including the new scoped-resource execution and rejection suite. Generated C#
+  in that suite builds with warnings treated as errors.
+- The scoped-resource D# example checks, compiles and runs; `Demo.run()`
+  returns 42.
+- Independent generated-code probes covered nested cleanup faults, cancellation,
+  callback faults, imported resource names and the nullable Result matrix.
+- `bash .github/ai/verify.sh` passed documentation and 25 automation tests;
+  its local isolated compiler stage could not pull its pinned SDK image because
+  the registry returned `Forbidden`. GitHub CI runs that stage.
+
+The #45 issue remains open for provider-returned ownership and its integration
+coverage. The approved direction does not imply general borrowing or interop.
