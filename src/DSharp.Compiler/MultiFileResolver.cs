@@ -287,6 +287,9 @@ internal static class MultiFileResolver
                     case ConditionalFieldAccessSyntax optional: return optional with { Receiver = Expression(optional.Receiver, scope, typeParameters) };
                     case RecordUpdateSyntax update: return update with { Receiver = Expression(update.Receiver, scope, typeParameters), Fields = update.Fields.Select(f => f with { Value = Expression(f.Value, scope, typeParameters) }).ToArray() };
                     case IfSyntax conditional: return conditional with { Condition = Expression(conditional.Condition, scope, typeParameters), Then = Block(conditional.Then, scope, typeParameters), Else = Block(conditional.Else, scope, typeParameters) };
+                    case ForSyntax loop:
+                        var loopScope = new HashSet<string>(scope, StringComparer.Ordinal) { loop.Name.Text };
+                        return loop with { Source = Expression(loop.Source, scope, typeParameters), Body = Block(loop.Body, loopScope, typeParameters) };
                     case LambdaSyntax lambda:
                         var lambdaScope = new HashSet<string>(scope, StringComparer.Ordinal);
                         foreach (var p in lambda.Parameters) lambdaScope.Add(p.Name.Text);

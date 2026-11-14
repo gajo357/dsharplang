@@ -45,6 +45,7 @@ public sealed record IfSyntax(Token If, ExpressionSyntax Condition, BlockSyntax 
     public bool HasElse { get; init; } = true;
     public Token? MissingElseLocation { get; init; }
 }
+public sealed record ForSyntax(Token Keyword, Token Name, ExpressionSyntax Source, BlockSyntax Body) : ExpressionSyntax(Keyword);
 public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
 public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ListSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
@@ -120,6 +121,7 @@ public sealed record BoundBlock(IReadOnlyList<BoundLocal> Locals, BoundExpressio
     public string ResultType { get; init; } = "";
 }
 public sealed record BoundIf(BoundExpression Condition, BoundBlock Then, BoundBlock Else, string Type) : BoundExpression;
+public sealed record BoundFor(string Name, BoundExpression Source, string SourceType, string ElementType, BoundBlock Body) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
@@ -613,6 +615,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var elseBlock = hasElse ? Block() : new BlockSyntax(Array.Empty<LetBindingSyntax>(), new UnitSyntax(missing));
             left = new IfSyntax(keyword, condition, thenBlock, elseBlock) { HasElse = hasElse, MissingElseLocation = missing };
         }
+        else if (Current.Text == "for")
+        {
+            var keyword = Take();
+            var name = Identifier();
+            Expect("in");
+            var source = Expression(Current.Span.Line, stopAtBlock: true);
+            left = new ForSyntax(keyword, name, source, Block());
+        }
         else if (Current.Text is "-" or "!")
         {
             var op = Take();
@@ -766,7 +776,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or MatchSyntax or GroupSyntax or TupleSyntax or ListSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or ForSyntax or MatchSyntax or GroupSyntax or TupleSyntax or ListSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         _ => false
     };
@@ -1409,6 +1419,7 @@ public static class Binder
                 GroupSyntax group => NeverExpression(group.Inner),
                 TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                 ListSyntax list => list.Elements.Any(NeverExpression),
+                ForSyntax loop => NeverExpression(loop.Source),
                 PropagateSyntax propagation => NeverExpression(propagation.Operand),
                 IfSyntax conditional => NeverExpression(conditional.Condition) ||
                     (LiteralBool(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -1548,6 +1559,14 @@ public static class Binder
                         var lambdaNames = new HashSet<string>(names, StringComparer.Ordinal);
                         foreach (var parameter in lambda.Parameters) lambdaNames.Add(parameter.Name.Text);
                         Block(lambda.Body, lambdaNames);
+                        break;
+                    case ForSyntax loop:
+                        Expression(loop.Source, names);
+                        if (includeUnreachable || !NeverExpression(loop.Source))
+                        {
+                            var loopNames = new HashSet<string>(names, StringComparer.Ordinal) { loop.Name.Text };
+                            Block(loop.Body, loopNames);
+                        }
                         break;
                     case IfSyntax conditional:
                         Expression(conditional.Condition, names);
@@ -1891,6 +1910,7 @@ public static class Binder
                     GroupSyntax group => NeverExpression(group.Inner),
                     TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                     ListSyntax list => list.Elements.Any(NeverExpression),
+                    ForSyntax loop => NeverExpression(loop.Source),
                     PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -2230,6 +2250,7 @@ public static class Binder
             {
                 BoundTuple tuple => tuple.Type,
                 BoundList list => list.Type,
+                BoundFor => "Unit",
                 BoundListOperation list => list.Type,
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
@@ -2886,6 +2907,32 @@ public static class Binder
                         return (new BoundMatch(Coerce(scrutinee.Expression, scrutineeType!, scrutinee.Type), scrutineeType!, arms, emittedMatchType)
                             { HasCompletingArm = boundArms.Any(arm => !arm.GuardNever && arm.Type != "<never>") },
                             scrutinee.Type == "<never>" || !hasReachableCompletingArm ? "<never>" : emittedMatchType);
+                    case ForSyntax loop:
+                        var loopSource = BindExpression(loop.Source);
+                        var loopSourceType = loopSource.Type == "<never>" ? KnownType(loopSource.Expression) : loopSource.Type;
+                        if (loopSourceType is null || !GenericTypes.TryParse(loopSourceType, out var loopShape) ||
+                            loopShape.Name != listSymbol || loopShape.IsNullable || loopShape.Arguments.Count != 1)
+                            Fail("DS2026", loop.Source.Token, "For iteration requires a non-nullable List value.");
+                        if (locals.ContainsKey(loop.Name.Text) || inaccessibleCaptures.Contains(loop.Name.Text))
+                            Fail("DS2006", loop.Name, "Duplicate or shadowed local binding.");
+                        var loopElementType = loopShape!.Arguments[0].ToString();
+                        var loopEntryReachable = inferenceReachable;
+                        (BoundBlock Block, string Type) loopBody;
+                        locals.Add(loop.Name.Text, (0, loopElementType));
+                        try
+                        {
+                            inferenceReachable = loopEntryReachable && loopSource.Type != "<never>";
+                            loopBody = BindBlock(loop.Body, expectedResultType: "Unit");
+                        }
+                        finally
+                        {
+                            inferenceReachable = loopEntryReachable;
+                            locals.Remove(loop.Name.Text);
+                        }
+                        Require(loop.Body.Result, loopBody.Type, "Unit");
+                        return (new BoundFor(loop.Name.Text, Coerce(loopSource.Expression, loopSourceType!, loopSource.Type),
+                            loopSourceType!, loopElementType, CoerceBlock(loopBody.Block, "Unit")),
+                            loopSource.Type == "<never>" ? "<never>" : "Unit");
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
                         Require(conditional.Condition, condition.Type, "bool");
@@ -3564,6 +3611,7 @@ public static class Binder
                     GroupSyntax group => Never(group.Inner),
                     TupleSyntax tuple => tuple.Elements.Any(Never),
                     ListSyntax list => list.Elements.Any(Never),
+                    ForSyntax loop => Never(loop.Source),
                     IfSyntax conditional => Never(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
                          LiteralCondition(conditional.Condition) == false ? NeverBlock(conditional.Else) :
@@ -4555,6 +4603,7 @@ public static class CSharpEmitter
             var partialCount = 0;
             var lambdaCount = 0;
             var listCount = 0;
+            var forCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
@@ -4887,6 +4936,42 @@ public static class CSharpEmitter
                         var neverValue = EmitExpression(never.Expression);
                         output.Append("            _ = ").Append(neverValue).Append(";\n            throw new global::System.InvalidOperationException(\"Noncompleting expression completed.\");\n            }\n");
                         return neverHelper + "()";
+                    case BoundFor loop:
+                        var forId = (forCount++).ToString(CultureInfo.InvariantCulture);
+                        var forHelper = "__dsharp_for_" + forId;
+                        var forSource = "__dsharp_for_source_" + forId;
+                        var forIndex = "__dsharp_for_index_" + forId;
+                        var forItem = "__dsharp_for_item_" + forId;
+                        output.Append("            ").Append(unitType).Append(" ").Append(forHelper).Append("()\n            {\n");
+                        var sourceValue = EmitExpression(loop.Source);
+                        output.Append("            ").Append(CType(loop.SourceType)).Append(" ").Append(forSource).Append(" = ").Append(sourceValue).Append(";\n")
+                            .Append("            int ").Append(forIndex).Append(" = 0;\n")
+                            .Append("            while (").Append(forIndex).Append(" < ").Append(forSource)
+                            .Append(".__dsharp_length())\n            {\n")
+                            .Append("            ").Append(CType(loop.ElementType)).Append(" ").Append(forItem).Append(" = ").Append(forSource)
+                            .Append(".__dsharp_item(").Append(forIndex).Append("++);\n")
+                            .Append("            _ = ").Append(forItem).Append(";\n");
+                        localNames.Add(loop.Name, forItem);
+                        if (loop.Body.Statements.Count == 0) EmitLocals(loop.Body.Locals);
+                        else EmitStatements(loop.Body.Statements);
+                        if (loop.Body.CanComplete)
+                        {
+                            var forResult = EmitExpression(loop.Body.Result);
+                            output.Append("            _ = ").Append(forResult).Append(";\n");
+                        }
+                        else
+                        {
+                            if (loop.Body.EvaluateResult)
+                            {
+                                var forNever = EmitExpression(loop.Body.Result);
+                                output.Append("            _ = ").Append(forNever).Append(";\n");
+                            }
+                            output.Append("            throw new global::System.InvalidOperationException(\"Noncompleting loop body completed.\");\n");
+                        }
+                        foreach (var local in loop.Body.Locals) localNames.Remove(local.Name);
+                        localNames.Remove(loop.Name);
+                        output.Append("            }\n            return default(").Append(unitType).Append(");\n            }\n");
+                        return forHelper + "()";
                     case BoundIf conditional:
                         var helper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
                         output.Append("            ").Append(CType(conditional.Type)).Append(" ").Append(helper).Append("()\n            {\n");

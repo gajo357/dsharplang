@@ -50,6 +50,7 @@ external interoperability guarantee follows from this lowering. See the
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
+| Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit | Source evaluates once, elements are visited in order, iteration captures are independent, and return/Result propagation leave the enclosing function or lambda |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -209,6 +210,12 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #39](https://github.com/gajo357/dsharplang/issues/39) adds sequential
+`for/in` over immutable lists, including generic lists and nested loops. The
+iteration binding follows the existing no-shadowing rule and is scoped to the
+body. Empty lists do not execute it; a return exits the nearest function or
+lambda. Map/Set iteration order and async iteration remain separate work. See the
+[D# example](../../examples/for-in.ds) and [plan](implementation/issue-39-plan.md).
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;
