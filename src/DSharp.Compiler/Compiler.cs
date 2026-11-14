@@ -83,6 +83,22 @@ public sealed record UnionDeclarationSyntax(Token Name, IReadOnlyList<UnionCaseS
     public IReadOnlyList<Token> TypeParameters { get; init; } = Array.Empty<Token>();
 }
 public sealed record ParameterSyntax(Token Name, Token Type);
+public sealed record InterfaceMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record InterfaceDeclarationSyntax(Token Name, IReadOnlyList<InterfaceMethodSyntax> Methods)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record ServiceMethodSyntax(Token Name, IReadOnlyList<LambdaParameterSyntax> Parameters, Token? ReturnType, bool IsAsync, BlockSyntax Body)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record ServiceDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<Token> Interfaces, IReadOnlyList<ServiceMethodSyntax> Methods)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record AwaitSyntax(Token Keyword, ExpressionSyntax Operand) : ExpressionSyntax(Keyword);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
@@ -113,6 +129,9 @@ public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnly
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundBuilderFactory(string Type, string CollectionType) : BoundExpression;
 public sealed record BoundBuilderOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundServiceConstruction(string Type, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
+public sealed record BoundServiceCall(BoundExpression Receiver, string ReceiverType, string Method, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundServiceConversion(BoundExpression Expression, string Type) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundAwait(BoundExpression Operand, string Type) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
@@ -216,6 +235,13 @@ public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Func
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<RecordDeclarationSyntax> Records { get; init; } = Array.Empty<RecordDeclarationSyntax>();
     public IReadOnlyList<UnionDeclarationSyntax> Unions { get; init; } = Array.Empty<UnionDeclarationSyntax>();
+    public IReadOnlyList<InterfaceDeclarationSyntax> Interfaces { get; init; } = Array.Empty<InterfaceDeclarationSyntax>();
+    public IReadOnlyList<ServiceDeclarationSyntax> Services { get; init; } = Array.Empty<ServiceDeclarationSyntax>();
+    // Resolver-only metadata for source-facing diagnostics. Bound nominal
+    // identities stay opaque and distinct even when source names overlap. A
+    // shared empty map preserves existing equality for directly parsed modules.
+    private static readonly IReadOnlyDictionary<string, string> EmptyTypeDisplayNames = new Dictionary<string, string>(StringComparer.Ordinal);
+    internal IReadOnlyDictionary<string, string> TypeDisplayNames { get; init; } = EmptyTypeDisplayNames;
 }
 public sealed record BoundLocal(string Name, int Value, string? InitializerLocal)
 {
@@ -235,6 +261,10 @@ public sealed record BoundFunction(string Name, int Value)
     public string? ResultLocal { get; init; }
     public bool IsAsync { get; init; }
 }
+public sealed record BoundInterfaceMethod(string Name, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync);
+public sealed record BoundInterfaceDeclaration(string Name, IReadOnlyList<BoundInterfaceMethod> Methods);
+public sealed record BoundServiceMethod(string Name, string FunctionName, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync);
+public sealed record BoundServiceDeclaration(string Name, IReadOnlyList<string> DependencyTypes, IReadOnlyList<string> Interfaces, IReadOnlyList<BoundServiceMethod> Methods);
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
     public IReadOnlyList<BoundRecordDeclaration> Records { get; init; } = Array.Empty<BoundRecordDeclaration>();
@@ -246,6 +276,8 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public string? MutableListSymbol { get; init; }
     public string? MutableMapSymbol { get; init; }
     public string? TaskSymbol { get; init; }
+    public IReadOnlyList<BoundInterfaceDeclaration> Interfaces { get; init; } = Array.Empty<BoundInterfaceDeclaration>();
+    public IReadOnlyList<BoundServiceDeclaration> Services { get; init; } = Array.Empty<BoundServiceDeclaration>();
 }
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
@@ -878,7 +910,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 throw new SourceError(new("DS1004", path, comments.Count > 0 ? comments[^1].Span : current.Span, "Documentation must be a contiguous group on separate lines."));
             comments.Add(Take());
         }
-        if (Current.HasInterveningComment || Current.Span.Line != comments[^1].Span.Line + 1 || !declarations.Contains(Current.Text))
+        var methodName = declarations.Contains("<method>") && Current.Text.Length > 0 &&
+            (char.IsAsciiLetter(Current.Text[0]) || Current.Text[0] == '_') && !Reserved.Contains(Current.Text);
+        if (Current.HasInterveningComment || Current.Span.Line != comments[^1].Span.Line + 1 ||
+            !declarations.Contains(Current.Text) && !methodName)
             throw new SourceError(new("DS1004", path, comments[^1].Span, "Documentation must immediately precede a declaration."));
         return comments;
     }
@@ -960,9 +995,103 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var functions = new List<FunctionSyntax>();
         var records = new List<RecordDeclarationSyntax>();
         var unions = new List<UnionDeclarationSyntax>();
+        var interfaces = new List<InterfaceDeclarationSyntax>();
+        var services = new List<ServiceDeclarationSyntax>();
+        IReadOnlyList<ParameterSyntax> TypedParameters()
+        {
+            Expect("(");
+            var parameters = new List<ParameterSyntax>();
+            if (Current.Text != ")")
+            {
+                do
+                {
+                    var parameter = Identifier();
+                    Expect(":");
+                    parameters.Add(new(parameter, TypeToken()));
+                    if (Current.Text != ",") break;
+                    Take();
+                } while (true);
+            }
+            Expect(")");
+            return parameters;
+        }
+        IReadOnlyList<LambdaParameterSyntax> ServiceParameters()
+        {
+            Expect("(");
+            var parameters = new List<LambdaParameterSyntax>();
+            if (Current.Text != ")")
+            {
+                do
+                {
+                    var parameter = Identifier();
+                    Token? type = null;
+                    if (Current.Text == ":") { Take(); type = TypeToken(); }
+                    parameters.Add(new(parameter, type));
+                    if (Current.Text != ",") break;
+                    Take();
+                } while (true);
+            }
+            Expect(")");
+            return parameters;
+        }
         while (Current.Text != "")
         {
-            var declarationDocs = Documentation("fn", "async", "type");
+            var declarationDocs = Documentation("fn", "async", "type", "interface", "service");
+            if (Current.Text == "interface")
+            {
+                Take();
+                var interfaceName = Identifier();
+                Expect("{");
+                var methods = new List<InterfaceMethodSyntax>();
+                while (Current.Text is not ("}" or ""))
+                {
+                    var methodDocs = Documentation("async", "<method>");
+                    var isAsyncMethod = Current.Text == "async";
+                    if (isAsyncMethod) Take();
+                    var methodName = Identifier();
+                    var methodParameters = TypedParameters();
+                    Expect(":");
+                    var returnType = TypeToken();
+                    if (Current.Text == "{")
+                        throw new SourceError(new("DS1002", path, Current.Span, "Interface default method bodies are not supported in this slice."));
+                    methods.Add(new(methodName, methodParameters, returnType, isAsyncMethod) { DocumentationComments = methodDocs });
+                    if (Current.Text != "}" && Current.Span.Line == returnType.Span.Line)
+                        throw Error("Expected a newline after an interface method signature.");
+                }
+                Expect("}");
+                interfaces.Add(new(interfaceName, methods) { DocumentationComments = declarationDocs });
+                continue;
+            }
+            if (Current.Text == "service")
+            {
+                Take();
+                var serviceName = Identifier();
+                var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
+                Expect(":");
+                var contracts = new List<Token>();
+                do
+                {
+                    contracts.Add(TypeToken());
+                    if (Current.Text != ",") break;
+                    Take();
+                } while (true);
+                Expect("{");
+                var methods = new List<ServiceMethodSyntax>();
+                while (Current.Text is not ("}" or ""))
+                {
+                    var methodDocs = Documentation("async", "<method>");
+                    var isAsyncMethod = Current.Text == "async";
+                    if (isAsyncMethod) Take();
+                    var methodName = Identifier();
+                    var methodParameters = ServiceParameters();
+                    Token? returnType = null;
+                    if (Current.Text == ":") { Take(); returnType = TypeToken(); }
+                    methods.Add(new(methodName, methodParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
+                }
+                Expect("}");
+                services.Add(new(serviceName, dependencies, contracts, methods) { DocumentationComments = declarationDocs });
+                continue;
+            }
             if (Current.Text == "type")
             {
                 Take(); var recordName = Identifier(); var typeParameters = TypeParameters(); Expect("{");
@@ -1036,8 +1165,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType, IsAsync = isAsync });
         }
-        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0) throw Error("Expected at least one declaration.");
-        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Imports = imports };
+        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0) throw Error("Expected at least one declaration.");
+        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Imports = imports };
     }
 }
 
@@ -1095,22 +1224,17 @@ public static class Binder
         var mutableListUsed = false;
         var mutableMapUsed = false;
         var taskUsed = syntax.Functions.Any(function => function.IsAsync);
-        var userResultType = syntax.Records.Any(record => record.Name.Text == "Result") ||
-            syntax.Unions.Any(union => union.Name.Text == "Result");
-        var userOptionType = syntax.Records.Any(record => record.Name.Text == "Option") ||
-            syntax.Unions.Any(union => union.Name.Text == "Option");
-        var userListType = syntax.Records.Any(record => record.Name.Text == "List") ||
-            syntax.Unions.Any(union => union.Name.Text == "List");
-        var userMapType = syntax.Records.Any(record => record.Name.Text == "Map") ||
-            syntax.Unions.Any(union => union.Name.Text == "Map");
-        var userSetType = syntax.Records.Any(record => record.Name.Text == "Set") ||
-            syntax.Unions.Any(union => union.Name.Text == "Set");
-        var userMutableListType = syntax.Records.Any(record => record.Name.Text == "MutableList") ||
-            syntax.Unions.Any(union => union.Name.Text == "MutableList");
-        var userMutableMapType = syntax.Records.Any(record => record.Name.Text == "MutableMap") ||
-            syntax.Unions.Any(union => union.Name.Text == "MutableMap");
-        var userTaskType = syntax.Records.Any(record => record.Name.Text == "Task") ||
-            syntax.Unions.Any(union => union.Name.Text == "Task");
+        bool UserType(string name) => syntax.Records.Any(record => record.Name.Text == name) ||
+            syntax.Unions.Any(union => union.Name.Text == name) || syntax.Interfaces.Any(item => item.Name.Text == name) ||
+            syntax.Services.Any(item => item.Name.Text == name);
+        var userResultType = UserType("Result");
+        var userOptionType = UserType("Option");
+        var userListType = UserType("List");
+        var userMapType = UserType("Map");
+        var userSetType = UserType("Set");
+        var userMutableListType = UserType("MutableList");
+        var userMutableMapType = UserType("MutableMap");
+        var userTaskType = UserType("Task");
         var typeSymbolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionTypeScopes = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         Dictionary<string, string> TypeScope(IReadOnlyList<Token> parameters)
@@ -1177,6 +1301,24 @@ public static class Binder
                 ReturnType = ScopedType(function.ReturnType, scope)
             };
         }).ToArray();
+        var noTypeScope = new Dictionary<string, string>(StringComparer.Ordinal);
+        var scopedInterfaces = syntax.Interfaces.Select(item => item with
+        {
+            Methods = item.Methods.Select(method => method with
+            {
+                Parameters = method.Parameters.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
+                ReturnType = ScopedType(method.ReturnType, noTypeScope)
+            }).ToArray()
+        }).ToArray();
+        var scopedServices = syntax.Services.Select(item => item with
+        {
+            Dependencies = item.Dependencies.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
+            Methods = item.Methods.Select(method => method with
+            {
+                Parameters = method.Parameters.Select(parameter => parameter with { Type = parameter.Type is null ? null : ScopedType(parameter.Type, noTypeScope) }).ToArray(),
+                ReturnType = method.ReturnType is null ? null : ScopedType(method.ReturnType, noTypeScope)
+            }).ToArray()
+        }).ToArray();
         nextTypeSymbol += 8; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
@@ -1194,13 +1336,13 @@ public static class Binder
             new UnionCaseSyntax(new Token("Some", syntheticSpan), new[] { ScopedType(optionTypeTokens[0], optionScope) })
         }) { TypeParameters = optionTypeTokens.Select(parameter => ScopedParameter(parameter, optionScope)).ToArray() };
         scopedUnions = scopedUnions.Append(standardResult).Append(standardOption).ToArray();
-        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions };
+        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions, Interfaces = scopedInterfaces, Services = scopedServices };
         string DisplayType(string type, bool labelParameters = false)
         {
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : value.Name == taskSymbol ? "Task" : typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : value.Name == taskSymbol ? "Task" : syntax.TypeDisplayNames.TryGetValue(value.Name, out var displayName) ? displayName : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -1227,6 +1369,14 @@ public static class Binder
                 Fail("DS2017", union.Name.Span.Start > conflictingRecord.Name.Span.Start ? union.Name : conflictingRecord.Name,
                     "A record and union cannot share a type name.");
         }
+        var interfaces = new Dictionary<string, InterfaceDeclarationSyntax>(StringComparer.Ordinal);
+        foreach (var item in syntax.Interfaces)
+            if (!interfaces.TryAdd(item.Name.Text, item) || records.ContainsKey(item.Name.Text) || unions.ContainsKey(item.Name.Text))
+                Fail("DS2015", item.Name, "Duplicate interface or type declaration.");
+        var services = new Dictionary<string, ServiceDeclarationSyntax>(StringComparer.Ordinal);
+        foreach (var item in syntax.Services)
+            if (!services.TryAdd(item.Name.Text, item) || interfaces.ContainsKey(item.Name.Text) || records.ContainsKey(item.Name.Text) || unions.ContainsKey(item.Name.Text))
+                Fail("DS2015", item.Name, "Duplicate service or type declaration.");
         bool IsNullable(string type) => type.EndsWith("?", StringComparison.Ordinal);
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
@@ -1235,6 +1385,10 @@ public static class Binder
         };
         foreach (var record in syntax.Records) arities.Add(record.Name.Text, record.TypeParameters.Count);
         foreach (var union in syntax.Unions) arities.Add(union.Name.Text, union.TypeParameters.Count);
+        foreach (var item in interfaces.Values)
+            if (!arities.TryAdd(item.Name.Text, 0)) Fail("DS2015", item.Name, "Reserved interface type name.");
+        foreach (var item in services.Values)
+            if (!arities.TryAdd(item.Name.Text, 0)) Fail("DS2015", item.Name, "Reserved service type name.");
         var emptyParameters = new HashSet<string>(StringComparer.Ordinal);
         HashSet<string> Parameters(IReadOnlyList<Token> parameters)
         {
@@ -1279,8 +1433,10 @@ public static class Binder
             bool ExecutionTypesOnly(TypeShape value)
             {
                 bool ContainsTask(TypeShape item) => item.Name == taskSymbol || item.Arguments.Any(ContainsTask);
+                bool ContainsCapability(TypeShape item) => interfaces.ContainsKey(item.Name) || services.ContainsKey(item.Name) || item.Arguments.Any(ContainsCapability);
+                if ((interfaces.ContainsKey(value.Name) || services.ContainsKey(value.Name)) && value.IsNullable) return false;
                 if (!value.IsFunction && value.Name != taskSymbol &&
-                    value.Arguments.Any(argument => argument.ContainsFunction || ContainsTask(argument))) return false;
+                    value.Arguments.Any(argument => argument.ContainsFunction || ContainsTask(argument) || ContainsCapability(argument))) return false;
                 if ((value.Name == mapSymbol || value.Name == setSymbol) &&
                     (value.Arguments.Count == 0 || !EligibleKey(value.Arguments[0], new HashSet<string>(StringComparer.Ordinal)))) return false;
                 return value.Arguments.All(ExecutionTypesOnly);
@@ -1290,7 +1446,13 @@ public static class Binder
         bool IsBuilder(TypeShape shape) => shape.Name == mutableListSymbol || shape.Name == mutableMapSymbol;
         bool ContainsBuilder(TypeShape shape) => IsBuilder(shape) || shape.Arguments.Any(ContainsBuilder);
         bool ContainsTask(TypeShape shape) => shape.Name == taskSymbol || shape.Arguments.Any(ContainsTask);
-        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape);
+        bool ContainsCapability(TypeShape shape) => interfaces.ContainsKey(shape.Name) || services.ContainsKey(shape.Name) || shape.Arguments.Any(ContainsCapability);
+        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape) && !ContainsCapability(shape);
+        // A callable's signature can mention an interface without holding an
+        // interface value. Its own captures/partials are checked separately.
+        bool RetainsCapability(TypeShape shape) => !shape.IsFunction &&
+            (interfaces.ContainsKey(shape.Name) || services.ContainsKey(shape.Name) || shape.Arguments.Any(RetainsCapability));
+        bool CapabilityType(string type) => GenericTypes.TryParse(type, out var shape) && RetainsCapability(shape);
         string CallableResult(FunctionSyntax function) => function.IsAsync ? taskSymbol + "<" + function.ReturnType.Text + ">" : function.ReturnType.Text;
         foreach (var record in syntax.Records)
         {
@@ -1320,12 +1482,118 @@ public static class Binder
                 candidates.Add((union, unionCase));
             }
         }
+        // Methods are checked by the same function binder as ordinary bodies.
+        // Explicit dependencies become leading synthetic parameters; the
+        // emitter's service wrappers supply each instance's own values.
+        var interfaceMethods = new Dictionary<string, Dictionary<string, InterfaceMethodSyntax>>(StringComparer.Ordinal);
+        foreach (var item in syntax.Interfaces)
+        {
+            var methods = new Dictionary<string, InterfaceMethodSyntax>(StringComparer.Ordinal);
+            foreach (var method in item.Methods)
+            {
+                if (!methods.TryAdd(method.Name.Text, method)) Fail("DS2040", method.Name, "Duplicate interface method.");
+                if (!SupportedType(method.ReturnType.Text)) Fail("DS2040", method.ReturnType, "Unsupported interface result type.");
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var parameter in method.Parameters)
+                {
+                    if (!names.Add(parameter.Name.Text)) Fail("DS2040", parameter.Name, "Duplicate method parameter.");
+                    if (!SupportedType(parameter.Type.Text)) Fail("DS2040", parameter.Type, "Unsupported interface parameter type.");
+                }
+                if (method.IsAsync) taskUsed = true;
+            }
+            interfaceMethods.Add(item.Name.Text, methods);
+        }
+        var serviceMethods = new Dictionary<string, Dictionary<string, InterfaceMethodSyntax>>(StringComparer.Ordinal);
+        var boundServiceDeclarations = new List<BoundServiceDeclaration>();
+        var syntheticFunctions = new List<FunctionSyntax>();
+        var occupiedNames = new HashSet<string>(StringComparer.Ordinal);
+        void CollectOccupied(object? node)
+        {
+            if (node is null || node is string) return;
+            if (node is Token token) { occupiedNames.Add(token.Text); return; }
+            if (node is System.Collections.IEnumerable sequence) { foreach (var value in sequence) CollectOccupied(value); return; }
+            var nodeType = node.GetType();
+            if (!nodeType.Name.EndsWith("Syntax", StringComparison.Ordinal)) return;
+            foreach (var property in nodeType.GetProperties())
+                if (property.GetIndexParameters().Length == 0) CollectOccupied(property.GetValue(node));
+        }
+        CollectOccupied(syntax);
+        var syntheticNumber = 0;
+        foreach (var service in syntax.Services)
+        {
+            if (service.Interfaces.Count == 0) Fail("DS2040", service.Name, "A service must implement an interface.");
+            var implemented = new HashSet<string>(StringComparer.Ordinal);
+            var required = new Dictionary<string, InterfaceMethodSyntax>(StringComparer.Ordinal);
+            foreach (var iface in service.Interfaces)
+            {
+                if (!implemented.Add(iface.Text)) Fail("DS2040", iface, "Duplicate implemented interface.");
+                if (!interfaceMethods.TryGetValue(iface.Text, out var methods)) Fail("DS2040", iface, "Unknown implemented interface.");
+                foreach (var method in methods!.Values)
+                {
+                    if (required.TryGetValue(method.Name.Text, out var prior) &&
+                        (prior.IsAsync != method.IsAsync || prior.ReturnType.Text != method.ReturnType.Text ||
+                         !prior.Parameters.Select(p => p.Type.Text).SequenceEqual(method.Parameters.Select(p => p.Type.Text))))
+                        Fail("DS2040", iface, "Implemented interfaces have conflicting method signatures.");
+                    required[method.Name.Text] = method;
+                }
+            }
+            var dependencyNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var dependency in service.Dependencies)
+            {
+                if (!dependencyNames.Add(dependency.Name.Text)) Fail("DS2040", dependency.Name, "Duplicate service dependency.");
+                if (required.ContainsKey(dependency.Name.Text)) Fail("DS2040", dependency.Name, "A dependency cannot share a service method name.");
+                if (!SupportedType(dependency.Type.Text) || (!DataType(dependency.Type.Text) &&
+                    !interfaces.ContainsKey(dependency.Type.Text) && !services.ContainsKey(dependency.Type.Text)))
+                    Fail("DS2040", dependency.Type, "Dependencies require immutable data or a service or interface reference.");
+            }
+            var implementations = new HashSet<string>(StringComparer.Ordinal);
+            var boundMethods = new List<BoundServiceMethod>();
+            foreach (var method in service.Methods)
+            {
+                if (!implementations.Add(method.Name.Text)) Fail("DS2040", method.Name, "Duplicate service method.");
+                if (!required.TryGetValue(method.Name.Text, out var contract)) Fail("DS2040", method.Name, "Service method does not implement an interface method.");
+                if (method.Parameters.Count != contract!.Parameters.Count) Fail("DS2040", method.Name, "Service method parameter count does not match the interface.");
+                if (method.IsAsync && !contract.IsAsync) Fail("DS2040", method.Name, "Service method async marker does not match the interface.");
+                if (method.ReturnType is not null && method.ReturnType.Text != contract.ReturnType.Text)
+                    Fail("DS2040", method.ReturnType, "Service result type does not match the interface.");
+                var names = new HashSet<string>(dependencyNames, StringComparer.Ordinal);
+                var methodParameters = new List<ParameterSyntax>();
+                for (var i = 0; i < method.Parameters.Count; i++)
+                {
+                    var parameter = method.Parameters[i];
+                    if (!names.Add(parameter.Name.Text)) Fail("DS2040", parameter.Name, "Duplicate or shadowed service method parameter.");
+                    if (parameter.Type is not null && parameter.Type.Text != contract.Parameters[i].Type.Text)
+                        Fail("DS2040", parameter.Type, "Service parameter type does not match the interface.");
+                    methodParameters.Add(new ParameterSyntax(parameter.Name, contract.Parameters[i].Type));
+                }
+                string syntheticName;
+                do syntheticName = "__dsharp_service_body_" + (syntheticNumber++).ToString(CultureInfo.InvariantCulture);
+                while (!occupiedNames.Add(syntheticName));
+                var synthetic = new FunctionSyntax(method.Name with { Text = syntheticName }, contract.ReturnType, method.Body.Result.Token)
+                {
+                    Parameters = service.Dependencies.Concat(methodParameters).ToArray(),
+                    Body = method.Body, Expression = method.Body.Result, Bindings = method.Body.Bindings,
+                    IsAsync = contract.IsAsync
+                };
+                functionTypeScopes.Add(syntheticName, noTypeScope);
+                syntheticFunctions.Add(synthetic);
+                boundMethods.Add(new BoundServiceMethod(method.Name.Text, syntheticName,
+                    contract.Parameters.Select(parameter => parameter.Type.Text).ToArray(), contract.ReturnType.Text, contract.IsAsync));
+            }
+            foreach (var requiredMethod in required.Keys)
+                if (!implementations.Contains(requiredMethod)) Fail("DS2040", service.Name, "A required interface method is missing.");
+            serviceMethods.Add(service.Name.Text, required);
+            boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
+                service.Dependencies.Select(parameter => parameter.Type.Text).ToArray(), service.Interfaces.Select(iface => iface.Text).ToArray(), boundMethods));
+        }
+        syntax = syntax with { Functions = syntax.Functions.Concat(syntheticFunctions).ToArray() };
         var signatures = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
         foreach (var function in syntax.Functions)
         {
             var typeParameters = Parameters(function.TypeParameters);
             if (function.IsAsync && function.InferReturnType) Fail("DS2027", function.Name, "Async functions require an explicit logical result type.");
             if (!signatures.TryAdd(function.Name.Text, function)) Fail("DS2001", function.Name, "Duplicate function declaration.");
+            if (services.ContainsKey(function.Name.Text)) Fail("DS2001", function.Name, "A function and service constructor cannot share a name.");
             if (records.TryGetValue(function.Name.Text, out var conflictingRecord))
                 Fail("DS2015", function.Name.Span.Start > conflictingRecord.Name.Span.Start ? function.Name : conflictingRecord.Name,
                     "A function and record constructor cannot share a name.");
@@ -1338,10 +1606,10 @@ public static class Binder
             }
         }
         foreach (var unionCase in standardResult.Cases)
-            if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
+            if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text) && !services.ContainsKey(unionCase.Name.Text))
                 cases.Add(unionCase.Name.Text, new() { (standardResult, unionCase) });
         foreach (var unionCase in standardOption.Cases)
-            if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text))
+            if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text) && !services.ContainsKey(unionCase.Name.Text))
                 cases.Add(unionCase.Name.Text, new() { (standardOption, unionCase) });
         // Read the shipped D# source and register its declarations as ordinary
         // prelude functions. Source declarations and locals retain precedence;
@@ -1380,7 +1648,7 @@ public static class Binder
             var sourceName = declaration.Name.Text;
             if (preludeNames.ContainsKey(sourceName)) Fail("DS2001", declaration.Name, "Duplicate prelude function declaration.");
             var helperName = sourceName;
-            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName))
+            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName) || services.ContainsKey(helperName))
             {
                 helperName = "__dsharp_prelude_" + sourceName;
                 while (!reservedPreludeNames.Add(helperName)) helperName += "_";
@@ -1543,6 +1811,8 @@ public static class Binder
                         if (names.Contains(call.Name.Text)) indirect = true;
                         else if (cases.ContainsKey(DependencyName(call.Name.Text, names))) { /* A union case is not a function dependency. */ }
                         else if (signatures.ContainsKey(DependencyName(call.Name.Text, names))) calls.Add(DependencyName(call.Name.Text, names));
+                        else if (services.ContainsKey(call.Name.Text) && !functionTypeScopes[source.Name.Text].ContainsKey(call.Name.Text))
+                        { /* Checked service construction has no user body call. */ }
                         else if ((call.Name.Text == "MutableList" && !userMutableListType || call.Name.Text == "MutableMap" && !userMutableMapType) &&
                             !functionTypeScopes[source.Name.Text].ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text) && !unions.ContainsKey(call.Name.Text))
                         { /* A checked builder constructor has no function dependency. */ }
@@ -1855,7 +2125,9 @@ public static class Binder
                 ValueSyntax { Value.Text: "false" } => false,
                 _ => null
             };
-            bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected ||
+            bool ServiceConversion(string actual, string expected) => services.TryGetValue(actual, out var service) &&
+                interfaces.ContainsKey(expected) && service.Interfaces.Any(iface => iface.Text == expected);
+            bool Convertible(string actual, string expected) => actual == "<never>" || actual == expected || ServiceConversion(actual, expected) ||
                 (IsNullable(expected) && (actual == "<null>" || actual == expected[..^1]));
             string? CommonType(string left, string right)
             {
@@ -2201,7 +2473,9 @@ public static class Binder
                             deferred ??= error;
                             continue;
                         }
-                        if (typeParameters.Count > 0 && !GenericTypes.TryUnify(formalTypes[i].Text, value.Type, parameters, substitutions, fixedParameters))
+                        if (typeParameters.Count > 0 && !GenericTypes.TryUnify(formalTypes[i].Text, value.Type, parameters, substitutions, fixedParameters) &&
+                            !(GenericTypes.TrySubstitute(formalTypes[i].Text, substitutions, out var fixedFormal) &&
+                              SupportedType(fixedFormal, activeTypeParameters) && Convertible(value.Type, fixedFormal)))
                         {
                             // Fresh constructors can be rebound with the eventual
                             // context, so join nullable evidence before rejecting a
@@ -2310,6 +2584,9 @@ public static class Binder
                 BoundMapSetOperation collection => collection.Type,
                 BoundBuilderFactory builder => builder.Type,
                 BoundBuilderOperation builder => builder.Type,
+                BoundServiceConstruction service => service.Type,
+                BoundServiceCall service => service.Type,
+                BoundServiceConversion service => service.Type,
                 BoundAwait awaited => awaited.Type,
                 BoundLambda lambda => lambda.Type,
                 BoundFunctionReference reference => reference.Type,
@@ -2944,10 +3221,12 @@ public static class Binder
                                 }
                                 if (!guardNever && value.Type != "<never>")
                                 {
-                                    if (matchResultType is null) matchResultType = value.Type;
+                                    var branchValueType = expectedResult is not null && interfaces.ContainsKey(expectedResult) && Convertible(value.Type, expectedResult)
+                                        ? expectedResult : value.Type;
+                                    if (matchResultType is null) matchResultType = branchValueType;
                                     else
                                     {
-                                        var common = CommonType(matchResultType, value.Type);
+                                        var common = CommonType(matchResultType, branchValueType);
                                         if (common is null) Fail("DS2002", arm.Value.Token, "Match arms must have compatible types.");
                                         if (common is not null && IsNullable(common) && !SupportedType(common, activeTypeParameters))
                                             Fail("DS2023", arm.Value.Token, "Nullable unconstrained type parameters are not supported.");
@@ -3013,7 +3292,9 @@ public static class Binder
                         inferenceReachable = savedIfReachable;
                         if (!conditional.HasElse && thenBlock.Type is not ("Unit" or "<never>"))
                             Fail("DS1002", conditional.MissingElseLocation ?? conditional.If, "An if without else requires a Unit branch.");
-                        var branchType = CommonType(thenBlock.Type, elseBlock.Type);
+                        var branchType = expectedResult is not null && interfaces.ContainsKey(expectedResult) &&
+                            Convertible(thenBlock.Type, expectedResult) && Convertible(elseBlock.Type, expectedResult)
+                            ? expectedResult : CommonType(thenBlock.Type, elseBlock.Type);
                         if (branchType is null)
                         {
                             var location = conditional.Then.Result is UnitSyntax ? conditional.Then.Result : conditional.Else.Result;
@@ -3175,6 +3456,16 @@ public static class Binder
                             if (call.TypeArguments.Count > 0) Fail("DS2026", call.Name, "Function values do not accept explicit type arguments.");
                             return BindInvocation(new ValueSyntax(call.Name), call.OpenParen, call.Arguments, expectedResult);
                         }
+                        if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
+                        {
+                            if (cases.ContainsKey(call.Name.Text)) Fail("DS2018", call.Name, "Ambiguous service constructor and union case.");
+                            if (functionTypeScope.ContainsKey(call.Name.Text)) Fail("DS2026", call.Name, "A type parameter is not a service constructor.");
+                            if (call.TypeArguments.Count != 0) Fail("DS2023", call.Name, "Service constructors do not accept type arguments.");
+                            if (call.Arguments.Count != serviceConstructor.Dependencies.Count) Fail("DS2012", call.Name, "Incorrect number of service constructor arguments.");
+                            var values = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                                serviceConstructor.Dependencies.Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name);
+                            return (new BoundServiceConstruction(serviceConstructor.Name.Text, values.Values), values.Never ? "<never>" : serviceConstructor.Name.Text);
+                        }
                         if (cases.ContainsKey(call.Name.Text))
                         {
                             var selected = BareCase(call.Name);
@@ -3210,6 +3501,8 @@ public static class Binder
                         {
                             var arguments = target.TypeParameters.Select(p => resolvedCall.Substitutions[p.Text]).ToArray();
                             var formalTypes = target.Parameters.Select(p => Substitute(p.Type.Text, resolvedCall.Substitutions, p.Type)).ToArray();
+                            if (formalTypes.Take(call.Arguments.Count).Any(CapabilityType) || resolvedCall.Types.Any(CapabilityType))
+                                Fail("DS2026", call.Name, "A partial application cannot capture a service or interface reference.");
                             var fullType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Append(callResultType)) + ">";
                             var partialType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Skip(call.Arguments.Count).Append(callResultType)) + ">";
                             return (new BoundPartial(new BoundFunctionReference(call.Name.Text, fullType, arguments) { Location = call.Name }, fullType,
@@ -3316,6 +3609,31 @@ public static class Binder
                                 member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         var listReceiver = BindExpression(member.Receiver);
                         var listReceiverType = listReceiver.Type == "<never>" ? KnownType(listReceiver.Expression) : listReceiver.Type;
+                        if (listReceiverType is not null &&
+                            (interfaceMethods.TryGetValue(listReceiverType, out var dispatchMethods) || serviceMethods.TryGetValue(listReceiverType, out dispatchMethods)))
+                        {
+                            // Virtual dispatch is an indirect dependency. Check
+                            // this after binding the receiver, so a service method
+                            // named `get` does not make unrelated List.get calls
+                            // require a return annotation.
+                            if (inferencePass && inferenceReachable && inferredReturns is not null)
+                                Fail("DS2027", member.Member, "An explicit return type is required for indirect service calls.");
+                            if (!dispatchMethods!.TryGetValue(member.Member.Text, out var dispatchMethod))
+                                Fail("DS2040", member.Member, "Unknown service or interface method.");
+                            if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Service methods do not accept type arguments.");
+                            if (member.Arguments.Count != dispatchMethod!.Parameters.Count)
+                                Fail("DS2012", member.Member, "Incorrect number of service method arguments.");
+                            var savedDispatchReachable = inferenceReachable;
+                            inferenceReachable = savedDispatchReachable && listReceiver.Type != "<never>";
+                            (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) dispatchArguments;
+                            try { dispatchArguments = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                                dispatchMethod.Parameters.Select(parameter => parameter.Type).ToArray(), member.Arguments, member.Member); }
+                            finally { inferenceReachable = savedDispatchReachable; }
+                            var dispatchResult = dispatchMethod.IsAsync ? taskSymbol + "<" + dispatchMethod.ReturnType.Text + ">" : dispatchMethod.ReturnType.Text;
+                            if (dispatchMethod.IsAsync) taskUsed = true;
+                            return (new BoundServiceCall(listReceiver.Expression, listReceiverType, member.Member.Text, dispatchArguments.Values, dispatchResult),
+                                listReceiver.Type == "<never>" || dispatchArguments.Never ? "<never>" : dispatchResult);
+                        }
                         if (listReceiverType is not null && GenericTypes.TryParse(listReceiverType, out var collectionShape) &&
                             (collectionShape.Name == mapSymbol && collectionShape.Arguments.Count == 2 ||
                              collectionShape.Name == setSymbol && collectionShape.Arguments.Count == 1))
@@ -3495,6 +3813,8 @@ public static class Binder
                             if (operandType is not null && GenericTypes.TryParse(operandType, out var taskEquality) && taskEquality.Name == taskSymbol &&
                                 !(taskEquality.IsNullable && (left.Type == "<null>" || right.Type == "<null>")))
                                 Fail("DS2026", binary.Operator, "Task equality is not supported; nullable tasks may be compared with null.");
+                            if (operandType is not null && GenericTypes.TryParse(operandType, out var capabilityEquality) && ContainsCapability(capabilityEquality))
+                                Fail("DS2026", binary.Operator, "Service and interface reference equality is not supported.");
                             if (operandType is not null && IsNullable(operandType) && !SupportedType(operandType, activeTypeParameters))
                                 Fail("DS2023", binary.Operator, "Nullable unconstrained type parameters are not supported.");
                             if (operandType == "Unit") Fail("DS2002", binary.Operator, "Unit equality is not supported.");
@@ -3535,6 +3855,7 @@ public static class Binder
                     return never with { Expression = inner, Type = expected };
                 }
                 if (expression is BoundNull) return new BoundNull(expected);
+                if (ServiceConversion(actual, expected)) return new BoundServiceConversion(expression, expected);
                 if (expression is BoundCoalesce { Type: "<null>" } pending)
                 {
                     var contained = IsNullable(expected) ? expected[..^1] : expected;
@@ -3873,6 +4194,8 @@ public static class Binder
                     Fail("DS2026", pipe.Operator, "The right side of a pipe must be a non-nullable function with an argument.");
                 var formal = shape!.Arguments[0].ToString();
                 Require(pipe.Left, value.Type, formal);
+                if (shape.Arguments.Count > 2 && (CapabilityType(formal) || CapabilityType(value.Type)))
+                    Fail("DS2026", pipe.Operator, "A partial application cannot capture a service or interface reference.");
                 var result = shape.Arguments.Count == 2 ? shape.Arguments[1].ToString() : TypeShape.FunctionName + "<" + string.Join(",", shape.Arguments.Skip(1)) + ">";
                 return (new BoundPipe(Coerce(value.Expression, formal, value.Type), formal,
                     Coerce(receiver.Expression, receiverType!, receiver.Type), result) { ReceiverType = receiverType! },
@@ -3903,6 +4226,8 @@ public static class Binder
                 var resultType = functionShape.Arguments[^1].ToString();
                 if (arguments.Count < formal.Length)
                 {
+                    if (formal.Take(arguments.Count).Any(parameter => CapabilityType(parameter.Text)) || values.Types.Any(CapabilityType))
+                        Fail("DS2026", location, "A partial application cannot capture a service or interface reference.");
                     var partialType = TypeShape.FunctionName + "<" + string.Join(",", formal.Skip(arguments.Count).Select(t => t.Text).Append(resultType)) + ">";
                     return (new BoundPartial(receiver.Expression, type!, values.Values, formal.Take(arguments.Count).Select(t => t.Text).ToArray(),
                         formal.Skip(arguments.Count).Select(t => t.Text).ToArray(), resultType, partialType),
@@ -4081,6 +4406,12 @@ public static class Binder
         // several generic helpers. Discover those requirements to a fixed point.
         var dataRequirements = functions.ToDictionary(item => item.Name,
             _ => new HashSet<string>(StringComparer.Ordinal), StringComparer.Ordinal);
+        // A generic partial application may retain a value whose eventual type
+        // is not known at its declaration. Track this separately from immutable
+        // data requirements: tasks/functions remain permitted execution values,
+        // while service and interface references cannot be retained.
+        var capabilityRequirements = functions.ToDictionary(item => item.Name,
+            _ => new HashSet<string>(StringComparer.Ordinal), StringComparer.Ordinal);
         var boundFunctions = functions.ToDictionary(item => item.Name, StringComparer.Ordinal);
         bool requirementsChanged;
         do
@@ -4090,6 +4421,7 @@ public static class Binder
             {
                 var ownerParameters = owner.TypeParameters.ToHashSet(StringComparer.Ordinal);
                 var required = dataRequirements[owner.Name];
+                var capabilityRequired = capabilityRequirements[owner.Name];
                 void Need(TypeShape shape)
                 {
                     if (shape.Arguments.Count == 0 && ownerParameters.Contains(shape.Name) && required.Add(shape.Name))
@@ -4102,6 +4434,13 @@ public static class Binder
                         requirementsChanged = true;
                     var childData = inData || (!shape.IsFunction && shape.Name != taskSymbol && shape.Arguments.Count > 0);
                     foreach (var argument in shape.Arguments) Scan(argument, childData);
+                }
+                void NeedCapabilitySafe(TypeShape shape)
+                {
+                    if (shape.IsFunction) return;
+                    if (shape.Arguments.Count == 0 && ownerParameters.Contains(shape.Name) && capabilityRequired.Add(shape.Name))
+                        requirementsChanged = true;
+                    foreach (var argument in shape.Arguments) NeedCapabilitySafe(argument);
                 }
                 void Visit(object? node)
                 {
@@ -4119,13 +4458,33 @@ public static class Binder
                         GenericTypes.TryParse(equality.OperandType, out var equalityType) && equalityType.IsNullable &&
                         equalityType.Arguments.Count == 0 && ownerParameters.Contains(equalityType.Name) && required.Add(equalityType.Name))
                         requirementsChanged = true;
+                    if (node is BoundPartial partial)
+                        foreach (var type in partial.ArgumentTypes)
+                            if (GenericTypes.TryParse(type, out var captured))
+                            {
+                                if (RetainsCapability(captured)) Fail("DS2026", new Token(owner.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
+                                NeedCapabilitySafe(captured);
+                            }
+                    if (node is BoundPipe pipe && GenericTypes.TryParse(pipe.ReceiverType, out var pipeReceiver) &&
+                        pipeReceiver.IsFunction && pipeReceiver.Arguments.Count > 2 && GenericTypes.TryParse(pipe.ValueType, out var pipeValue))
+                    {
+                        if (RetainsCapability(pipeValue)) Fail("DS2026", new Token(owner.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
+                        NeedCapabilitySafe(pipeValue);
+                    }
                     if (node is BoundCall call && boundFunctions.TryGetValue(call.Name, out var callee))
                     {
                         for (var i = 0; i < Math.Min(call.TypeArguments.Count, callee.TypeParameters.Count); i++)
                         {
+                            if (capabilityRequirements[callee.Name].Contains(callee.TypeParameters[i]) &&
+                                GenericTypes.TryParse(call.TypeArguments[i], out var capabilityArgument))
+                            {
+                                if (RetainsCapability(capabilityArgument))
+                                    Fail("DS2026", call.Location ?? new Token(call.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
+                                NeedCapabilitySafe(capabilityArgument);
+                            }
                             if (!dataRequirements[callee.Name].Contains(callee.TypeParameters[i]) ||
                                 !GenericTypes.TryParse(call.TypeArguments[i], out var argument)) continue;
-                            if (argument.ContainsFunction || ContainsTask(argument))
+                            if (argument.ContainsFunction || ContainsTask(argument) || ContainsCapability(argument))
                                 Fail("DS2026", call.Location ?? new Token(call.Name, syntheticSpan), "Execution type is not valid for this generic data operation.");
                             Need(argument);
                         }
@@ -4134,9 +4493,16 @@ public static class Binder
                     {
                         for (var i = 0; i < Math.Min(reference.TypeArguments.Count, referenced.TypeParameters.Count); i++)
                         {
+                            if (capabilityRequirements[referenced.Name].Contains(referenced.TypeParameters[i]) &&
+                                GenericTypes.TryParse(reference.TypeArguments[i], out var capabilityArgument))
+                            {
+                                if (RetainsCapability(capabilityArgument))
+                                    Fail("DS2026", reference.Location ?? new Token(reference.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
+                                NeedCapabilitySafe(capabilityArgument);
+                            }
                             if (!dataRequirements[referenced.Name].Contains(referenced.TypeParameters[i]) ||
                                 !GenericTypes.TryParse(reference.TypeArguments[i], out var argument)) continue;
-                            if (argument.ContainsFunction || ContainsTask(argument))
+                            if (argument.ContainsFunction || ContainsTask(argument) || ContainsCapability(argument))
                                 Fail("DS2026", reference.Location ?? new Token(reference.Name, syntheticSpan), "Execution type is not valid for this generic data operation.");
                             Need(argument);
                         }
@@ -4169,6 +4535,10 @@ public static class Binder
             MutableListSymbol = mutableListUsed ? mutableListSymbol : null,
             MutableMapSymbol = mutableMapUsed ? mutableMapSymbol : null,
             TaskSymbol = taskUsed ? taskSymbol : null,
+            Interfaces = syntax.Interfaces.Select(item => new BoundInterfaceDeclaration(item.Name.Text,
+                item.Methods.Select(method => new BoundInterfaceMethod(method.Name.Text,
+                    method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)).ToArray())).ToArray(),
+            Services = boundServiceDeclarations,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
@@ -4200,6 +4570,16 @@ public static class CSharpEmitter
             globalNames.Add(union.Name);
             foreach (var unionCase in union.Cases) globalNames.Add(unionCase.Name);
         }
+        foreach (var contract in module.Interfaces)
+        {
+            globalNames.Add(contract.Name);
+            foreach (var method in contract.Methods) globalNames.Add(method.Name);
+        }
+        foreach (var service in module.Services)
+        {
+            globalNames.Add(service.Name);
+            foreach (var method in service.Methods) globalNames.Add(method.Name);
+        }
         string UniqueGlobal(string proposal)
         {
             while (!globalNames.Add(proposal)) proposal += "_";
@@ -4220,6 +4600,15 @@ public static class CSharpEmitter
             recordTypes.Add(record.Name, UniqueGlobal("__DSharp_Record_" + recordTypes.Count.ToString(CultureInfo.InvariantCulture)));
         foreach (var union in module.Unions)
             recordTypes.Add(union.Name, UniqueGlobal("__DSharp_Union_" + recordTypes.Count.ToString(CultureInfo.InvariantCulture)));
+        // Interface/service names are separate from immutable record/union
+        // names. Their members use a compiler-owned prefix so even source names
+        // such as ToString, Equals, or GetType cannot collide with CLR members.
+        var capabilityTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var contract in module.Interfaces)
+            capabilityTypes.Add(contract.Name, UniqueGlobal("__DSharp_Interface_" + capabilityTypes.Count.ToString(CultureInfo.InvariantCulture)));
+        foreach (var service in module.Services)
+            capabilityTypes.Add(service.Name, UniqueGlobal("__DSharp_Service_" + capabilityTypes.Count.ToString(CultureInfo.InvariantCulture)));
+        static string CapabilityMethod(string name) => "__dsharp_method_" + name;
         var structuralInterface = UniqueGlobal("__DSharp_Structural");
         var listTypeName = module.ListSymbol is null ? null : UniqueGlobal("__DSharp_List");
         var mapTypeName = module.MapSymbol is null ? null : UniqueGlobal("__DSharp_Map");
@@ -4349,7 +4738,8 @@ public static class CSharpEmitter
                     current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
                     current.Name == module.MutableListSymbol ? mutableListTypeName! : current.Name == module.MutableMapSymbol ? mutableMapTypeName! :
                     current.Name == module.TaskSymbol ? "global::System.Threading.Tasks.Task" :
-                    recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
+                    recordTypes.TryGetValue(current.Name, out var recordType) ? recordType :
+                    capabilityTypes.TryGetValue(current.Name, out var capabilityType) ? capabilityType : current.Name;
                 if (current.Arguments.Count > 0)
                 {
                     nominalProjections.TryGetValue(current.Name, out var slots);
@@ -4694,6 +5084,71 @@ public static class CSharpEmitter
                     output.Append("                return hash;\n");
                 }
                 output.Append("            default: throw new global::System.InvalidOperationException(\"Invalid D# union state.\");\n        }\n    }\n");
+            }
+            output.Append("}\n\n");
+        }
+        // Services are execution capabilities. Their private dependency fields
+        // hold exactly the values explicitly passed at construction; method
+        // bodies live in the same checked function emitter as ordinary D# code.
+        // Wrappers pass dependencies before method parameters and therefore
+        // preserve the creating instance's dependency bindings on every call.
+        SetTypeParameters(Array.Empty<string>(), Array.Empty<bool>());
+        foreach (var contract in module.Interfaces)
+        {
+            output.Append("public interface ").Append(capabilityTypes[contract.Name]).Append("\n{\n");
+            foreach (var method in contract.Methods)
+            {
+                output.Append("    ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
+                    .Append(" ").Append(CapabilityMethod(method.Name)).Append("(");
+                for (var i = 0; i < method.ParameterTypes.Count; i++)
+                {
+                    if (i != 0) output.Append(", ");
+                    output.Append(CType(method.ParameterTypes[i])).Append(" __dsharp_arg_").Append(i.ToString(CultureInfo.InvariantCulture));
+                }
+                output.Append(");\n");
+            }
+            output.Append("}\n\n");
+        }
+        foreach (var service in module.Services)
+        {
+            var serviceName = capabilityTypes[service.Name];
+            output.Append("public sealed class ").Append(serviceName);
+            if (service.Interfaces.Count > 0)
+                output.Append(" : ").Append(string.Join(", ", service.Interfaces.Select(type => CType(type))));
+            output.Append("\n{\n");
+            for (var i = 0; i < service.DependencyTypes.Count; i++)
+                output.Append("    private readonly ").Append(CType(service.DependencyTypes[i])).Append(" __dsharp_dependency_")
+                    .Append(i.ToString(CultureInfo.InvariantCulture)).Append(";\n");
+            output.Append("    public ").Append(serviceName).Append("(");
+            for (var i = 0; i < service.DependencyTypes.Count; i++)
+            {
+                if (i != 0) output.Append(", ");
+                output.Append(CType(service.DependencyTypes[i])).Append(" __dsharp_arg_").Append(i.ToString(CultureInfo.InvariantCulture));
+            }
+            output.Append(")\n    {\n");
+            for (var i = 0; i < service.DependencyTypes.Count; i++)
+            {
+                var index = i.ToString(CultureInfo.InvariantCulture);
+                output.Append("        __dsharp_dependency_").Append(index).Append(" = __dsharp_arg_").Append(index)
+                    .Append(";\n        _ = __dsharp_dependency_").Append(index).Append(";\n");
+            }
+            output.Append("    }\n");
+            foreach (var method in service.Methods)
+            {
+                output.Append("    public ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
+                    .Append(" ").Append(CapabilityMethod(method.Name)).Append("(");
+                var arguments = new List<string>();
+                for (var i = 0; i < service.DependencyTypes.Count; i++)
+                    arguments.Add("__dsharp_dependency_" + i.ToString(CultureInfo.InvariantCulture));
+                for (var i = 0; i < method.ParameterTypes.Count; i++)
+                {
+                    if (i != 0) output.Append(", ");
+                    var name = "__dsharp_arg_" + i.ToString(CultureInfo.InvariantCulture);
+                    output.Append(CType(method.ParameterTypes[i])).Append(" ").Append(name);
+                    arguments.Add(name);
+                }
+                output.Append(") => ").Append(container).Append(".@").Append(method.FunctionName)
+                    .Append("(").Append(string.Join(", ", arguments)).Append(");\n");
             }
             output.Append("}\n\n");
         }
@@ -5350,6 +5805,15 @@ public static class CSharpEmitter
                         var unionCaseIndex = unionDefinition.Cases.ToList().FindIndex(unionCase => unionCase.Name == unionConstruction.Case);
                         var unionArguments = unionConstruction.Arguments.Select(EmitExpression).ToArray();
                         return CType(unionConstruction.Type) + ".__dsharp_case_" + unionCaseIndex.ToString(CultureInfo.InvariantCulture) + "(" + string.Join(", ", unionArguments) + ")";
+                    case BoundServiceConstruction serviceConstruction:
+                        var dependencyArguments = serviceConstruction.Arguments.Select(EmitExpression).ToArray();
+                        return "new " + CType(serviceConstruction.Type) + "(" + string.Join(", ", dependencyArguments) + ")";
+                    case BoundServiceCall serviceCall:
+                        var serviceReceiver = EmitExpression(serviceCall.Receiver);
+                        var serviceArguments = serviceCall.Arguments.Select(EmitExpression).ToArray();
+                        return "(" + serviceReceiver + ")." + CapabilityMethod(serviceCall.Method) + "(" + string.Join(", ", serviceArguments) + ")";
+                    case BoundServiceConversion conversion:
+                        return "((" + CType(conversion.Type) + ")(" + EmitExpression(conversion.Expression) + "))";
                     case BoundCall call:
                         var args = call.Arguments.Select(EmitExpression).ToArray();
                         var slots = functionProjections[call.Name];

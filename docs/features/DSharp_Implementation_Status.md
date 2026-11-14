@@ -54,6 +54,7 @@ external interoperability guarantee follows from this lowering. See the
 | Method-local mutable builders | `MutableList<T>()` and `MutableMap<K,V>()` with local aliases, Unit-valued `add`/`set`, and `freeze`; escape and lambda capture rejected | Frozen lists and structurally keyed maps remain unchanged by subsequent mutations; builders created inside a lambda belong to its invocation |
 | Async functions and await | Explicit `async fn` with logical return annotation; `Task<T>` calls and `await` in async functions | Tasks suspend and resume without blocking; nested expressions, early return, Result propagation and same-invocation builders preserve their behavior |
 | Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
+| Interfaces and services | Explicit interfaces, services implementing one or more interfaces, checked methods and constructor dependencies | Interface-typed calls dispatch to the supplied service instance; async methods and explicit dependencies retain their usual behavior |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -215,6 +216,16 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and
+explicitly constructed services, including multiple implemented interfaces,
+signature conformance and direct polymorphic dispatch. Dependencies are supplied
+at construction and remain private to each instance. Service/interface references
+are execution capabilities: they cannot be hidden in immutable data, captured by
+lambdas or retained by partial application. Default interface bodies (#44),
+application registration and method partial application remain separate work.
+See the [D# example](../../examples/interfaces-services.ds),
+[adopted contract](implementation/issue-43-contract.md) and
+[implementation plan](implementation/issue-43-plan.md).
 [Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
 expressions and blocks. Their explicit `async` marker permits `await` in the
 lambda itself, and the resulting function value returns a Task. Immutable
