@@ -6,7 +6,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const baseRevision = '5e0c1d366a9f434501ec3c5dbe32cbe65def90b3';
+// GitHub can deliver a pull-request event with the earlier base SHA after main
+// has advanced. Both reviewed bases have identical allowlisted verifier files.
+const baseRevisions = new Set([
+  'f22efb53fdedbb17339d798d61c9d25577497cd8',
+  '5e0c1d366a9f434501ec3c5dbe32cbe65def90b3',
+]);
+export function isReviewedBase(revision) { return baseRevisions.has(revision); }
 const files = [
   ['global.json', '0aa4b85ae248d59bbc4138f346d952b7fae4fe18cc701d921fa1c003211be777'],
   ['Directory.Build.props', '963d69bfb6737ee529c923fc39777f511da043c83ebd1ba3c507227269aecebb'],
@@ -37,7 +43,7 @@ export function migrateContent(content, expectedHash) {
 function main() {
   const [trusted, baseSha] = process.argv.slice(2);
   if (!trusted || !baseSha) throw new Error('Expected trusted checkout and base SHA');
-  if (baseSha !== baseRevision) {
+  if (!isReviewedBase(baseSha)) {
     // Future bases that already use .NET 11 need no temporary migration.
     const sdk = JSON.parse(readFileSync(join(trusted, 'global.json'), 'utf8')).sdk.version;
     if (sdk === '11.0.100') return;
