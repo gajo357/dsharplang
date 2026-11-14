@@ -1,0 +1,17 @@
+module Demo
+
+// Build a list locally; the returned value is an independent immutable snapshot.
+fn positiveValues(values: List<int>): List<int> {
+    let result = MutableList<int>()
+    for value in values {
+        if value > 0 { result.add(value) }
+    }
+    result.freeze()
+}
+
+fn answer(): int {
+    match positiveValues([-3, 42, 9]).get(0) {
+        None => 0
+        Some(value) => value
+    }
+}

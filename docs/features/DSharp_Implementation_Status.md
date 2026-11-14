@@ -51,6 +51,7 @@ external interoperability guarantee follows from this lowering. See the
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
 | Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit | Source evaluates once, elements are visited in order, iteration captures are independent, and return/Result propagation leave the enclosing function or lambda |
+| Method-local mutable builders | `MutableList<T>()` and `MutableMap<K,V>()` with local aliases, Unit-valued `add`/`set`, and `freeze`; escape and lambda capture rejected | Frozen lists and structurally keyed maps remain unchanged by subsequent mutations; builders created inside a lambda belong to its invocation |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -210,6 +211,13 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #40](https://github.com/gajo357/dsharplang/issues/40) adds local mutable
+list and map builders. Only recognized operations and local aliases can use a
+builder; returns, ordinary calls, data storage and lambda capture are rejected.
+`freeze()` copies an independent immutable snapshot. Map keys follow the
+existing structural-key rules. Borrowing and async integration remain separate
+work. See the [D# example](../../examples/local-builders.ds) and
+[plan](implementation/issue-40-plan.md).
 [Issue #39](https://github.com/gajo357/dsharplang/issues/39) adds sequential
 `for/in` over immutable lists, including generic lists and nested loops. The
 iteration binding follows the existing no-shadowing rule and is scoped to the

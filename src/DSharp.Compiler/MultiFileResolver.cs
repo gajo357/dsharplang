@@ -203,6 +203,17 @@ internal static class MultiFileResolver
                         var callTypes = Types(call.TypeArguments, typeParameters);
                         if (scope.Contains(call.Name.Text)) return call with { Arguments = callArguments, TypeArguments = callTypes };
                         var foundCall = ValueName(call.Name);
+                        // A visible nominal type shadows a standard builder
+                        // constructor. Preserve its identity so the binder
+                        // cannot mistake a user record or union for the
+                        // intrinsic merely because their source names agree.
+                        if ((call.Name.Text is "MutableList" or "MutableMap") && !typeParameters.Contains(call.Name.Text))
+                        {
+                            var builderType = foundCall?.Kind == "record" ? foundCall :
+                                foundCall is null ? Lookup(call.Name, call.Name.Text, s => s.Kind == "union") : null;
+                            if (builderType is not null)
+                                return call with { Name = Rename(call.Name, builderType.Internal), Arguments = callArguments, TypeArguments = callTypes };
+                        }
                         return foundCall?.Kind switch { "function" => call with { Name = Rename(call.Name, foundCall.Internal), Arguments = callArguments, TypeArguments = callTypes }, "case" => CaseCall(foundCall, call.Name, call.OpenParen, callArguments, callTypes), _ => call with { Arguments = callArguments, TypeArguments = callTypes } };
                     case MemberCallSyntax member:
                         var memberArgs = member.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray();
