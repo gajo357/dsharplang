@@ -51,7 +51,10 @@ public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Ele
 public sealed record ListSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
 public sealed record LambdaParameterSyntax(Token Name, Token? Type);
-public sealed record LambdaSyntax(Token Start, IReadOnlyList<LambdaParameterSyntax> Parameters, BlockSyntax Body) : ExpressionSyntax(Start);
+public sealed record LambdaSyntax(Token Start, IReadOnlyList<LambdaParameterSyntax> Parameters, BlockSyntax Body) : ExpressionSyntax(Start)
+{
+    public bool IsAsync { get; init; }
+}
 public sealed record InvokeSyntax(ExpressionSyntax Receiver, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(OpenParen);
 public sealed record CallSyntax(Token Name, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(Name)
 {
@@ -134,6 +137,7 @@ public sealed record BoundCapture(string Name, string Type);
 public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList<string> ParameterTypes, string Type, string ReturnType, BoundBlock Body, bool HasReturn) : BoundExpression
 {
     public IReadOnlyList<BoundCapture> Captures { get; init; } = Array.Empty<BoundCapture>();
+    public bool IsAsync { get; init; }
 }
 public sealed record BoundInvoke(BoundExpression Receiver, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundPipe(BoundExpression Value, string ValueType, BoundExpression Receiver, string Type) : BoundExpression
@@ -537,13 +541,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         return false;
     }
-    private bool HasLambdaHead()
+    private bool HasLambdaHead(int start)
     {
-        if (Current.Text != "(")
-            return position + 1 < tokens.Count && tokens[position + 1].Text == "=>" &&
-                Current.Text.Length > 0 && (char.IsAsciiLetter(Current.Text[0]) || Current.Text[0] == '_') && !Reserved.Contains(Current.Text);
+        if (start >= tokens.Count) return false;
+        var first = tokens[start].Text;
+        if (first != "(")
+            return start + 1 < tokens.Count && tokens[start + 1].Text == "=>" &&
+                first.Length > 0 && (char.IsAsciiLetter(first[0]) || first[0] == '_') && !Reserved.Contains(first);
         var depth = 0;
-        for (var cursor = position; cursor < tokens.Count; cursor++)
+        for (var cursor = start; cursor < tokens.Count; cursor++)
         {
             if (tokens[cursor].Text == "(") depth++;
             else if (tokens[cursor].Text == ")" && --depth == 0)
@@ -557,9 +563,11 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (Current.IsDocumentation) throw Error("Expected an expression.");
         if (line is { } expectedLine && Current.Span.Line != expectedLine)
             throw new SourceError(new("DS1002", path, Current.Span, "Expected an operand on the binding line."));
-        if (!stopAtMatchArrow && HasLambdaHead())
+        if (!stopAtMatchArrow && (HasLambdaHead(position) || Current.Text == "async" && HasLambdaHead(position + 1)))
         {
             var start = Current;
+            var isAsync = Current.Text == "async";
+            if (isAsync) Take();
             var lambdaParameters = new List<LambdaParameterSyntax>();
             if (Current.Text == "(")
             {
@@ -581,7 +589,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             else lambdaParameters.Add(new(Identifier(), null));
             Expect("=>");
             var body = Current.Text == "{" ? Block() : new BlockSyntax(Array.Empty<LetBindingSyntax>(), Expression(line is null ? null : Current.Span.Line));
-            left = new LambdaSyntax(start, lambdaParameters, body);
+            left = new LambdaSyntax(start, lambdaParameters, body) { IsAsync = isAsync };
         }
         else if (Current.Text == "null")
         {
@@ -3935,11 +3943,25 @@ public static class Binder
                     parameterTypes.Add(parameterType!);
                 }
                 var partialReturnHint = expected?.Arguments[^1].ToString();
+                if (lambda.IsAsync && partialReturnHint is not null)
+                {
+                    // Async lambdas have a Task-valued delegate result, while
+                    // the body, explicit return and Result propagation use its
+                    // logical payload type. A not-yet-inferred generic result is
+                    // left open so the checked body can provide the evidence.
+                    if (GenericTypes.TryParse(partialReturnHint, out var expectedTask) &&
+                        expectedTask.Name == taskSymbol && !expectedTask.IsNullable && expectedTask.Arguments.Count == 1)
+                        partialReturnHint = expectedTask.Arguments[0].ToString();
+                    else if (SupportedType(partialReturnHint, activeTypeParameters))
+                        Fail("DS2026", lambda.Start, "An async lambda requires a Task result in its expected function type.");
+                    else partialReturnHint = null;
+                }
                 var expectedReturn = partialReturnHint;
                 if (expectedReturn is not null && !SupportedType(expectedReturn, activeTypeParameters)) expectedReturn = null;
                 try
                 {
-                    awaitAllowed = false;
+                    // Each source lambda establishes its own await boundary.
+                    awaitAllowed = lambda.IsAsync;
                     inaccessibleCaptures = new HashSet<string>(savedCaptures, StringComparer.Ordinal);
                     inaccessibleCaptures.UnionWith(savedLocals.Keys);
                     (BoundBlock Block, string Type) BindBody(string? resultType, List<string>? returns, string? bodyHint = null)
@@ -3969,7 +3991,9 @@ public static class Binder
                     }
                     Require(lambda.Body.Result, body.Type, returnType!);
                     var boundBody = body.Block with { Result = Coerce(body.Block.Result, returnType!, body.Type) };
-                    var shapes = parameterTypes.Append(returnType!).Select(type => { GenericTypes.TryParse(type, out var shape); return shape; }).ToArray();
+                    var delegateReturn = lambda.IsAsync ? taskSymbol + "<" + returnType + ">" : returnType!;
+                    if (lambda.IsAsync) taskUsed = true;
+                    var shapes = parameterTypes.Append(delegateReturn).Select(type => { GenericTypes.TryParse(type, out var shape); return shape; }).ToArray();
                     var lambdaType = new TypeShape(TypeShape.FunctionName, shapes, false).ToString();
                     // Include references made solely by nested lambdas: the
                     // intermediate environment must carry them to the point at
@@ -3996,7 +4020,7 @@ public static class Binder
                     foreach (var capture in captures)
                         if (!DataType(capture.Type)) Fail("DS2026", lambda.Start, "Only immutable data values can be captured.");
                     return (new BoundLambda(lambda.Parameters.Select(parameter => parameter.Name.Text).ToArray(), parameterTypes,
-                        lambdaType, returnType!, boundBody, hasReturn) { Captures = captures }, lambdaType);
+                        lambdaType, returnType!, boundBody, hasReturn) { Captures = captures, IsAsync = lambda.IsAsync }, lambdaType);
                 }
                 finally
                 {
@@ -4724,7 +4748,7 @@ public static class CSharpEmitter
         }
         // Generated expression helpers form real C# function boundaries.
         // Propagate suspension through each one that contains an await; a
-        // source lambda is its own (currently synchronous) boundary.
+        // source lambda is its own boundary, whether synchronous or async.
         bool ContainsAwait(object? node)
         {
             if (node is null or string || node is BoundLambda) return false;
@@ -5024,7 +5048,9 @@ public static class CSharpEmitter
                             output.Append(")\n        {\n");
                             for (var i = 0; i < lambda.Captures.Count; i++)
                                 output.Append("            __capture_").Append(i.ToString(CultureInfo.InvariantCulture)).Append(" = value").Append(i.ToString(CultureInfo.InvariantCulture)).Append(";\n");
-                            output.Append("        }\n        public ").Append(CType(lambda.ReturnType)).Append(" Invoke(");
+                            output.Append("        }\n        public ")
+                                .Append(lambda.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(lambda.ReturnType) + ">" : CType(lambda.ReturnType))
+                                .Append(" Invoke(");
                             for (var i = 0; i < lambda.Parameters.Count; i++)
                             {
                                 if (i != 0) output.Append(", ");
@@ -5039,6 +5065,7 @@ public static class CSharpEmitter
                             for (var i = 0; i < lambda.Parameters.Count; i++)
                                 localNames.Add(lambda.Parameters[i], "__dsharp_lambda_param_" + lambdaId + "_" + i.ToString(CultureInfo.InvariantCulture));
                             emitterReturnType = lambda.ReturnType;
+                            if (lambda.IsAsync) output.Append("            await global::System.Threading.Tasks.Task.CompletedTask;\n");
                             if (lambda.HasReturn) output.Append("            try\n            {\n");
                             EmitBlock(lambda.Body, lambda.ReturnType);
                             if (lambda.HasReturn)
@@ -5051,7 +5078,9 @@ public static class CSharpEmitter
                             closureDefinitions.Add(closureDefinition);
                             return "((" + CType(lambda.Type) + ")new " + closureName + genericArguments + "(" + string.Join(", ", captureValues) + ").Invoke)";
                         }
-                        output.Append("            static ").Append(CType(lambda.ReturnType)).Append(" ").Append(lambdaName).Append("(");
+                        output.Append("            static ")
+                            .Append(lambda.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(lambda.ReturnType) + ">" : CType(lambda.ReturnType))
+                            .Append(" ").Append(lambdaName).Append("(");
                         for (var i = 0; i < lambda.Parameters.Count; i++)
                         {
                             if (i != 0) output.Append(", ");
@@ -5064,6 +5093,7 @@ public static class CSharpEmitter
                         for (var i = 0; i < lambda.Parameters.Count; i++)
                             localNames.Add(lambda.Parameters[i], "__dsharp_lambda_param_" + lambdaId + "_" + i.ToString(CultureInfo.InvariantCulture));
                         emitterReturnType = lambda.ReturnType;
+                        if (lambda.IsAsync) output.Append("            await global::System.Threading.Tasks.Task.CompletedTask;\n");
                         if (lambda.HasReturn) output.Append("            try\n            {\n");
                         EmitBlock(lambda.Body, lambda.ReturnType);
                         if (lambda.HasReturn)

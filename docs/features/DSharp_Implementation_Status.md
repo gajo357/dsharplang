@@ -53,6 +53,7 @@ external interoperability guarantee follows from this lowering. See the
 | Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit | Source evaluates once, elements are visited in order, iteration captures are independent, and return/Result propagation leave the enclosing function or lambda |
 | Method-local mutable builders | `MutableList<T>()` and `MutableMap<K,V>()` with local aliases, Unit-valued `add`/`set`, and `freeze`; escape and lambda capture rejected | Frozen lists and structurally keyed maps remain unchanged by subsequent mutations; builders created inside a lambda belong to its invocation |
 | Async functions and await | Explicit `async fn` with logical return annotation; `Task<T>` calls and `await` in async functions | Tasks suspend and resume without blocking; nested expressions, early return, Result propagation and same-invocation builders preserve their behavior |
+| Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -212,18 +213,28 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
+expressions and blocks. Their explicit `async` marker permits `await` in the
+lambda itself, and the resulting function value returns a Task. Immutable
+captures, contextual and body result inference, lambda-local returns and Result
+propagation are checked. Builder captures remain rejected; builders created by
+the lambda may survive its own await. Ordinary `List.map` does not implicitly
+await callbacks, and task-valued lists remain unsupported by the existing
+immutable-data rule, so map-of-tasks execution is not yet available. See the
+[D# example](../../examples/async-lambdas.ds) and
+[plan](implementation/issue-42-plan.md).
 [Issue #41](https://github.com/gajo357/dsharplang/issues/41) adds explicitly
-annotated async functions, task-valued calls and `await`. Async return inference,
-async lambdas and task storage in immutable data remain separate work; awaits
-inside synchronous functions or lambdas are rejected. See the
+annotated async functions, task-valued calls and `await`. Async return inference
+for ordinary functions and task storage in immutable data remain separate work;
+awaits inside synchronous functions or lambdas are rejected. See the
 [D# example](../../examples/async-functions.ds) and
 [plan](implementation/issue-41-plan.md).
 [Issue #40](https://github.com/gajo357/dsharplang/issues/40) adds local mutable
 list and map builders. Only recognized operations and local aliases can use a
 builder; returns, ordinary calls, data storage and lambda capture are rejected.
 `freeze()` copies an independent immutable snapshot. Map keys follow the
-existing structural-key rules. Borrowing and async integration remain separate
-work. See the [D# example](../../examples/local-builders.ds) and
+existing structural-key rules. Builders may survive an await in their creating
+invocation; borrowing remains separate work. See the [D# example](../../examples/local-builders.ds) and
 [plan](implementation/issue-40-plan.md).
 [Issue #39](https://github.com/gajo357/dsharplang/issues/39) adds sequential
 `for/in` over immutable lists, including generic lists and nested loops. The
@@ -245,7 +256,8 @@ payload, or returns the same Error payload from the nearest enclosing function.
 The enclosing function must return a non-nullable Result with the identical error
 type; there is no automatic error conversion. Nullable, generic, Unit and Option
 success payloads retain their types. Nullable values and user-defined types named
-`Result` are not implicitly unwrapped. Lambda and async forms remain unsupported.
+`Result` are not implicitly unwrapped. Lambda and async forms are implemented
+in later slices described above.
 See [the example](../../examples/result-propagation.ds) and
 [implementation plan](implementation/issue-32-plan.md).
 [Issue #33](https://github.com/gajo357/dsharplang/issues/33) adds function
@@ -255,7 +267,7 @@ are checked, including generic and nullable function types. Explicit return and
 Result propagation leave the nearest lambda rather than its caller. Function
 values cannot be stored in records or union payloads, including through generic
 data constructors or helpers. Function-value equality is unsupported; nullable
-functions may be compared with `null`. Async lambdas remain separate work. See
+functions may be compared with `null`. Async lambdas are described above. See
 [the example](../../examples/capture-free-lambdas.ds) and
 [implementation plan](implementation/issue-33-plan.md).
 [Issue #34](https://github.com/gajo357/dsharplang/issues/34) adds capture of
