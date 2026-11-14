@@ -1,14 +1,12 @@
 # DEC-01 — Extended primitives and standard-value semantics
 
-**Status: proposed for review; not adopted.**
+**Status: adopted by the maintainer on 14 November 2026; implementation is separate.**
 **Issue:** [#11](https://github.com/gajo357/dsharplang/issues/11)
 **Baseline:** main `81f71f7`, compiler through Result propagation.
-**Scope:** a proposed value and collection contract, not an implementation.
+**Scope:** the adopted value and collection contract, not an implementation.
 
-The maintainer must explicitly adopt a reviewed version before dependent work
-implements these choices. Creating or merging this document and passing checks
-do not constitute adoption. All normative language in the sections marked
-**Proposed** below describes the proposal, not current D# behavior. Examples are
+The maintainer explicitly adopted this contract in conversation. The rules below
+describe the approved target, not necessarily current D# behavior. Examples are
 contract fixtures, not claims that today's compiler parses or executes them.
 
 ## Sources, settled boundaries and intended slices
@@ -38,13 +36,13 @@ compared, and local builders cannot escape. `T?` is idempotently nullable;
 different. No JSON, HTTP, durable serialization or foreign interop contract is
 settled here.
 
-The current compiler implements only the existing int/bool/string/char/Unit
-subset of these primitive types; aliases and native collections remain future
-work. In particular it checks a nonnegative int token before unary minus, so
+The current compiler implements the int/bool/string/char/Unit subset of these
+primitive types and the initial immutable List slice. Aliases, Map and Set remain
+future work. In particular it checks a nonnegative int token before unary minus, so
 `-2147483648` is currently rejected. Representability of that value and an
 eventual way to spell it are separate from claiming that spelling works today.
 
-## Proposed integer types, literals and arithmetic
+## Integer types, literals and arithmetic
 
 | Type | Bits | Inclusive value range |
 | --- | ---: | --- |
@@ -73,7 +71,7 @@ nevertheless a representable value, e.g. `(-2147483647 - 1)`. The same rule
 applies to other signed widths. A special minimum-literal exception, if desired,
 requires a separate explicit change and compatibility review. Numeric separators,
 nondecimal bases, contextual widths and other integer types are not implemented
-by this proposal.
+by this contract.
 
 Integer `+`, `-`, `*`, unary `-`, `/` and `%` require matching types and produce
 that type. They are checked; negating an unsigned nonzero value or signed
@@ -84,7 +82,7 @@ An otherwise well-typed constant expression that overflows faults when executed,
 not as an extra compile-time range rule. Comparison operands also need matching
 types; no implicit widening of variables or mixed-type arithmetic is introduced.
 
-| Fixture | Proposed result |
+| Fixture | Specified result |
 | --- | --- |
 | `let n: byte = 255` | Valid byte literal. |
 | `let n: byte = 256` | Diagnostic: magnitude does not fit byte. |
@@ -96,7 +94,7 @@ types; no implicit widening of variables or mixed-type arithmetic is introduced.
 | `-7 / 3`, `-7 % 3` | -2 and -1. |
 | minimum `int` / -1 or % -1 | Execution fault. |
 
-## Proposed floating point, decimal and numeric conversion
+## Floating point, decimal and numeric conversion
 
 `float32` denotes IEEE 754 binary32; `float` denotes binary64. A fractional
 literal without suffix is `float`; `f` selects `float32`, and `m` selects
@@ -143,7 +141,7 @@ using nearest, ties to even; it does not define monetary rounding or currency.
 Integer and decimal exceptional arithmetic is not changed by floating rules.
 
 Numeric values of different types do not implicitly convert, including
-binary-float/decimal mixtures. Proposed explicit conversions are typed operations
+binary-float/decimal mixtures. Explicit conversions are typed operations
 returning `Result<T, ValueError>`: integer-to-integer requires the destination
 range; decimal/float-to-integer truncates toward zero and checks the destination
 range; NaN and infinity fail integer/decimal conversion. Integer-to-float and
@@ -159,7 +157,7 @@ the exact input is outside the destination's finite range, conversion fails
 before rounding. These are D# rules and
 may require more than a direct CLR cast. No
 unchecked cast, implicit precision loss or default value replaces a failure.
-`ValueError` is a proposed typed error with `InvalidFormat`, `OutOfRange`, and
+`ValueError` is a specified typed error with `InvalidFormat`, `OutOfRange`, and
 `NonFinite` cases; operations select the applicable case and never return an
 untyped error string. Exact conversion entry-point names beyond the examples
 below are a later library API slice.
@@ -197,7 +195,7 @@ grammars are distinct from source literals. Syntax failures return
 `Error(ValueError.OutOfRange)`. These are value-format rules, not a wire format
 or JSON non-finite-number policy.
 
-| Fixture | Proposed result |
+| Fixture | Specified result |
 | --- | --- |
 | `1.5f`, `1.5`, `1.5m` | `float32`, `float`, `decimal`, respectively. |
 | `1.0m == 1.00m` | `true`. |
@@ -207,7 +205,7 @@ or JSON non-finite-number policy.
 | parse float `"1,5"` or `" 1.5"` | `Error(InvalidFormat)` regardless of culture. |
 | explicit conversion of NaN to `int` | `Error(NonFinite)`. |
 
-## Proposed standard values and minimum APIs
+## Standard values and minimum APIs
 
 Each type below is immutable, compares by its specified value, and exposes
 explicit `parse(text): Result<T, ValueError>` and `format(): string` operations
@@ -234,7 +232,7 @@ become an immutable value. Invalid numeric components or out-of-range ticks in
 `fromParts`/`fromTicks` return `Error(ValueError.OutOfRange)`; they do not fault
 or silently normalize. Every `long` tick count constructs a Duration.
 
-| Fixture | Proposed result |
+| Fixture | Specified result |
 | --- | --- |
 | parse uuid `"550E8400-E29B-41D4-A716-446655440000"` | Success; format is lowercase. |
 | parse uuid with braces or missing hex digits | `Error(InvalidFormat)`. |
@@ -245,7 +243,7 @@ or silently normalize. Every `long` tick count constructs a Duration.
 | `Bytes` containing 0 and 255 | Formats `"00ff"`; parsing `"0ff"` fails. |
 | `Duration` -1 tick | Formats `"-1tick"`; negating minimum ticks faults. |
 
-## Proposed immutable collections
+## Immutable collections
 
 `List<T>`, `Map<K,V>` and `Set<T>` are immutable values. Each constructor and
 update returns an independent value; sharing internal immutable nodes is allowed
@@ -254,7 +252,7 @@ nullable and Option values; builders, resources, closures and arbitrary mutable
 foreign objects cannot be smuggled inside. Collection equality recursively uses
 D# value equality, never reference identity.
 
-The proposed first slices expose:
+The first slices expose:
 
 | Type | Construction and core operations |
 | --- | --- |
@@ -268,9 +266,8 @@ The proposed first slices expose:
 effects and errors follow the adopted function/Result rules. Empty literals need
 an expected element type. A list index outside `0 <= index < length` yields
 `None`, including negative indexes. A map missing a key yields `None`; a present
-key yields `Some(value)`, even when that value is null. The `T?`/`V?` lookup
-examples in syntax reference §8 are provisional and would be superseded by
-this proposal on adoption: idempotent nullability cannot distinguish an absent
+key yields `Some(value)`, even when that value is null. This contract supersedes
+the earlier `T?`/`V?` lookup examples: idempotent nullability cannot distinguish an absent
 entry from a present null. There is no implicit Option-to-nullable conversion.
 
 `Map.set` inserts a missing key or replaces its value for an equal key, retaining
@@ -289,7 +286,7 @@ recognized local operations may mutate them. Mutation returns Unit and
 `freeze()` creates an independent snapshot; later builder mutation cannot
 change that snapshot. Borrowing and ownership transfer remain separate work.
 
-### Proposed keys, equality and deterministic display
+### Keys, equality and deterministic display
 
 Initially eligible keys are bool, integer types, decimal, char, string, Unit,
 uuid, Instant, LocalDate, LocalTime, Duration and Bytes; nullable and Option of
@@ -335,7 +332,7 @@ ordering of ineligible types is supplied. Collection iteration order itself is
 not promised here; [#39](https://github.com/gajo357/dsharplang/issues/39) must
 specify its contract independently. List transformations above remain ordered.
 
-| Fixture | Proposed result |
+| Fixture | Specified result |
 | --- | --- |
 | `[null].get(0)` for `List<int?>` | `Some(null)`; `.get(-1)` and `.get(1)` are `None`. |
 | `Map.empty<string,string?>().set("x", null).get("x")` | `Some(null)`; lookup of `"missing"` is `None`. |
@@ -350,8 +347,7 @@ specify its contract independently. List transformations above remain ordered.
 Review especially the integer-minimum spelling, IEEE NaN/key exclusion,
 decimal conversion and rounding, tick/format ranges, error case names, Option
 lookup replacing the older illustrative `T?` API, key eligibility and display
-order. These are concrete proposals for the maintainer to accept or change, not
-decisions made by this PR. A later implementation issue must map each accepted
+order. The maintainer adopted these rules; implementation work must map each
 rule to generated execution/diagnostic tests, preserve existing supported int and
 nullable/Option behavior, and identify any approved revision. Serialization,
 interop, calendar/timezone scheduling, collections iteration and broader APIs
