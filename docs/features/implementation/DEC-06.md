@@ -21,9 +21,9 @@ reviewed version before dependent implementation proceeds. D# adapter names and
 code below are illustrative, not existing syntax or compiler support. The exact
 package declaration, adapter registration and generated C# API remain to be
 reviewed; this document specifies the first supported behaviors, not a package
-manifest grammar. [DEC-01](DEC-01.md), [DEC-03](DEC-03.md),
-[DEC-04](DEC-04.md), and [DEC-05](DEC-05.md) remain separately gated proposals;
-this document does not adopt or depend on their provisional representations.
+manifest grammar. [DEC-01](DEC-01.md) was subsequently adopted; [DEC-03](DEC-03.md),
+[DEC-04](DEC-04.md), and [DEC-05](DEC-05.md) remain separately gated proposals.
+This document does not adopt or depend on their provisional representations.
 
 The settled requirements are that D# data is immutable, local builders do not
 cross foreign calls, and agents retain their isolation and message restrictions.
@@ -78,7 +78,7 @@ separately designed isolation boundary for untrusted code.
 Eligible primitive values are the currently supported D# scalar types with an
 explicit exact CLR mapping, `Unit`, and recursively mapped immutable D# records,
 unions and tuples when an adapter provides a complete representation. No
-provisional DEC-01 type is enabled by this proposal. A checked conversion must
+additional DEC-01 type is implemented by this proposal. A checked conversion must
 reject overflow or unsupported values, not truncate or fall back to `object`.
 Declared non-null references are checked on both sides: an unexpected foreign
 null is a boundary failure, not `default(T)`, `None`, or success. A foreign null

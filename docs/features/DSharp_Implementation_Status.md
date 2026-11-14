@@ -48,6 +48,7 @@ external interoperability guarantee follows from this lowering. See the
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
+| Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -177,11 +178,11 @@ data. These extra arguments are an implementation detail and external C# callers
 must not assume the compiler enforces a relationship between arbitrary CLR type
 arguments. Generic type parameters have distinct lexical identities even when
 their source names overlap other types. Generic constraints, variance, type
-aliases and native collections remain unsupported; alias and collection tests
-remain pending. Issue #30 stays open for its complete acceptance criteria. See
+aliases, maps and sets remain unsupported. Issue #30 stays open for its complete
+acceptance criteria, including alias normalization if aliases are added. See
 [the example](../../examples/generics.ds) and
 [implementation plan](implementation/issue-30-plan.md).
-[Issue #121](https://github.com/gajo357/dsharplang/issues/121) tracks standard
+[Issue #121](https://github.com/gajo357/dsharplang/issues/121) implemented standard
 `Option<T>`, a distinct tagged choice with `None` and `Some(T)`. `Some(null)`
 requires a nullable payload type; nested options retain each case. JSON and
 HTTP mappings remain undecided. The nullable and Option changes are documented
@@ -189,6 +190,13 @@ in the [implementation plan](implementation/nullable-option-plan.md). The
 [record example](../../examples/option_records.ds) exercises optional update
 fields, nested options and generic records with nullable payloads. Its cases
 are also covered by generated-code execution and diagnostic tests.
+
+[Issue #37](https://github.com/gajo357/dsharplang/issues/37) adds immutable
+`List<T>` values with contextual empty literals, ordered operations and structural
+equality. `get` returns `Option<T>`, distinguishing an absent index from a
+stored null. The [D# example](../../examples/list.ds) and
+[implementation plan](implementation/issue-37-plan.md) show the supported
+operations and test coverage. Map, Set, builders and serialization are separate.
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;

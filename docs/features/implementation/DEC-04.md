@@ -236,8 +236,8 @@ cancellation resolves it. Manual retry preserves its original position while it
 blocks; after an explicit skip/abandonment later work may have advanced, and a
 future replay cannot retroactively restore external-effect ordering. Mere FIFO
 dispatch without completion fencing is not sufficient. Partition keys are stable immutable data derived once at admission
-under an explicitly approved key/equality contract; DEC-01 remains unadopted,
-so exact key types and encoding stay a gate, not an implicit decision here.
+under an explicitly approved key/equality contract. DEC-01 has since been
+adopted; durable key encoding remains a separate gate, not a decision here.
 
 This ordering guarantees a single **valid store owner** and ordered durable
 transitions, not physical non-overlap after lease expiry. A noncooperative old

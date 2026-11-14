@@ -401,13 +401,13 @@ Type arguments may be inferred when unambiguous. Generic constraints, variance a
 let numbers = [1, 2, 3]
 let empty: List<int> = []
 let extended = numbers.append(4)
-let first: int? = numbers.get(0)
+let first: Option<int> = numbers.get(0)
 
 let pair = ("invoice", 42)
 let (kind, count) = pair
 ```
 
-List literals infer `List<T>`. Empty collections need an expected element type. `append` returns a new list; `get` returns an optional value for a possibly missing index.
+List literals infer `List<T>`. Empty collections need an expected element type. `append` returns a new list; `get` returns `Option<T>` so an absent index is distinct from a stored null.
 
 Use ordinary library factories for maps and sets initially:
 
@@ -416,10 +416,10 @@ let counts = Map.empty<string, int>()
     .set("open", 3)
     .set("paid", 8)
 let statuses = Set.from(["open", "paid"])
-let openCount: int? = counts.get("open")
+let openCount: Option<int> = counts.get("open")
 ```
 
-`Map.empty` constructs an empty map, and `set` returns a new map with the key inserted or its previous value replaced. `Set.from` collapses duplicate values. A leading member-access dot continues the preceding expression across a newline. These API names are provisional; key equality/hash constraints must be specified before implementation.
+`Map.empty` constructs an empty map, and `set` returns a new map with the key inserted or its previous value replaced. `Set.from` collapses duplicate values. A leading member-access dot continues the preceding expression across a newline. The adopted [DEC-01](implementation/DEC-01.md) specifies the collection APIs and key eligibility; implementation remains separately scoped.
 
 Tuples are immutable product values. Prefer named records for public messages and durable contracts. Native immutable collections can cross agent boundaries; resource handles and arbitrary mutable foreign collections cannot.
 

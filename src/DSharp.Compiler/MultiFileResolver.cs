@@ -264,6 +264,7 @@ internal static class MultiFileResolver
                         return new RecordConstructionSyntax(Rename(record.Name, qualifiedRecord!.Internal), record.Fields.Select(f => f with { Value = Expression(f.Value, scope, typeParameters) }).ToArray());
                     case GroupSyntax group: return group with { Inner = Expression(group.Inner, scope, typeParameters) };
                     case TupleSyntax tuple: return tuple with { Elements = tuple.Elements.Select(a => Expression(a, scope, typeParameters)).ToArray() };
+                    case ListSyntax list: return list with { Elements = list.Elements.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case InvokeSyntax invocation: return invocation with { Receiver = Expression(invocation.Receiver, scope, typeParameters), Arguments = invocation.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case UnarySyntax unary: return unary with { Operand = Expression(unary.Operand, scope, typeParameters) };
                     case BinarySyntax binary: return binary with { Left = Expression(binary.Left, scope, typeParameters), Right = Expression(binary.Right, scope, typeParameters) };
