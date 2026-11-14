@@ -107,6 +107,8 @@ public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string T
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundBuilderFactory(string Type, string CollectionType) : BoundExpression;
+public sealed record BoundBuilderOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
@@ -233,6 +235,8 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public string? OptionSymbol { get; init; }
     public string? MapSymbol { get; init; }
     public string? SetSymbol { get; init; }
+    public string? MutableListSymbol { get; init; }
+    public string? MutableMapSymbol { get; init; }
 }
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
@@ -1059,11 +1063,15 @@ public static class Binder
         var listSymbol = "$" + (userTypeSymbolCount + 2).ToString(CultureInfo.InvariantCulture);
         var mapSymbol = "$" + (userTypeSymbolCount + 3).ToString(CultureInfo.InvariantCulture);
         var setSymbol = "$" + (userTypeSymbolCount + 4).ToString(CultureInfo.InvariantCulture);
+        var mutableListSymbol = "$" + (userTypeSymbolCount + 5).ToString(CultureInfo.InvariantCulture);
+        var mutableMapSymbol = "$" + (userTypeSymbolCount + 6).ToString(CultureInfo.InvariantCulture);
         var resultUsed = false;
         var optionUsed = false;
         var listUsed = false;
         var mapUsed = false;
         var setUsed = false;
+        var mutableListUsed = false;
+        var mutableMapUsed = false;
         var userResultType = syntax.Records.Any(record => record.Name.Text == "Result") ||
             syntax.Unions.Any(union => union.Name.Text == "Result");
         var userOptionType = syntax.Records.Any(record => record.Name.Text == "Option") ||
@@ -1074,6 +1082,10 @@ public static class Binder
             syntax.Unions.Any(union => union.Name.Text == "Map");
         var userSetType = syntax.Records.Any(record => record.Name.Text == "Set") ||
             syntax.Unions.Any(union => union.Name.Text == "Set");
+        var userMutableListType = syntax.Records.Any(record => record.Name.Text == "MutableList") ||
+            syntax.Unions.Any(union => union.Name.Text == "MutableList");
+        var userMutableMapType = syntax.Records.Any(record => record.Name.Text == "MutableMap") ||
+            syntax.Unions.Any(union => union.Name.Text == "MutableMap");
         var typeSymbolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionTypeScopes = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         Dictionary<string, string> TypeScope(IReadOnlyList<Token> parameters)
@@ -1100,6 +1112,8 @@ public static class Binder
                 else if (name == "List" && !userListType) { name = listSymbol; listUsed = true; }
                 else if (name == "Map" && !userMapType) { name = mapSymbol; mapUsed = true; }
                 else if (name == "Set" && !userSetType) { name = setSymbol; setUsed = true; }
+                else if (name == "MutableList" && !userMutableListType) name = mutableListSymbol;
+                else if (name == "MutableMap" && !userMutableMapType) name = mutableMapSymbol;
                 return value with { Name = name, Arguments = value.Arguments.Select(Rebind).ToArray() };
             }
             return token with { Text = Rebind(shape).ToString() };
@@ -1137,7 +1151,7 @@ public static class Binder
                 ReturnType = ScopedType(function.ReturnType, scope)
             };
         }).ToArray();
-        nextTypeSymbol += 5; // Reserve the intrinsic nominal identities after source symbols.
+        nextTypeSymbol += 7; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
         var resultScope = TypeScope(resultTypeTokens);
@@ -1160,7 +1174,7 @@ public static class Binder
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -1245,7 +1259,9 @@ public static class Binder
             }
             return ExecutionTypesOnly(shape);
         }
-        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction;
+        bool IsBuilder(TypeShape shape) => shape.Name == mutableListSymbol || shape.Name == mutableMapSymbol;
+        bool ContainsBuilder(TypeShape shape) => IsBuilder(shape) || shape.Arguments.Any(ContainsBuilder);
+        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape);
         foreach (var record in syntax.Records)
         {
             var typeParameters = Parameters(record.TypeParameters);
@@ -1495,6 +1511,9 @@ public static class Binder
                         if (names.Contains(call.Name.Text)) indirect = true;
                         else if (cases.ContainsKey(DependencyName(call.Name.Text, names))) { /* A union case is not a function dependency. */ }
                         else if (signatures.ContainsKey(DependencyName(call.Name.Text, names))) calls.Add(DependencyName(call.Name.Text, names));
+                        else if ((call.Name.Text == "MutableList" && !userMutableListType || call.Name.Text == "MutableMap" && !userMutableMapType) &&
+                            !functionTypeScopes[source.Name.Text].ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text) && !unions.ContainsKey(call.Name.Text))
+                        { /* A checked builder constructor has no function dependency. */ }
                         else indirect = true;
                         break;
                     case MemberCallSyntax member:
@@ -1504,7 +1523,7 @@ public static class Binder
                         if (qualifier is null || names.Contains(qualifier.Value.Text) || unionName is null || !unions.ContainsKey(unionName))
                         {
                             if (member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
-                                "empty" or "from" or "count" or "contains" or "set" or "add")) indirect = true;
+                                "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze")) indirect = true;
                             if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0)
                             {
                                 var callback = member.Arguments[^1];
@@ -2254,6 +2273,8 @@ public static class Binder
                 BoundListOperation list => list.Type,
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
+                BoundBuilderFactory builder => builder.Type,
+                BoundBuilderOperation builder => builder.Type,
                 BoundLambda lambda => lambda.Type,
                 BoundFunctionReference reference => reference.Type,
                 BoundPartial partial => partial.Type,
@@ -3093,6 +3114,8 @@ public static class Binder
                         }
                         if (!locals.TryGetValue(token.Text, out local))
                             Fail("DS2007", token, "Unknown local; bindings are visible only after their initializer and within their function.");
+                        if (GenericTypes.TryParse(local.Type, out var localShape) && IsBuilder(localShape))
+                            Fail("DS2026", token, "A mutable builder can only be used as a local alias or as the receiver of a builder operation.");
                         return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
                         if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(call.Name.Text) && !inaccessibleCaptures.Contains(call.Name.Text) &&
@@ -3152,6 +3175,39 @@ public static class Binder
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
                     {
+                        var builderReceiverSyntax = member.Receiver;
+                        while (builderReceiverSyntax is GroupSyntax builderGroup) builderReceiverSyntax = builderGroup.Inner;
+                        if (builderReceiverSyntax is ValueSyntax builderReceiver &&
+                            locals.TryGetValue(builderReceiver.Value.Text, out var builderLocal) &&
+                            GenericTypes.TryParse(builderLocal.Type, out var builderShape) && IsBuilder(builderShape))
+                        {
+                            var isListBuilder = builderShape.Name == mutableListSymbol;
+                            var operation = member.Member.Text;
+                            var arity = operation == "freeze" ? 0 : operation == (isListBuilder ? "add" : "set") ? (isListBuilder ? 1 : 2) : -1;
+                            if (arity < 0) Fail("DS2018", member.Member, "Unknown mutable builder operation.");
+                            if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Builder operations do not accept type arguments.");
+                            if (member.Arguments.Count != arity) Fail("DS2012", member.Member, "Incorrect number of builder operation arguments.");
+                            var arguments = new List<BoundExpression>();
+                            var savedReachable = inferenceReachable;
+                            var never = false;
+                            try
+                            {
+                                for (var i = 0; i < arity; i++)
+                                {
+                                    inferenceReachable = savedReachable && !never;
+                                    var formal = builderShape.Arguments[i].ToString();
+                                    var value = BindExpression(member.Arguments[i], formal);
+                                    Require(member.Arguments[i], value.Type, formal);
+                                    arguments.Add(Coerce(value.Expression, formal, value.Type));
+                                    never |= value.Type == "<never>";
+                                }
+                            }
+                            finally { inferenceReachable = savedReachable; }
+                            var immutableType = (isListBuilder ? listSymbol : mapSymbol) + "<" + string.Join(",", builderShape.Arguments) + ">";
+                            var builderResultType = operation == "freeze" ? immutableType : "Unit";
+                            return (new BoundBuilderOperation(new BoundReference(builderReceiver.Value.Text), builderLocal.Type, operation, arguments, builderResultType),
+                                never ? "<never>" : builderResultType);
+                        }
                         if (member.Receiver is ValueSyntax capturedMemberQualifier && !locals.ContainsKey(capturedMemberQualifier.Value.Text) && inaccessibleCaptures.Contains(capturedMemberQualifier.Value.Text))
                             Fail("DS2026", capturedMemberQualifier.Value, "Lambda capture is not supported.");
                         // Intrinsic factories are available only when the
@@ -3468,9 +3524,44 @@ public static class Binder
                                 var binding = declaration.Binding;
                                 if (locals.ContainsKey(binding.Name.Text) || inaccessibleCaptures.Contains(binding.Name.Text)) Fail("DS2006", binding.Name, "Duplicate or shadowed local binding.");
                                 var annotation = binding.Annotation is null ? null : ScopedType(binding.Annotation, functionTypeScope);
-                                if (annotation is not null && !SupportedType(annotation.Text, activeTypeParameters)) Fail("DS2008", annotation, "Unsupported local annotation.");
+                                bool ValidBuilderType(string type)
+                                {
+                                    if (!GenericTypes.TryParse(type, out var shape) || !IsBuilder(shape) || shape.IsNullable ||
+                                        shape.Arguments.Count != (shape.Name == mutableListSymbol ? 1 : 2)) return false;
+                                    var immutable = (shape.Name == mutableListSymbol ? listSymbol : mapSymbol) + "<" + string.Join(",", shape.Arguments) + ">";
+                                    return SupportedType(immutable, activeTypeParameters) && DataType(immutable);
+                                }
+                                if (annotation is not null && !SupportedType(annotation.Text, activeTypeParameters) && !ValidBuilderType(annotation.Text))
+                                    Fail("DS2008", annotation, "Unsupported local annotation.");
                                 var initSyntax = binding.Expression ?? new ValueSyntax(binding.Initializer);
-                                var init = BindExpression(initSyntax, annotation?.Text);
+                                ExpressionSyntax builderInitSyntax = initSyntax;
+                                while (builderInitSyntax is GroupSyntax builderGroup) builderInitSyntax = builderGroup.Inner;
+                                (BoundExpression Expression, string Type) init;
+                                if (builderInitSyntax is ValueSyntax alias && locals.TryGetValue(alias.Value.Text, out var aliasLocal) &&
+                                    GenericTypes.TryParse(aliasLocal.Type, out var aliasShape) && IsBuilder(aliasShape))
+                                    init = (new BoundReference(alias.Value.Text), aliasLocal.Type);
+                                else if (builderInitSyntax is CallSyntax builderCall &&
+                                    !locals.ContainsKey(builderCall.Name.Text) && !inaccessibleCaptures.Contains(builderCall.Name.Text) &&
+                                    !functionTypeScope.ContainsKey(builderCall.Name.Text) && !signatures.ContainsKey(builderCall.Name.Text) &&
+                                    !cases.ContainsKey(builderCall.Name.Text) && !records.ContainsKey(builderCall.Name.Text) && !unions.ContainsKey(builderCall.Name.Text) &&
+                                    (builderCall.Name.Text == "MutableList" && !userMutableListType || builderCall.Name.Text == "MutableMap" && !userMutableMapType))
+                                {
+                                    var isListBuilder = builderCall.Name.Text == "MutableList";
+                                    var count = isListBuilder ? 1 : 2;
+                                    if (builderCall.Arguments.Count != 0) Fail("DS2012", builderCall.Name, "Builder constructors take no value arguments.");
+                                    var typeArguments = builderCall.TypeArguments.Select(type => ScopedType(type, functionTypeScope).Text).ToArray();
+                                    if (typeArguments.Length == 0 && annotation is not null && GenericTypes.TryParse(annotation.Text, out var expectedBuilder) &&
+                                        expectedBuilder.Name == (isListBuilder ? mutableListSymbol : mutableMapSymbol))
+                                        typeArguments = expectedBuilder.Arguments.Select(type => type.ToString()).ToArray();
+                                    if (typeArguments.Length != count) Fail("DS2023", builderCall.Name, "Cannot infer builder type arguments.");
+                                    var builderType = (isListBuilder ? mutableListSymbol : mutableMapSymbol) + "<" + string.Join(",", typeArguments) + ">";
+                                    if (!ValidBuilderType(builderType)) Fail("DS2026", builderCall.Name, "Builders require supported immutable data and eligible map keys.");
+                                    var immutableType = (isListBuilder ? listSymbol : mapSymbol) + "<" + string.Join(",", typeArguments) + ">";
+                                    if (isListBuilder) { mutableListUsed = true; listUsed = true; }
+                                    else { mutableMapUsed = true; mapUsed = true; }
+                                    init = (new BoundBuilderFactory(builderType, immutableType), builderType);
+                                }
+                                else init = BindExpression(initSyntax, annotation?.Text);
                                 if (annotation is null && init.Type == "<null>")
                                     Fail("DS2002", initSyntax.Token, "Cannot infer the contained type of null.");
                                 // A record expression retains its nominal type even when an
@@ -4003,6 +4094,8 @@ public static class Binder
             OptionSymbol = optionUsed ? optionSymbol : null,
             MapSymbol = mapUsed ? mapSymbol : null,
             SetSymbol = setUsed ? setSymbol : null,
+            MutableListSymbol = mutableListUsed ? mutableListSymbol : null,
+            MutableMapSymbol = mutableMapUsed ? mutableMapSymbol : null,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
@@ -4058,6 +4151,8 @@ public static class CSharpEmitter
         var listTypeName = module.ListSymbol is null ? null : UniqueGlobal("__DSharp_List");
         var mapTypeName = module.MapSymbol is null ? null : UniqueGlobal("__DSharp_Map");
         var setTypeName = module.SetSymbol is null ? null : UniqueGlobal("__DSharp_Set");
+        var mutableListTypeName = module.MutableListSymbol is null ? null : UniqueGlobal("__DSharp_MutableList");
+        var mutableMapTypeName = module.MutableMapSymbol is null ? null : UniqueGlobal("__DSharp_MutableMap");
         var hasKeyedCollections = mapTypeName is not null || setTypeName is not null;
         var hashInterface = hasKeyedCollections ? UniqueGlobal("__DSharp_Hashable") : null;
         var container = "__DSharp_Functions";
@@ -4179,6 +4274,7 @@ public static class CSharpEmitter
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
                     current.Name == "Unit" ? unitType : current.Name == module.ListSymbol ? listTypeName! :
                     current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
+                    current.Name == module.MutableListSymbol ? mutableListTypeName! : current.Name == module.MutableMapSymbol ? mutableMapTypeName! :
                     recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
                 if (current.Arguments.Count > 0)
                 {
@@ -4281,6 +4377,8 @@ public static class CSharpEmitter
                 .Append("    private ").Append(mapTypeName).Append("(__DSharp_Key[] keys, __DSharp_Value[] values, int[] hashes) { __keys = keys; __values = values; __hashes = hashes; }\n")
                 .Append("    internal static ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> __dsharp_empty() => new ").Append(mapTypeName)
                 .Append("<__DSharp_Key, __DSharp_Value>(global::System.Array.Empty<__DSharp_Key>(), global::System.Array.Empty<__DSharp_Value>(), global::System.Array.Empty<int>());\n")
+                .Append("    internal static ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> __dsharp_create(__DSharp_Key[] keys, __DSharp_Value[] values, int[] hashes) => new ").Append(mapTypeName)
+                .Append("<__DSharp_Key, __DSharp_Value>((__DSharp_Key[])keys.Clone(), (__DSharp_Value[])values.Clone(), (int[])hashes.Clone());\n")
                 .Append("    private int __dsharp_find(__DSharp_Key key, int hash)\n    {\n")
                 .Append("        for (int i = 0; i < __keys.Length; i++) if (__hashes[i] == hash && ").Append(container).Append(".")
                 .Append(equalityDispatcher).Append("<__DSharp_Key>(__keys[i], key)) return i;\n        return -1;\n    }\n")
@@ -4342,6 +4440,36 @@ public static class CSharpEmitter
                 .Append("        if (other is not ").Append(setTypeName).Append("<__DSharp_Item> value || __items.Length != value.__items.Length) return false;\n")
                 .Append("        for (int i = 0; i < __items.Length; i++) if (value.__dsharp_find(__items[i], __hashes[i]) < 0) return false;\n")
                 .Append("        return true;\n    }\n}\n\n");
+        }
+        if (mutableListTypeName is not null)
+        {
+            if (listTypeName is null) throw new InvalidOperationException("MutableList requires the immutable List runtime.");
+            output.Append("internal sealed class ").Append(mutableListTypeName).Append("<__DSharp_Item>\n{\n")
+                .Append("    private readonly global::System.Collections.Generic.List<__DSharp_Item> __items = new();\n")
+                .Append("    internal ").Append(unitType).Append(" __dsharp_add(__DSharp_Item value) { __items.Add(value); return default; }\n")
+                .Append("    internal ").Append(listTypeName).Append("<__DSharp_Item> __dsharp_freeze() => ")
+                .Append(listTypeName).Append("<__DSharp_Item>.__dsharp_create(__items.ToArray());\n}\n\n");
+        }
+        if (mutableMapTypeName is not null)
+        {
+            if (mapTypeName is null) throw new InvalidOperationException("MutableMap requires the immutable Map runtime.");
+            // The dictionary indexes integer hash buckets only; actual key
+            // identity remains D# structural equality, including collisions.
+            // Each freeze obtains fresh arrays before the immutable map owns them.
+            output.Append("internal sealed class ").Append(mutableMapTypeName).Append("<__DSharp_Key, __DSharp_Value>\n{\n")
+                .Append("    private readonly global::System.Collections.Generic.List<__DSharp_Key> __keys = new();\n")
+                .Append("    private readonly global::System.Collections.Generic.List<__DSharp_Value> __values = new();\n")
+                .Append("    private readonly global::System.Collections.Generic.List<int> __hashes = new();\n")
+                .Append("    private readonly global::System.Collections.Generic.Dictionary<int, global::System.Collections.Generic.List<int>> __buckets = new();\n")
+                .Append("    internal ").Append(unitType).Append(" __dsharp_set(__DSharp_Key key, __DSharp_Value value)\n    {\n")
+                .Append("        int hash = ").Append(container).Append(".").Append(hashDispatcher).Append("<__DSharp_Key>(key);\n")
+                .Append("        if (!__buckets.TryGetValue(hash, out var bucket)) { bucket = new(); __buckets.Add(hash, bucket); }\n")
+                .Append("        foreach (int index in bucket) if (").Append(container).Append(".").Append(equalityDispatcher)
+                .Append("<__DSharp_Key>(__keys[index], key)) { __values[index] = value; return default; }\n")
+                .Append("        bucket.Add(__keys.Count); __keys.Add(key); __values.Add(value); __hashes.Add(hash);\n")
+                .Append("        return default;\n    }\n")
+                .Append("    internal ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> __dsharp_freeze() => ")
+                .Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value>.__dsharp_create(__keys.ToArray(), __values.ToArray(), __hashes.ToArray());\n}\n\n");
         }
         foreach (var record in module.Records)
         {
@@ -4689,6 +4817,14 @@ public static class CSharpEmitter
                         output.Append("            return ").Append(CType(list.Type)).Append(".__dsharp_create(new ")
                             .Append(CType(literalElementType)).Append("[] { ").Append(string.Join(", ", elementNames)).Append(" });\n            }\n");
                         return literalHelper + "()";
+                    case BoundBuilderFactory builder:
+                        return "new " + CType(builder.Type) + "()";
+                    case BoundBuilderOperation builder:
+                        // The checked receiver is a same-invocation local. C# evaluates
+                        // receiver and arguments in source order, once each.
+                        var builderReceiver = EmitExpression(builder.Receiver);
+                        var builderArguments = builder.Arguments.Select(EmitExpression).ToArray();
+                        return "(" + builderReceiver + ").__dsharp_" + builder.Operation + "(" + string.Join(", ", builderArguments) + ")";
                     case BoundListOperation listOperation:
                         if (!GenericTypes.TryParse(listOperation.ReceiverType, out var receiverShape) || receiverShape.Arguments.Count != 1)
                             throw new InvalidOperationException("Invalid bound list operation receiver type.");
