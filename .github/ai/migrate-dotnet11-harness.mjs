@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const baseRevision = 'f22efb53fdedbb17339d798d61c9d25577497cd8';
+const baseRevision = '5e0c1d366a9f434501ec3c5dbe32cbe65def90b3';
 const files = [
   ['global.json', '0aa4b85ae248d59bbc4138f346d952b7fae4fe18cc701d921fa1c003211be777'],
   ['Directory.Build.props', '963d69bfb6737ee529c923fc39777f511da043c83ebd1ba3c507227269aecebb'],
