@@ -1,0 +1,24 @@
+module Demo
+
+interface Price {
+    calculate(value: int): int
+
+    // This body dispatches calculate to the explicitly selected service.
+    withFee(value: int): int { calculate(value) + 2 }
+}
+
+service Fixed(amount: int): Price {
+    calculate(value) { amount }
+}
+
+service Discounted(amount: int): Price {
+    calculate(value) { amount }
+    // A service can replace a default without an override keyword.
+    withFee(value) { amount - 2 }
+}
+
+fn answer(): int {
+    let standard: Price = Fixed(20)
+    let special: Price = Discounted(22)
+    standard.withFee(0) + special.withFee(0)
+}

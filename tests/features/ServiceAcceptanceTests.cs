@@ -286,11 +286,10 @@ public sealed class ServiceAcceptanceTests
             Assert.All(result.Diagnostics, diagnostic => Assert.Equal("service-invalid.ds", diagnostic.Path));
             Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("DS1", StringComparison.Ordinal));
         }
-        // Default interface bodies have their own later issue and must not be
-        // silently accepted, whether rejected during parsing or binding.
+        // Issue #44 enables interface method defaults.
         var defaultBody = DSharpCompiler.Compile("module Demo\ninterface A { get(): int { 42 } }", "service-invalid.ds");
-        Assert.Null(defaultBody.CSharp);
-        Assert.NotEmpty(defaultBody.Diagnostics);
+        Assert.NotNull(defaultBody.CSharp);
+        Assert.Empty(defaultBody.Diagnostics);
         var unattachedDocumentation = DSharpCompiler.Compile("module Demo\ninterface A {\n /// orphan\n }", "service-invalid.ds");
         Assert.Null(unattachedDocumentation.CSharp);
         Assert.NotEmpty(unattachedDocumentation.Diagnostics);

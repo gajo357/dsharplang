@@ -86,6 +86,7 @@ public sealed record ParameterSyntax(Token Name, Token Type);
 public sealed record InterfaceMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+    public BlockSyntax? Body { get; init; }
 }
 public sealed record InterfaceDeclarationSyntax(Token Name, IReadOnlyList<InterfaceMethodSyntax> Methods)
 {
@@ -263,7 +264,10 @@ public sealed record BoundFunction(string Name, int Value)
 }
 public sealed record BoundInterfaceMethod(string Name, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync);
 public sealed record BoundInterfaceDeclaration(string Name, IReadOnlyList<BoundInterfaceMethod> Methods);
-public sealed record BoundServiceMethod(string Name, string FunctionName, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync);
+public sealed record BoundServiceMethod(string Name, string FunctionName, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync)
+{
+    public string? DefaultInterface { get; init; }
+}
 public sealed record BoundServiceDeclaration(string Name, IReadOnlyList<string> DependencyTypes, IReadOnlyList<string> Interfaces, IReadOnlyList<BoundServiceMethod> Methods);
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
@@ -1052,10 +1056,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     var methodParameters = TypedParameters();
                     Expect(":");
                     var returnType = TypeToken();
-                    if (Current.Text == "{")
-                        throw new SourceError(new("DS1002", path, Current.Span, "Interface default method bodies are not supported in this slice."));
-                    methods.Add(new(methodName, methodParameters, returnType, isAsyncMethod) { DocumentationComments = methodDocs });
-                    if (Current.Text != "}" && Current.Span.Line == returnType.Span.Line)
+                    var methodBody = Current.Text == "{" ? Block() : null;
+                    methods.Add(new(methodName, methodParameters, returnType, isAsyncMethod) { DocumentationComments = methodDocs, Body = methodBody });
+                    if (methodBody is null && Current.Text != "}" && Current.Span.Line == returnType.Span.Line)
                         throw Error("Expected a newline after an interface method signature.");
                 }
                 Expect("}");
@@ -1519,11 +1522,42 @@ public static class Binder
         }
         CollectOccupied(syntax);
         var syntheticNumber = 0;
+        string FreshSynthetic(string prefix)
+        {
+            string name;
+            do name = prefix + (syntheticNumber++).ToString(CultureInfo.InvariantCulture);
+            while (!occupiedNames.Add(name));
+            return name;
+        }
+        // Check every default body even when no service selects it. The
+        // implicit receiver is a capability, so the ordinary closure and
+        // partial-application escape checks also apply to calls through it.
+        var defaultBodies = new Dictionary<(string Interface, string Method), string>();
+        var defaultReceivers = new Dictionary<string, (Token Receiver, string Interface)>(StringComparer.Ordinal);
+        foreach (var item in syntax.Interfaces)
+        foreach (var method in item.Methods)
+        {
+            if (method.Body is null) continue;
+            var syntheticName = FreshSynthetic("__dsharp_default_body_");
+            var receiverName = FreshSynthetic("__dsharp_default_receiver_");
+            var receiver = method.Name with { Text = receiverName };
+            var synthetic = new FunctionSyntax(method.Name with { Text = syntheticName }, method.ReturnType, method.Body.Result.Token)
+            {
+                Parameters = new[] { new ParameterSyntax(receiver, item.Name) }.Concat(method.Parameters).ToArray(),
+                Body = method.Body, Expression = method.Body.Result, Bindings = method.Body.Bindings,
+                IsAsync = method.IsAsync
+            };
+            functionTypeScopes.Add(syntheticName, noTypeScope);
+            syntheticFunctions.Add(synthetic);
+            defaultBodies.Add((item.Name.Text, method.Name.Text), syntheticName);
+            defaultReceivers.Add(syntheticName, (receiver, item.Name.Text));
+        }
         foreach (var service in syntax.Services)
         {
             if (service.Interfaces.Count == 0) Fail("DS2040", service.Name, "A service must implement an interface.");
             var implemented = new HashSet<string>(StringComparer.Ordinal);
             var required = new Dictionary<string, InterfaceMethodSyntax>(StringComparer.Ordinal);
+            var declarations = new Dictionary<string, List<(string Interface, InterfaceMethodSyntax Method)>>(StringComparer.Ordinal);
             foreach (var iface in service.Interfaces)
             {
                 if (!implemented.Add(iface.Text)) Fail("DS2040", iface, "Duplicate implemented interface.");
@@ -1535,6 +1569,9 @@ public static class Binder
                          !prior.Parameters.Select(p => p.Type.Text).SequenceEqual(method.Parameters.Select(p => p.Type.Text))))
                         Fail("DS2040", iface, "Implemented interfaces have conflicting method signatures.");
                     required[method.Name.Text] = method;
+                    if (!declarations.TryGetValue(method.Name.Text, out var candidates))
+                        declarations.Add(method.Name.Text, candidates = new());
+                    candidates.Add((iface.Text, method));
                 }
             }
             var dependencyNames = new HashSet<string>(StringComparer.Ordinal);
@@ -1566,9 +1603,7 @@ public static class Binder
                         Fail("DS2040", parameter.Type, "Service parameter type does not match the interface.");
                     methodParameters.Add(new ParameterSyntax(parameter.Name, contract.Parameters[i].Type));
                 }
-                string syntheticName;
-                do syntheticName = "__dsharp_service_body_" + (syntheticNumber++).ToString(CultureInfo.InvariantCulture);
-                while (!occupiedNames.Add(syntheticName));
+                var syntheticName = FreshSynthetic("__dsharp_service_body_");
                 var synthetic = new FunctionSyntax(method.Name with { Text = syntheticName }, contract.ReturnType, method.Body.Result.Token)
                 {
                     Parameters = service.Dependencies.Concat(methodParameters).ToArray(),
@@ -1580,8 +1615,19 @@ public static class Binder
                 boundMethods.Add(new BoundServiceMethod(method.Name.Text, syntheticName,
                     contract.Parameters.Select(parameter => parameter.Type.Text).ToArray(), contract.ReturnType.Text, contract.IsAsync));
             }
-            foreach (var requiredMethod in required.Keys)
-                if (!implementations.Contains(requiredMethod)) Fail("DS2040", service.Name, "A required interface method is missing.");
+            foreach (var (name, candidates) in declarations)
+            {
+                if (implementations.Contains(name)) continue;
+                if (candidates.Count(candidate => candidate.Method.Body is not null) > 1)
+                    Fail("DS2040", service.Name, "Conflicting interface defaults require an explicit service implementation.");
+                if (candidates.Any(candidate => candidate.Method.Body is null))
+                    Fail("DS2040", service.Name, "A required interface method is missing.");
+                var selected = candidates[0];
+                var method = selected.Method;
+                boundMethods.Add(new BoundServiceMethod(name, defaultBodies[(selected.Interface, name)],
+                    method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
+                    { DefaultInterface = selected.Interface });
+            }
             serviceMethods.Add(service.Name.Text, required);
             boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
                 service.Dependencies.Select(parameter => parameter.Type.Text).ToArray(), service.Interfaces.Select(iface => iface.Text).ToArray(), boundMethods));
@@ -2110,6 +2156,8 @@ public static class Binder
             var activeTypeParameters = Parameters(function.TypeParameters);
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
+            bool IsDefaultMethodName(string name) => defaultReceivers.TryGetValue(function.Name.Text, out var receiver) &&
+                interfaceMethods[receiver.Interface].ContainsKey(name);
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var boundLocals = new List<BoundLocal>();
             var tupleBindingCount = 0;
@@ -3427,6 +3475,9 @@ public static class Binder
                         }
                         if (!locals.ContainsKey(token.Text) && inaccessibleCaptures.Contains(token.Text))
                             Fail("DS2026", token, "Lambda capture is not supported.");
+                        if (!locals.ContainsKey(token.Text) && defaultReceivers.TryGetValue(function.Name.Text, out var valueDefault) &&
+                            interfaceMethods[valueDefault.Interface].ContainsKey(token.Text))
+                            Fail("DS2040", token, "Interface methods cannot be used as values.");
                         if (!locals.TryGetValue(token.Text, out var local) && cases.ContainsKey(token.Text))
                         {
                             var selected = BareCase(token);
@@ -3456,6 +3507,10 @@ public static class Binder
                             if (call.TypeArguments.Count > 0) Fail("DS2026", call.Name, "Function values do not accept explicit type arguments.");
                             return BindInvocation(new ValueSyntax(call.Name), call.OpenParen, call.Arguments, expectedResult);
                         }
+                        if (defaultReceivers.TryGetValue(function.Name.Text, out var callDefault) &&
+                            interfaceMethods[callDefault.Interface].ContainsKey(call.Name.Text))
+                            return BindExpression(new MemberCallSyntax(new ValueSyntax(callDefault.Receiver), call.Name, call.OpenParen, call.Arguments)
+                                { TypeArguments = call.TypeArguments }, expectedResult);
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
                             if (cases.ContainsKey(call.Name.Text)) Fail("DS2018", call.Name, "Ambiguous service constructor and union case.");
@@ -4044,7 +4099,7 @@ public static class Binder
                         preludeNames.TryGetValue(preludeCall.Name.Text, out var callName))
                         target = preludeCall with { Name = preludeCall.Name with { Text = callName } };
                 }
-                if (target is ValueSyntax name && !locals.ContainsKey(name.Value.Text) &&
+                if (target is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) &&
                     (signatures.ContainsKey(name.Value.Text) || cases.ContainsKey(name.Value.Text)))
                     return BindExpression(new CallSyntax(name.Value, pipe.Operator, new[] { pipe.Left }), expectedResult);
@@ -4205,7 +4260,7 @@ public static class Binder
             {
                 var unwrappedReceiver = receiverSyntax;
                 while (unwrappedReceiver is GroupSyntax group) unwrappedReceiver = group.Inner;
-                if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) &&
+                if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) && !cases.ContainsKey(name.Value.Text) && signatures.ContainsKey(name.Value.Text))
                     return BindExpression(new CallSyntax(name.Value, location, arguments), expectedResult);
                 var receiver = BindExpression(receiverSyntax);
@@ -5138,7 +5193,8 @@ public static class CSharpEmitter
                 output.Append("    public ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
                     .Append(" ").Append(CapabilityMethod(method.Name)).Append("(");
                 var arguments = new List<string>();
-                for (var i = 0; i < service.DependencyTypes.Count; i++)
+                if (method.DefaultInterface is not null) arguments.Add("this");
+                else for (var i = 0; i < service.DependencyTypes.Count; i++)
                     arguments.Add("__dsharp_dependency_" + i.ToString(CultureInfo.InvariantCulture));
                 for (var i = 0; i < method.ParameterTypes.Count; i++)
                 {
