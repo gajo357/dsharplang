@@ -1,0 +1,17 @@
+module Demo
+
+// Iteration is sequential. An empty list visits no values; returning from the
+// body returns from the containing function.
+fn firstPositive(values: List<int>): Option<int> {
+    for value in values {
+        if value > 0 { return Some(value) }
+    }
+    None
+}
+
+fn answer(): int {
+    match firstPositive([-3, 42, 9]) {
+        None => 0
+        Some(value) => value
+    }
+}
