@@ -6,7 +6,7 @@ mkdir -p "$reports"
 node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw Error("Node 24+ required")'
 npm ci --ignore-scripts --no-audit --no-fund
 rm -f "$reports/compiler.trx" "$reports/features.trx"
-test "$(dotnet --version)" = 10.0.100
+test "$(dotnet --version)" = 11.0.100
 dotnet restore DSharp.slnx --locked-mode
 dotnet build DSharp.slnx --no-restore --configuration Release
 dotnet test tests/DSharp.Compiler.Tests --no-build --no-restore --configuration Release --logger 'trx;LogFileName=compiler.trx' --results-directory "$reports"

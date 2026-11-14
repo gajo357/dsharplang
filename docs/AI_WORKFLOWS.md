@@ -116,7 +116,7 @@ detected concurrent change. A human can always change a draft's status manually.
 ## Local development and regeneration
 
 Requirements: Linux amd64, Git, curl, unzip, Node 24+, Docker and
-exact .NET SDK 10.0.100. No external credentials are needed for local validation.
+exact .NET SDK 11.0.100. No external credentials are needed for local validation.
 The online trusted restore downloads only pinned public NuGet packages. Candidate
 source is never built on the host in the trusted AI verifier.
 
@@ -168,7 +168,7 @@ App or API spend; local compilation is not an audit or a live execution test.
 The trusted verifier restores the frozen solution with `--locked-mode` on the
 host, then constructs a fresh workspace from trusted project files, package locks
 and acceptance tests. Only candidate source C# and new feature tests enter it.
-It builds/tests in the digest-pinned .NET 10.0.100 SDK container with no network,
+It builds/tests in the digest-pinned .NET 11.0.100 SDK container with no network,
 no capabilities, no publishing credentials, no host home/Git metadata/socket,
 read-only package cache and root filesystem, a non-root user, and resource limits.
 An explicit empty environment also removes Docker's inherited proxy variables.

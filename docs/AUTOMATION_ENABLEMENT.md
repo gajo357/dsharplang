@@ -44,14 +44,14 @@ TRX/JUnit parsing, offline compiler orchestration and pilot scenarios. XML parsi
 uses exact saxes 6.0.0 plus a committed npm lock file; lifecycle scripts are disabled
 during npm ci. Regression tests cover malformed XML, namespaces, DTD rejection,
 missing/duplicate test IDs, inconsistent counts and nonpassing JUnit results.
-The compiler remains C# with managed .NET 10 output; Native AOT is deferred for
+The compiler remains C# with managed .NET 11 output; Native AOT is deferred for
 compatibility with future imported packages.
 
-The cloud proxy allows MCR manifests but blocks the SDK image layer redirect at
-`westus.data.mcr.microsoft.com`. Local container validation therefore uses an
-operator-supplied image assembled from the installed exact .NET 10.0.100 SDK and
-system libraries. This is explicitly different from the default digest-pinned
-MCR image. Workflows use the default; they do not set the local override.
+During the original rollout the cloud proxy allowed MCR manifests but blocked the
+SDK image layer redirect at `westus.data.mcr.microsoft.com`. Local container
+validation then used an operator-supplied image assembled from the installed .NET
+10.0.100 SDK and system libraries. This historical image differs from the current
+digest-pinned .NET 11 MCR image; workflows use the pinned image without an override.
 The bootstrap PR's ordinary CI and Compiler workflows passed on GitHub.
 
 The exact-image CI result and final local pilot outcomes are recorded in the PR

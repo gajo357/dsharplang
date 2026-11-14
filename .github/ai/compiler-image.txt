@@ -1,1 +1,1 @@
-mcr.microsoft.com/dotnet/sdk@sha256:b84b696efd5c236918761d35975209ad15918c4216cc6f41a573ff62e962ce72
+mcr.microsoft.com/dotnet/sdk@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea

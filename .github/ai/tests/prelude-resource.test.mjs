@@ -89,11 +89,11 @@ test('packaged compiler resource is extracted and executed as D# outside the che
     // Build the actual shipped CLI and its compiler reference, not a duplicated
     // in-test source. All later commands execute from a directory outside git.
     run('dotnet', ['build', 'src/DSharp.Cli/DSharp.Cli.csproj', '--configuration', 'Release', '--nologo'], repository);
-    const cli = join(repository, 'src/DSharp.Cli/bin/Release/net10.0/dsharp.dll');
-    const compiler = join(repository, 'src/DSharp.Cli/bin/Release/net10.0/DSharp.Compiler.dll');
+    const cli = join(repository, 'src/DSharp.Cli/bin/Release/net11.0/dsharp.dll');
+    const compiler = join(repository, 'src/DSharp.Cli/bin/Release/net11.0/DSharp.Compiler.dll');
     assert.ok(existsSync(cli)); assert.ok(existsSync(compiler));
-    put(root, 'global.json', '{"sdk":{"version":"10.0.100","rollForward":"disable"}}\n');
-    put(root, 'probe/Probe.csproj', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>\n');
+    put(root, 'global.json', '{"sdk":{"version":"11.0.100","rollForward":"disable"}}\n');
+    put(root, 'probe/Probe.csproj', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>\n');
     put(root, 'probe/Program.cs', `using System;
 using System.IO;
 using System.Linq;
@@ -113,7 +113,7 @@ if (args[1] == "resource") {
 }
 `);
     run('dotnet', ['build', 'probe/Probe.csproj', '--configuration', 'Release', '--nologo'], root);
-    const probe = join(root, 'probe/bin/Release/net10.0/Probe.dll');
+    const probe = join(root, 'probe/bin/Release/net11.0/Probe.dll');
     const sourcePath = join(repository, relativePrelude);
     const extractedPath = join(root, 'embedded-result.ds');
     const expectedHash = createHash('sha256').update(readFileSync(sourcePath)).digest('hex');
@@ -198,6 +198,6 @@ fn answer(): int {
     run('dotnet', [cli, 'check', extractedPath, consumer], root);
     const output = join(root, 'generated');
     run('dotnet', [cli, 'compile', extractedPath, consumer, output], root);
-    assert.equal(run('dotnet', [probe, join(output, 'bin/Debug/net10.0/Generated.dll'), 'execute'], root), '42');
+    assert.equal(run('dotnet', [probe, join(output, 'bin/Debug/net11.0/Generated.dll'), 'execute'], root), '42');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

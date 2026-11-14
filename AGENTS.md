@@ -9,7 +9,7 @@ docs/features/implementation/DSharp_Implementation_Sequence.md.
 This is a compiler prototype targeting .NET. C# implementation, generated C# and
 the pinned .NET SDK are approved; the broader language/runtime is unimplemented.
 Use JavaScript for repository validation; do not introduce Python. Keep the pinned
-.NET 10 managed backend; Native AOT is deferred for package compatibility.
+.NET 11 managed backend; Native AOT is deferred for package compatibility.
 Do not silently finalize syntax, dependencies, public APIs or runtime protocols.
 
 ## Codex web tasks
