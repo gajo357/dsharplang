@@ -1,6 +1,6 @@
 # DEC-07: Resource, configuration, and startup lifecycle
 
-**Status:** Draft proposal for review; not adopted or implemented.
+**Status:** Adopted as proposed by the maintainer on 14 November 2026; not implemented.
 
 **Issue:** [#17](https://github.com/gajo357/dsharplang/issues/17).
 
@@ -13,10 +13,10 @@ host-scoped logging. Propose concrete lifecycle and failure behavior with D#
 illustrations and an acceptance-test matrix. The only changed file is this
 proposal. It introduces no compiler, runtime, provider, or dependency behavior.
 
-This document is **not adopted**. Merging it or passing documentation checks
-neither adopts it nor implements it. Explicit adoption of a reviewed version is
-required before dependent implementation. Names, signatures and syntax below are
-illustrative proposals, not working D# APIs. This proposal does not adopt or rely
+The maintainer explicitly adopted this proposal in conversation on 14 November
+2026. References to proposals below describe the adopted decisions and their
+historical rationale; they do not claim implementation. Names, signatures and
+syntax below remain illustrative, not working D# APIs. This decision does not adopt or rely
 on provisional worker, queue, HTTP or interop protocols in
 [DEC-03](DEC-03.md), [DEC-04](DEC-04.md), [DEC-05](DEC-05.md), or
 [DEC-06](DEC-06.md). Database drivers, secret providers, public configuration
@@ -314,13 +314,11 @@ external behavior. This list is a test plan, not evidence that a runtime exists.
    producer -> Logger -> outputs -> shared RuntimeStore ordering and isolation
    between two hosts.
 
-## Review and adoption gate
+## Scope of adoption and remaining decisions
 
-Review source precedence and decoder syntax, sensitive-value handling, provider
-and bootstrap identity, graph and lazy retry rules, database/filesystem adapters,
-generation replacement, timeout escalation and logging startup/shutdown order.
-Exact public APIs, provider choices, wire encodings and timeout values remain open.
-Even after adoption, [#45](https://github.com/gajo357/dsharplang/issues/45),
+The adoption covers the lifecycle and ownership decisions proposed above. Exact
+public APIs, decoder syntax, provider choices, wire encodings and timeout values
+remain open for their separately scoped work. [#45](https://github.com/gajo357/dsharplang/issues/45),
 [#58](https://github.com/gajo357/dsharplang/issues/58),
 [#74](https://github.com/gajo357/dsharplang/issues/74),
 [#75](https://github.com/gajo357/dsharplang/issues/75),
@@ -334,4 +332,4 @@ Bootstrap, documentation and link checks, and compiler verification passed
 (18 baseline and 362 feature tests). All 23 automation tests passed. The local
 isolated verifier could not download its pinned Docker image (`Forbidden`);
 GitHub Actions runs the unchanged verifier. These checks validate the repository,
-not resource lifecycle behavior or adoption.
+not resource lifecycle behavior; adoption was explicitly recorded afterward.
