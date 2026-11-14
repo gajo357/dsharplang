@@ -37,7 +37,7 @@ different. No JSON, HTTP, durable serialization or foreign interop contract is
 settled here.
 
 The current compiler implements the int/bool/string/char/Unit subset of these
-primitive types and the initial immutable List slice. Aliases, Map and Set remain
+primitive types and initial immutable List, Map and Set slices. Aliases remain
 future work. In particular it checks a nonnegative int token before unary minus, so
 `-2147483648` is currently rejected. Representability of that value and an
 eventual way to spell it are separate from claiming that spelling works today.

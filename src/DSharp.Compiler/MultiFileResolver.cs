@@ -226,8 +226,21 @@ internal static class MultiFileResolver
                             }
                             if (prefix.Count == 1 && !scope.Contains(prefix[0].Text))
                             {
+                                // A type parameter shadows both the standard
+                                // collection qualifier and visible nominal types.
+                                if ((prefix[0].Text is "Map" or "Set") && typeParameters.Contains(prefix[0].Text))
+                                    return member with { Arguments = memberArgs, TypeArguments = memberTypes };
                                 var union = Lookup(prefix[0], prefix[0].Text, s => s.Kind == "union");
                                 if (union is not null) return member with { Receiver = new ValueSyntax(Rename(prefix[0], union.Internal)), Member = CaseName(union, member.Member), Arguments = memberArgs, TypeArguments = memberTypes };
+                                // A visible source record also shadows an intrinsic
+                                // factory qualifier; preserve its identity so the
+                                // binder diagnoses a non-callable member instead of
+                                // silently selecting standard Map or Set.
+                                if ((prefix[0].Text is "Map" or "Set") && !typeParameters.Contains(prefix[0].Text))
+                                {
+                                    var record = ValueName(prefix[0]);
+                                    if (record?.Kind == "record") return member with { Receiver = new ValueSyntax(Rename(prefix[0], record.Internal)), Arguments = memberArgs, TypeArguments = memberTypes };
+                                }
                             }
                         }
                         return member with { Receiver = Expression(member.Receiver, scope, typeParameters), Arguments = memberArgs, TypeArguments = memberTypes };
