@@ -1,0 +1,40 @@
+module Demo
+
+// A nullable T is the same nullable type when T already allows null.
+type Snapshot<T> {
+    value: T?
+    items: List<T?>
+    names: Map<string, T?>
+}
+
+fn forward<T>(value: T?): T? { value }
+
+fn snapshot<T>(value: T?): Snapshot<T> {
+    Snapshot {
+        value = forward<T>(value)
+        items = [forward<T>(value)]
+        names = Map.empty<string, T?>().set("name", forward<T>(value))
+    }
+}
+
+fn preserved<T>(value: T?, expected: T?): bool {
+    let stored = snapshot<T>(value)
+    (stored.value == expected) &&
+    (stored.items == [expected]) &&
+    (stored.names == Map.empty<string, T?>().set("name", expected))
+}
+
+fn answer(): int {
+    // None means no supplied value; Some(null) means a supplied null.
+    let omitted: Option<string?> = None
+    let cleared: Option<string?> = Some(null)
+    if preserved<int>(null, null) && preserved<int>(42, 42) &&
+       preserved<int?>(null, null) && preserved<int?>(42, 42) &&
+       preserved<string>(null, null) && preserved<string>("Alice", "Alice") &&
+       preserved<string?>(null, null) && preserved<string?>("Alice", "Alice") &&
+       (omitted != cleared) {
+        42
+    } else {
+        0
+    }
+}
