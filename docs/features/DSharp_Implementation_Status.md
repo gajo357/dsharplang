@@ -39,7 +39,7 @@ external interoperability guarantee follows from this lowering. See the
 | Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
 | Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
-| Generic data and functions (partial) | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record fields and union payloads preserve null for value and reference types |
+| Generic data and functions | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record and union fields, lists and maps preserve null and present values for value and reference types |
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Synchronous Result composition | `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary generic functions | Applicable callbacks execute once; typed errors and nullable/Option payloads remain distinct |
@@ -170,7 +170,7 @@ right-associative `??` and conditional record-field access via `?.`. A condition
 field read returns a nullable value, flattening an already-nullable field; chained
 reads preserve absence. Conditional method calls remain unsupported. See [the example](../../examples/nullable-operators.ds) and
 [implementation plan](implementation/issue-29-plan.md).
-[Issue #30](https://github.com/gajo357/dsharplang/issues/30) is partially implemented with generic
+[Issue #30](https://github.com/gajo357/dsharplang/issues/30) implements generic
 records, unions and functions, including explicit type arguments and
 unambiguous inference through supported argument and result types. Generic call
 disambiguation follows DEC-02. Closed nullable type arguments such as
@@ -181,12 +181,14 @@ backend supplies an associated nullable CLR type argument for an unconstrained
 parameter when needed, propagating that requirement through generic calls and
 data. These extra arguments are an implementation detail and external C# callers
 must not assume the compiler enforces a relationship between arbitrary CLR type
-arguments. Generic type parameters have distinct lexical identities even when
-their source names overlap other types. Generic constraints, variance and type
-aliases remain unsupported. Issue #30 stays open for its complete
-acceptance criteria, including alias normalization if aliases are added. See
-[the example](../../examples/generics.ds) and
-[implementation plan](implementation/issue-30-plan.md).
+arguments. Generated execution tests cover null and present values for `int`,
+`int?`, `string` and `string?` through generic parameters and returns, record
+fields, union payloads, lists and maps, including closed `Box<int?>`. Option cases
+remain distinct from null. Generic type parameters have distinct lexical identities
+even when their source names overlap other types. Generic constraints, variance
+and type aliases remain unsupported; alias normalization applies if aliases are
+added later. See the [D# matrix example](../../examples/generic-nullability-matrix.ds)
+and [implementation plan](implementation/issue-30-plan.md).
 [Issue #121](https://github.com/gajo357/dsharplang/issues/121) implemented standard
 `Option<T>`, a distinct tagged choice with `None` and `Some(T)`. `Some(null)`
 requires a nullable payload type; nested options retain each case. JSON and
