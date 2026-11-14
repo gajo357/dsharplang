@@ -1,0 +1,137 @@
+module Demo
+
+// A missing name differs from a name explicitly cleared to null.
+type AccountKey {
+    region: string
+    id: int
+}
+type CompositeKey { part: Option<string?> }
+type Kind { | Personal(int) | Business(int) }
+type Chain { | End | Link(int, Chain) }
+type Snapshot<T> { values: Map<string, T?> }
+
+fn keep<T>(value: T): T { value }
+fn snapshot<T>(seed: T, value: T?): Snapshot<T> {
+    Snapshot { values = Map.empty<string, T?>().set("name", value) }
+}
+fn recordKey(): AccountKey {
+    AccountKey {
+        region = "north"
+        id = 7
+    }
+}
+fn personalKind(): Kind { Kind.Personal(7) }
+fn businessKind(): Kind { Kind.Business(7) }
+fn noOption(): Option<string?> { None }
+fn nullOption(): Option<string?> { Some(null) }
+fn optionRecord(): CompositeKey { CompositeKey { part = Some(null) } }
+fn chain(): Chain { Chain.Link(1, Chain.Link(2, Chain.End)) }
+fn representativeMap(first: AccountKey, second: AccountKey): Map<AccountKey, int> {
+    Map.empty<AccountKey, int>().set(first, 1).set(second, 2)
+}
+fn representativeSet(first: AccountKey, second: AccountKey): Set<AccountKey> {
+    Set.empty<AccountKey>().add(first).add(second)
+}
+fn inferred() { Map.empty<int, int>().set(1, 2).count() }
+fn inferredSet() { Set.from([1, 1]).count() }
+
+fn number(value: Option<int>): int {
+    match value { None => -1
+                  Some(n) => n }
+}
+
+fn name(value: Option<string?>): int {
+    match value { None => 0
+                  Some(null) => 1
+                  Some(text) => if text == "Alice" { 2 } else { 3 } }
+}
+
+fn nestedName(value: Option<Option<string?>>): int {
+    match value { None => 0
+                  Some(None) => 1
+                  Some(Some(null)) => 2
+                  Some(Some(text)) => if text == "Alice" { 3 } else { 4 } }
+}
+
+fn nullableNumber(value: Option<int?>): int {
+    match value { None => 0
+                  Some(null) => 1
+                  Some(n) => n + 2 }
+}
+
+fn answer(): bool {
+    let empty = Map.empty<string, string?>()
+    let cleared = empty.set("name", null)
+    let renamed = cleared.set("name", "Alice")
+    let additions = renamed.set("city", "London")
+    let reverse = empty.set("city", "London").set("name", "Alice")
+    let changed = additions.set("name", "Other")
+
+    let names = Map.empty<string, Option<string?>>()
+        .set("unchanged", None)
+        .set("clear", Some(null))
+        .set("rename", Some("Alice"))
+
+    let options: List<Option<string?>> = [None, Some(null), Some("Alice"), Some(null)]
+    let distinct = Set.from(options)
+    let emptySet: Set<int> = Set.from([])
+    let explicitEmpty = Set.from<int>([])
+    let distinctReverse = Set.empty<Option<string?>>()
+        .add(Some("Alice")).add(Some(null)).add(None)
+    let extended = distinct.add(Some("Other"))
+    let byOption = Map.empty<Option<string?>, int>()
+        .set(None, 1).set(Some(null), 2).set(Some("Alice"), 3)
+
+    let nullKeys = Map.empty<string?, int>().set(null, 1).set("", 2)
+    let nullableSet = Set.empty<int?>().add(null).add(0).add(null)
+    let key = recordKey()
+    let sameKey = recordKey()
+    let recordKeys = Map.empty<AccountKey, int>().set(key, 10).set(sameKey, 42)
+    let optionRecords = Map.empty<CompositeKey, int>().set(optionRecord(), 42)
+    let kinds = Set.from([Kind.Personal(7), Kind.Business(7), Kind.Personal(7)])
+    let collisionMap = Map.empty<Kind, int>().set(Kind.Personal(31), 1).set(Kind.Business(0), 2)
+    let collisionSet = Set.from([Kind.Personal(31), Kind.Business(0)])
+    let chains = Set.from([chain(), chain()])
+    let recursiveMap = Map.empty<Chain, int>().set(chain(), 42)
+    let intNull = snapshot<int>(0, null)
+    let intAlreadyNullable = snapshot<int?>(null, null)
+    let intValue = snapshot<int>(0, 42)
+    let textNull = snapshot<string>("", null)
+    let grouped = Map.empty<string, List<int>>().set("ids", [1, 2]).set("more", [3])
+    let groupedReverse = Map.empty<string, List<int>>().set("more", [3]).set("ids", [1, 2])
+    let pairValues = Map.empty<string, (int, int)>().set("a", (1, 2)).set("b", (3, 4))
+    let pairValuesReverse = Map.empty<string, (int, int)>().set("b", (3, 4)).set("a", (1, 2))
+
+    (inferred() == 1) && (inferredSet() == 1) &&
+    (empty.count() == 0) && (name(empty.get("name")) == 0) &&
+    (name(cleared.get("name")) == 1) && (name(renamed.get("name")) == 2) &&
+    (cleared.count() == 1) && (name(cleared.get("name")) == 1) &&
+    (additions.count() == 2) && (additions == reverse) && (additions != changed) &&
+    additions.contains("name") && !additions.contains("missing") &&
+    (nestedName(names.get("missing")) == 0) &&
+    (nestedName(names.get("unchanged")) == 1) &&
+    (nestedName(names.get("clear")) == 2) &&
+    (nestedName(names.get("rename")) == 3) &&
+    (emptySet.count() == 0) && (explicitEmpty == emptySet) &&
+    (distinct.count() == 3) && (distinct == distinctReverse) &&
+    (extended.count() == 4) && (distinct != extended) &&
+    distinct.contains(None) && distinct.contains(Some(null)) &&
+    distinct.contains(Some("Alice")) && !distinct.contains(Some("Other")) &&
+    (number(byOption.get(None)) == 1) && (number(byOption.get(Some(null))) == 2) &&
+    (number(byOption.get(Some("Alice"))) == 3) &&
+    (nullKeys.count() == 2) && (number(nullKeys.get(null)) == 1) &&
+    (number(nullKeys.get("")) == 2) &&
+    (nullableSet.count() == 2) && nullableSet.contains(null) && nullableSet.contains(0) &&
+    (recordKeys.count() == 1) && (number(recordKeys.get(sameKey)) == 42) &&
+    (number(optionRecords.get(optionRecord())) == 42) &&
+    (kinds.count() == 2) && kinds.contains(Kind.Personal(7)) && kinds.contains(Kind.Business(7)) &&
+    (collisionMap.count() == 2) && (number(collisionMap.get(Kind.Personal(31))) == 1) &&
+    (number(collisionMap.get(Kind.Business(0))) == 2) && (collisionSet.count() == 2) &&
+    collisionSet.contains(Kind.Personal(31)) && collisionSet.contains(Kind.Business(0)) &&
+    (chains.count() == 1) && chains.contains(chain()) && (number(recursiveMap.get(chain())) == 42) &&
+    (nullableNumber(intNull.values.get("name")) == 1) &&
+    (nullableNumber(intValue.values.get("name")) == 44) &&
+    (intNull.values == intAlreadyNullable.values) && (name(textNull.values.get("name")) == 1) &&
+    grouped.contains("ids") && (grouped == groupedReverse) &&
+    (pairValues == pairValuesReverse)
+}

@@ -49,6 +49,7 @@ external interoperability guarantee follows from this lowering. See the
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
+| Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -177,8 +178,8 @@ parameter when needed, propagating that requirement through generic calls and
 data. These extra arguments are an implementation detail and external C# callers
 must not assume the compiler enforces a relationship between arbitrary CLR type
 arguments. Generic type parameters have distinct lexical identities even when
-their source names overlap other types. Generic constraints, variance, type
-aliases, maps and sets remain unsupported. Issue #30 stays open for its complete
+their source names overlap other types. Generic constraints, variance and type
+aliases remain unsupported. Issue #30 stays open for its complete
 acceptance criteria, including alias normalization if aliases are added. See
 [the example](../../examples/generics.ds) and
 [implementation plan](implementation/issue-30-plan.md).
@@ -196,7 +197,18 @@ are also covered by generated-code execution and diagnostic tests.
 equality. `get` returns `Option<T>`, distinguishing an absent index from a
 stored null. The [D# example](../../examples/list.ds) and
 [implementation plan](implementation/issue-37-plan.md) show the supported
-operations and test coverage. Map, Set, builders and serialization are separate.
+operations and test coverage.
+`Map` and `Set` are implemented separately in
+[#38](https://github.com/gajo357/dsharplang/issues/38); builders and
+serialization remain separate work.
+
+Maps and sets use private immutable snapshots and D# structural hashing plus
+equality for collision resolution. The initial representation scans entries
+linearly; repeated insertion, including `Set.from`, can take quadratic time.
+Key eligibility is checked recursively. Because generic key constraints are not
+yet supported, an unconstrained key type parameter is rejected; generic value
+types remain supported. See the [D# example](../../examples/map_set.ds) and
+[implementation plan](implementation/issue-38-plan.md).
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;

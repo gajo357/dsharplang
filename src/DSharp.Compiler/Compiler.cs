@@ -104,6 +104,8 @@ public sealed record BoundTuple(IReadOnlyList<BoundExpression> Elements, string 
 public sealed record BoundTupleItem(BoundExpression Tuple, int Index) : BoundExpression;
 public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string Type) : BoundExpression;
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
+public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
@@ -227,6 +229,8 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public IReadOnlyList<BoundUnionDeclaration> Unions { get; init; } = Array.Empty<BoundUnionDeclaration>();
     public string? ListSymbol { get; init; }
     public string? OptionSymbol { get; init; }
+    public string? MapSymbol { get; init; }
+    public string? SetSymbol { get; init; }
 }
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
@@ -1043,15 +1047,23 @@ public static class Binder
         var resultSymbol = "$" + userTypeSymbolCount.ToString(CultureInfo.InvariantCulture);
         var optionSymbol = "$" + (userTypeSymbolCount + 1).ToString(CultureInfo.InvariantCulture);
         var listSymbol = "$" + (userTypeSymbolCount + 2).ToString(CultureInfo.InvariantCulture);
+        var mapSymbol = "$" + (userTypeSymbolCount + 3).ToString(CultureInfo.InvariantCulture);
+        var setSymbol = "$" + (userTypeSymbolCount + 4).ToString(CultureInfo.InvariantCulture);
         var resultUsed = false;
         var optionUsed = false;
         var listUsed = false;
+        var mapUsed = false;
+        var setUsed = false;
         var userResultType = syntax.Records.Any(record => record.Name.Text == "Result") ||
             syntax.Unions.Any(union => union.Name.Text == "Result");
         var userOptionType = syntax.Records.Any(record => record.Name.Text == "Option") ||
             syntax.Unions.Any(union => union.Name.Text == "Option");
         var userListType = syntax.Records.Any(record => record.Name.Text == "List") ||
             syntax.Unions.Any(union => union.Name.Text == "List");
+        var userMapType = syntax.Records.Any(record => record.Name.Text == "Map") ||
+            syntax.Unions.Any(union => union.Name.Text == "Map");
+        var userSetType = syntax.Records.Any(record => record.Name.Text == "Set") ||
+            syntax.Unions.Any(union => union.Name.Text == "Set");
         var typeSymbolNames = new Dictionary<string, string>(StringComparer.Ordinal);
         var functionTypeScopes = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         Dictionary<string, string> TypeScope(IReadOnlyList<Token> parameters)
@@ -1076,6 +1088,8 @@ public static class Binder
                 else if (name == "Result" && !userResultType) { name = resultSymbol; resultUsed = true; }
                 else if (name == "Option" && !userOptionType) { name = optionSymbol; optionUsed = true; }
                 else if (name == "List" && !userListType) { name = listSymbol; listUsed = true; }
+                else if (name == "Map" && !userMapType) { name = mapSymbol; mapUsed = true; }
+                else if (name == "Set" && !userSetType) { name = setSymbol; setUsed = true; }
                 return value with { Name = name, Arguments = value.Arguments.Select(Rebind).ToArray() };
             }
             return token with { Text = Rebind(shape).ToString() };
@@ -1113,7 +1127,7 @@ public static class Binder
                 ReturnType = ScopedType(function.ReturnType, scope)
             };
         }).ToArray();
-        nextTypeSymbol += 3; // Reserve the intrinsic nominal identities after source symbols.
+        nextTypeSymbol += 5; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
         var resultScope = TypeScope(resultTypeTokens);
@@ -1136,7 +1150,7 @@ public static class Binder
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -1167,7 +1181,7 @@ public static class Binder
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["int"] = 0, ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
-            [listSymbol] = 1
+            [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1
         };
         foreach (var record in syntax.Records) arities.Add(record.Name.Text, record.TypeParameters.Count);
         foreach (var union in syntax.Unions) arities.Add(union.Name.Text, union.TypeParameters.Count);
@@ -1185,9 +1199,38 @@ public static class Binder
         {
             var scope = parameters ?? emptyParameters;
             if (!GenericTypes.TryValidate(type, arities, scope) || !GenericTypes.TryParse(type, out var shape)) return false;
+            // Unconstrained source parameters cannot prove the adopted key
+            // eligibility rule. Values remain generic, but Map/Set keys must
+            // be fully known and recursively eligible in this first slice.
+            bool EligibleKey(TypeShape candidate, HashSet<string> visiting)
+            {
+                if (candidate.IsFunction || candidate.IsTuple || candidate.Name == listSymbol ||
+                    candidate.Name == mapSymbol || candidate.Name == setSymbol || scope.Contains(candidate.Name)) return false;
+                if (candidate.Name is "int" or "bool" or "string" or "char" or "Unit") return candidate.Arguments.Count == 0;
+                if (candidate.Arguments.Any(argument => argument.ContainsFunction)) return false;
+                if (!records.TryGetValue(candidate.Name, out var record) && !unions.TryGetValue(candidate.Name, out _)) return false;
+                if (!candidate.Arguments.All(argument => EligibleKey(argument, new HashSet<string>(visiting, StringComparer.Ordinal)))) return false;
+                if (!visiting.Add(candidate.Name)) return true;
+                try
+                {
+                    var typeParameters = record is not null ? record.TypeParameters : unions[candidate.Name].TypeParameters;
+                    if (candidate.Arguments.Count != typeParameters.Count) return false;
+                    var substitutions = typeParameters.Select((parameter, i) => (parameter.Text, Value: candidate.Arguments[i].ToString()))
+                        .ToDictionary(pair => pair.Text, pair => pair.Value, StringComparer.Ordinal);
+                    var fields = record is not null ? record.Fields.Select(field => field.Type.Text) :
+                        unions[candidate.Name].Cases.SelectMany(unionCase => unionCase.PayloadTypes.Select(payload => payload.Text));
+                    foreach (var field in fields)
+                        if (!GenericTypes.TrySubstitute(field, substitutions, out var substituted) ||
+                            !GenericTypes.TryParse(substituted, out var fieldShape) || !EligibleKey(fieldShape, visiting)) return false;
+                    return true;
+                }
+                finally { visiting.Remove(candidate.Name); }
+            }
             bool ExecutionTypesOnly(TypeShape value)
             {
                 if (!value.IsFunction && value.Arguments.Any(argument => argument.ContainsFunction)) return false;
+                if ((value.Name == mapSymbol || value.Name == setSymbol) &&
+                    (value.Arguments.Count == 0 || !EligibleKey(value.Arguments[0], new HashSet<string>(StringComparer.Ordinal)))) return false;
                 return value.Arguments.All(ExecutionTypesOnly);
             }
             return ExecutionTypesOnly(shape);
@@ -1449,7 +1492,8 @@ public static class Binder
                             qualifier?.Value.Text == "Option" && !userOptionType ? optionSymbol : qualifier?.Value.Text;
                         if (qualifier is null || names.Contains(qualifier.Value.Text) || unionName is null || !unions.ContainsKey(unionName))
                         {
-                            if (member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold")) indirect = true;
+                            if (member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
+                                "empty" or "from" or "count" or "contains" or "set" or "add")) indirect = true;
                             if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0)
                             {
                                 var callback = member.Arguments[^1];
@@ -2187,6 +2231,8 @@ public static class Binder
                 BoundTuple tuple => tuple.Type,
                 BoundList list => list.Type,
                 BoundListOperation list => list.Type,
+                BoundMapSetFactory collection => collection.Type,
+                BoundMapSetOperation collection => collection.Type,
                 BoundLambda lambda => lambda.Type,
                 BoundFunctionReference reference => reference.Type,
                 BoundPartial partial => partial.Type,
@@ -3061,6 +3107,55 @@ public static class Binder
                     {
                         if (member.Receiver is ValueSyntax capturedMemberQualifier && !locals.ContainsKey(capturedMemberQualifier.Value.Text) && inaccessibleCaptures.Contains(capturedMemberQualifier.Value.Text))
                             Fail("DS2026", capturedMemberQualifier.Value, "Lambda capture is not supported.");
+                        // Intrinsic factories are available only when the
+                        // qualifier is not a lexical/user declaration.
+                        if (member.Receiver is ValueSyntax factory && !locals.ContainsKey(factory.Value.Text) &&
+                            !functionTypeScope.ContainsKey(factory.Value.Text) && !signatures.ContainsKey(factory.Value.Text) &&
+                            !cases.ContainsKey(factory.Value.Text) && !records.ContainsKey(factory.Value.Text) &&
+                            (factory.Value.Text == "Map" && !userMapType || factory.Value.Text == "Set" && !userSetType))
+                        {
+                            var isMap = factory.Value.Text == "Map";
+                            var factoryName = member.Member.Text;
+                            if (factoryName != "empty" && !(factoryName == "from" && !isMap))
+                                Fail("DS2018", member.Member, "Unknown immutable collection factory.");
+                            var isFrom = factoryName == "from";
+                            var expectedCount = isFrom ? 1 : 0;
+                            if (member.Arguments.Count != expectedCount)
+                                Fail("DS2012", member.Member, "Incorrect number of collection factory arguments.");
+                            var typeCount = isMap ? 2 : 1;
+                            if (member.TypeArguments.Count != 0 && member.TypeArguments.Count != typeCount)
+                                Fail("DS2023", member.Member, "Incorrect number of collection factory type arguments.");
+                            var symbol = isMap ? mapSymbol : setSymbol;
+                            var types = member.TypeArguments.Select(type => ScopedType(type, functionTypeScope).Text).ToArray();
+                            if (types.Length == 0 && expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedCollection) &&
+                                expectedCollection.Name == symbol && expectedCollection.Arguments.Count == typeCount)
+                                types = expectedCollection.Arguments.Select(argument => argument.ToString()).ToArray();
+                            var arguments = new List<BoundExpression>();
+                            var never = false;
+                            if (isFrom)
+                            {
+                                var inputHint = types.Length == 1 ? listSymbol + "<" + types[0] + ">" : null;
+                                var input = BindExpression(member.Arguments[0], inputHint);
+                                var inputType = input.Type == "<never>" ? KnownType(input.Expression) : input.Type;
+                                if (inputType is null || !GenericTypes.TryParse(inputType, out var sourceList) || sourceList.Name != listSymbol ||
+                                    sourceList.IsNullable || sourceList.Arguments.Count != 1)
+                                    Fail("DS2026", member.Arguments[0].Token, "Set.from requires a non-nullable List value.");
+                                if (types.Length == 0) types = new[] { sourceList!.Arguments[0].ToString() };
+                                var listType = listSymbol + "<" + types[0] + ">";
+                                Require(member.Arguments[0], input.Type, listType);
+                                arguments.Add(Coerce(input.Expression, listType, input.Type));
+                                listUsed = true;
+                                never = input.Type == "<never>";
+                            }
+                            if (types.Length != typeCount)
+                                Fail("DS2023", member.Member, "Cannot infer all collection type arguments.");
+                            var collectionType = symbol + "<" + string.Join(",", types) + ">";
+                            if (!SupportedType(collectionType, activeTypeParameters) || !DataType(collectionType))
+                                Fail("DS2026", member.Member, "Collection types require an eligible immutable key and supported data values.");
+                            if (isMap) mapUsed = true; else setUsed = true;
+                            return (new BoundMapSetFactory(collectionType, (isMap ? "map." : "set.") + factoryName, arguments),
+                                never ? "<never>" : collectionType);
+                        }
                         if (member.Receiver is ValueSyntax typeMemberQualifier && !locals.ContainsKey(typeMemberQualifier.Value.Text) &&
                             functionTypeScope.ContainsKey(typeMemberQualifier.Value.Text) && unions.ContainsKey(UnionQualifier(typeMemberQualifier.Value.Text)))
                             Fail("DS2018", typeMemberQualifier.Value, "An unconstrained type parameter cannot qualify a union case.");
@@ -3070,6 +3165,54 @@ public static class Binder
                                 member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         var listReceiver = BindExpression(member.Receiver);
                         var listReceiverType = listReceiver.Type == "<never>" ? KnownType(listReceiver.Expression) : listReceiver.Type;
+                        if (listReceiverType is not null && GenericTypes.TryParse(listReceiverType, out var collectionShape) &&
+                            (collectionShape.Name == mapSymbol && collectionShape.Arguments.Count == 2 ||
+                             collectionShape.Name == setSymbol && collectionShape.Arguments.Count == 1))
+                        {
+                            if (collectionShape.IsNullable) Fail("DS2018", member.Member, "Collection operations require a non-nullable receiver.");
+                            var isMap = collectionShape.Name == mapSymbol;
+                            var operation = member.Member.Text;
+                            var arity = operation switch
+                            {
+                                "count" => 0,
+                                "contains" => 1,
+                                "get" when isMap => 1,
+                                "set" when isMap => 2,
+                                "add" when !isMap => 1,
+                                _ => -1
+                            };
+                            if (arity < 0) Fail("DS2018", member.Member, "Unknown immutable collection operation.");
+                            if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Collection operations do not accept type arguments.");
+                            if (member.Arguments.Count != arity) Fail("DS2012", member.Member, "Incorrect number of collection operation arguments.");
+                            var keyType = collectionShape.Arguments[0].ToString();
+                            var valueType = isMap ? collectionShape.Arguments[1].ToString() : null;
+                            var arguments = new List<BoundExpression>();
+                            var savedReachable = inferenceReachable;
+                            var never = listReceiver.Type == "<never>";
+                            try
+                            {
+                                for (var i = 0; i < member.Arguments.Count; i++)
+                                {
+                                    inferenceReachable = savedReachable && !never;
+                                    var formal = i == 0 ? keyType : valueType!;
+                                    var argument = BindExpression(member.Arguments[i], formal);
+                                    Require(member.Arguments[i], argument.Type, formal);
+                                    arguments.Add(Coerce(argument.Expression, formal, argument.Type));
+                                    never |= argument.Type == "<never>";
+                                }
+                            }
+                            finally { inferenceReachable = savedReachable; }
+                            var returnType = operation switch
+                            {
+                                "count" => "int",
+                                "contains" => "bool",
+                                "get" => optionSymbol + "<" + valueType + ">",
+                                _ => listReceiverType
+                            };
+                            if (operation == "get") optionUsed = true;
+                            return (new BoundMapSetOperation(listReceiver.Expression, listReceiverType, operation, arguments, returnType),
+                                never ? "<never>" : returnType);
+                        }
                         if (listReceiverType is not null && GenericTypes.TryParse(listReceiverType, out var listShape) &&
                             listShape.Name == listSymbol && listShape.Arguments.Count == 1)
                         {
@@ -3810,6 +3953,8 @@ public static class Binder
         {
             ListSymbol = listUsed ? listSymbol : null,
             OptionSymbol = optionUsed ? optionSymbol : null,
+            MapSymbol = mapUsed ? mapSymbol : null,
+            SetSymbol = setUsed ? setSymbol : null,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
@@ -3863,6 +4008,10 @@ public static class CSharpEmitter
             recordTypes.Add(union.Name, UniqueGlobal("__DSharp_Union_" + recordTypes.Count.ToString(CultureInfo.InvariantCulture)));
         var structuralInterface = UniqueGlobal("__DSharp_Structural");
         var listTypeName = module.ListSymbol is null ? null : UniqueGlobal("__DSharp_List");
+        var mapTypeName = module.MapSymbol is null ? null : UniqueGlobal("__DSharp_Map");
+        var setTypeName = module.SetSymbol is null ? null : UniqueGlobal("__DSharp_Set");
+        var hasKeyedCollections = mapTypeName is not null || setTypeName is not null;
+        var hashInterface = hasKeyedCollections ? UniqueGlobal("__DSharp_Hashable") : null;
         var container = "__DSharp_Functions";
         while (!globalNames.Add(container)) container += "_";
         var unitType = "__DSharp_Unit";
@@ -3874,6 +4023,8 @@ public static class CSharpEmitter
         var memberNames = new HashSet<string>(module.Functions.Select(f => f.Name), StringComparer.Ordinal) { signalType, raiseMethod };
         var equalityDispatcher = "__DSharp_StructuralEquals";
         while (!memberNames.Add(equalityDispatcher)) equalityDispatcher += "_";
+        var hashDispatcher = "__DSharp_StructuralHash";
+        while (!memberNames.Add(hashDispatcher)) hashDispatcher += "_";
         var closureDefinitions = new List<string>();
         var closureCount = 0;
         // CLR's unconstrained T? does not lift value-type instantiations. Add an
@@ -3957,7 +4108,8 @@ public static class CSharpEmitter
         static string Nominal(string type) => GenericTypes.TryParse(type, out var shape) ? shape.Name : type;
         bool IsNominal(string type) => GenericTypes.TryParse(type, out var shape) &&
             !(shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name)) &&
-            (recordTypes.ContainsKey(shape.Name) || shape.Name == module.ListSymbol);
+            (recordTypes.ContainsKey(shape.Name) || shape.Name == module.ListSymbol ||
+                shape.Name == module.MapSymbol || shape.Name == module.SetSymbol);
         bool IsTypeParameter(string type) => GenericTypes.TryParse(type, out var shape) &&
             shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name);
         static bool IsValueType(string type) => type is "int" or "bool" or "char" or "Unit" ||
@@ -3978,6 +4130,7 @@ public static class CSharpEmitter
                 }
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
                     current.Name == "Unit" ? unitType : current.Name == module.ListSymbol ? listTypeName! :
+                    current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
                     recordTypes.TryGetValue(current.Name, out var recordType) ? recordType : current.Name;
                 if (current.Arguments.Count > 0)
                 {
@@ -3999,14 +4152,14 @@ public static class CSharpEmitter
         string EqualValue(string type, string left, string right)
         {
             if (GenericTypes.TryParse(type, out var tupleShape) && tupleShape.IsTuple)
-                return module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null
+                return module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null || hasKeyedCollections
                     ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")"
                     : "global::System.Collections.Generic.EqualityComparer<" + CType(type) + ">.Default.Equals(" + left + ", " + right + ")";
             if (type.EndsWith("?", StringComparison.Ordinal))
             {
                 var inner = type[..^1];
                 if (IsTypeParameter(inner))
-                    return module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null
+                    return module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null || hasKeyedCollections
                         ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")"
                         : "global::System.Collections.Generic.EqualityComparer<" + CType(type) + ">.Default.Equals(" + left + ", " + right + ")";
                 if (IsValueType(inner))
@@ -4018,8 +4171,10 @@ public static class CSharpEmitter
                 IsNominal(type) || IsTypeParameter(type) ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")" : left + " == " + right;
         }
         output.Append("public readonly struct ").Append(unitType).Append(" {}\n\n");
-        if (module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null)
+        if (module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null || hasKeyedCollections)
             output.Append("public interface ").Append(structuralInterface).Append(" { bool __dsharp_equals(object other); }\n\n");
+        if (hasKeyedCollections)
+            output.Append("public interface ").Append(hashInterface).Append(" { int __dsharp_hash(); }\n\n");
         if (listTypeName is not null)
         {
             // The array is never exposed, and each construction takes its own
@@ -4031,6 +4186,7 @@ public static class CSharpEmitter
                 .Append("    private ").Append(listTypeName).Append("(__DSharp_Item[] items) { __items = (__DSharp_Item[])items.Clone(); }\n")
                 .Append("    internal static ").Append(listTypeName).Append("<__DSharp_Item> __dsharp_create(__DSharp_Item[] items) => new ").Append(listTypeName).Append("<__DSharp_Item>(items);\n")
                 .Append("    internal int __dsharp_length() => __items.Length;\n")
+                .Append("    internal __DSharp_Item __dsharp_item(int index) => __items[index];\n")
                 .Append("    internal ").Append(listTypeName).Append("<__DSharp_Item> __dsharp_append(__DSharp_Item item)\n    {\n")
                 .Append("        var copy = new __DSharp_Item[checked(__items.Length + 1)];\n")
                 .Append("        global::System.Array.Copy(__items, copy, __items.Length);\n")
@@ -4068,12 +4224,85 @@ public static class CSharpEmitter
                 .Append(equalityDispatcher).Append("<__DSharp_Item>(__items[i], value.__items[i])) return false;\n")
                 .Append("        return true;\n    }\n}\n\n");
         }
+        if (mapTypeName is not null)
+        {
+            // These arrays are built only inside the generated type and are
+            // never exposed; updates copy changed storage and may share the rest.
+            output.Append("public sealed class ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> : ").Append(structuralInterface).Append("\n{\n")
+                .Append("    private readonly __DSharp_Key[] __keys;\n    private readonly __DSharp_Value[] __values;\n    private readonly int[] __hashes;\n")
+                .Append("    private ").Append(mapTypeName).Append("(__DSharp_Key[] keys, __DSharp_Value[] values, int[] hashes) { __keys = keys; __values = values; __hashes = hashes; }\n")
+                .Append("    internal static ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> __dsharp_empty() => new ").Append(mapTypeName)
+                .Append("<__DSharp_Key, __DSharp_Value>(global::System.Array.Empty<__DSharp_Key>(), global::System.Array.Empty<__DSharp_Value>(), global::System.Array.Empty<int>());\n")
+                .Append("    private int __dsharp_find(__DSharp_Key key, int hash)\n    {\n")
+                .Append("        for (int i = 0; i < __keys.Length; i++) if (__hashes[i] == hash && ").Append(container).Append(".")
+                .Append(equalityDispatcher).Append("<__DSharp_Key>(__keys[i], key)) return i;\n        return -1;\n    }\n")
+                .Append("    internal int __dsharp_count() => __keys.Length;\n")
+                .Append("    internal bool __dsharp_contains(__DSharp_Key key) => __dsharp_find(key, ").Append(container).Append(".")
+                .Append(hashDispatcher).Append("<__DSharp_Key>(key)) >= 0;\n")
+                .Append("    internal ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> __dsharp_set(__DSharp_Key key, __DSharp_Value value)\n    {\n")
+                .Append("        int hash = ").Append(container).Append(".").Append(hashDispatcher).Append("<__DSharp_Key>(key);\n")
+                .Append("        int index = __dsharp_find(key, hash);\n")
+                .Append("        if (index >= 0) { var values = (__DSharp_Value[])__values.Clone(); values[index] = value; return new ")
+                .Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value>(__keys, values, __hashes); }\n")
+                .Append("        int length = checked(__keys.Length + 1);\n")
+                .Append("        var keys = new __DSharp_Key[length]; var addedValues = new __DSharp_Value[length]; var hashes = new int[length];\n")
+                .Append("        global::System.Array.Copy(__keys, keys, __keys.Length); global::System.Array.Copy(__values, addedValues, __values.Length); global::System.Array.Copy(__hashes, hashes, __hashes.Length);\n")
+                .Append("        keys[length - 1] = key; addedValues[length - 1] = value; hashes[length - 1] = hash;\n")
+                .Append("        return new ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value>(keys, addedValues, hashes);\n    }\n");
+            if (module.OptionSymbol is not null)
+            {
+                var optionName = recordTypes[module.OptionSymbol];
+                var optionCases = module.Unions.Single(union => union.Name == module.OptionSymbol).Cases;
+                var noneIndex = optionCases.ToList().FindIndex(item => item.Name == "None");
+                var someIndex = optionCases.ToList().FindIndex(item => item.Name == "Some");
+                if (noneIndex < 0 || someIndex < 0) throw new InvalidOperationException("Standard Option cases are missing.");
+                var optionType = optionName + "<__DSharp_Value>";
+                output.Append("    internal ").Append(optionType).Append(" __dsharp_get(__DSharp_Key key)\n    {\n")
+                    .Append("        int index = __dsharp_find(key, ").Append(container).Append(".").Append(hashDispatcher).Append("<__DSharp_Key>(key));\n")
+                    .Append("        return index < 0 ? ").Append(optionType).Append(".__dsharp_case_").Append(noneIndex.ToString(CultureInfo.InvariantCulture))
+                    .Append("() : ").Append(optionType).Append(".__dsharp_case_").Append(someIndex.ToString(CultureInfo.InvariantCulture)).Append("(__values[index]);\n    }\n");
+            }
+            output.Append("    bool ").Append(structuralInterface).Append(".__dsharp_equals(object other)\n    {\n")
+                .Append("        if (other is not ").Append(mapTypeName).Append("<__DSharp_Key, __DSharp_Value> value || __keys.Length != value.__keys.Length) return false;\n")
+                .Append("        for (int i = 0; i < __keys.Length; i++) { int index = value.__dsharp_find(__keys[i], __hashes[i]); if (index < 0 || !")
+                .Append(container).Append(".").Append(equalityDispatcher).Append("<__DSharp_Value>(__values[i], value.__values[index])) return false; }\n")
+                .Append("        return true;\n    }\n}\n\n");
+        }
+        if (setTypeName is not null)
+        {
+            output.Append("public sealed class ").Append(setTypeName).Append("<__DSharp_Item> : ").Append(structuralInterface).Append("\n{\n")
+                .Append("    private readonly __DSharp_Item[] __items;\n    private readonly int[] __hashes;\n")
+                .Append("    private ").Append(setTypeName).Append("(__DSharp_Item[] items, int[] hashes) { __items = items; __hashes = hashes; }\n")
+                .Append("    internal static ").Append(setTypeName).Append("<__DSharp_Item> __dsharp_empty() => new ")
+                .Append(setTypeName).Append("<__DSharp_Item>(global::System.Array.Empty<__DSharp_Item>(), global::System.Array.Empty<int>());\n")
+                .Append("    private int __dsharp_find(__DSharp_Item item, int hash)\n    {\n")
+                .Append("        for (int i = 0; i < __items.Length; i++) if (__hashes[i] == hash && ").Append(container).Append(".")
+                .Append(equalityDispatcher).Append("<__DSharp_Item>(__items[i], item)) return i;\n        return -1;\n    }\n")
+                .Append("    internal int __dsharp_count() => __items.Length;\n")
+                .Append("    internal bool __dsharp_contains(__DSharp_Item item) => __dsharp_find(item, ").Append(container).Append(".")
+                .Append(hashDispatcher).Append("<__DSharp_Item>(item)) >= 0;\n")
+                .Append("    internal ").Append(setTypeName).Append("<__DSharp_Item> __dsharp_add(__DSharp_Item item)\n    {\n")
+                .Append("        int hash = ").Append(container).Append(".").Append(hashDispatcher).Append("<__DSharp_Item>(item);\n")
+                .Append("        if (__dsharp_find(item, hash) >= 0) return new ").Append(setTypeName).Append("<__DSharp_Item>(__items, __hashes);\n")
+                .Append("        int length = checked(__items.Length + 1); var items = new __DSharp_Item[length]; var hashes = new int[length];\n")
+                .Append("        global::System.Array.Copy(__items, items, __items.Length); global::System.Array.Copy(__hashes, hashes, __hashes.Length);\n")
+                .Append("        items[length - 1] = item; hashes[length - 1] = hash; return new ").Append(setTypeName).Append("<__DSharp_Item>(items, hashes);\n    }\n");
+            if (listTypeName is not null)
+                output.Append("    internal static ").Append(setTypeName).Append("<__DSharp_Item> __dsharp_from(").Append(listTypeName).Append("<__DSharp_Item> source)\n    {\n")
+                    .Append("        var result = __dsharp_empty(); for (int i = 0; i < source.__dsharp_length(); i++) result = result.__dsharp_add(source.__dsharp_item(i)); return result;\n    }\n");
+            output.Append("    bool ").Append(structuralInterface).Append(".__dsharp_equals(object other)\n    {\n")
+                .Append("        if (other is not ").Append(setTypeName).Append("<__DSharp_Item> value || __items.Length != value.__items.Length) return false;\n")
+                .Append("        for (int i = 0; i < __items.Length; i++) if (value.__dsharp_find(__items[i], __hashes[i]) < 0) return false;\n")
+                .Append("        return true;\n    }\n}\n\n");
+        }
         foreach (var record in module.Records)
         {
             SetTypeParameters(record.TypeParameters, nominalProjections[record.Name]);
             var recordName = recordTypes[record.Name];
             var recordType = recordName + TypeParameterList(record.TypeParameters);
-            output.Append("public sealed class ").Append(recordType).Append(" : ").Append(structuralInterface).Append("\n{\n");
+            output.Append("public sealed class ").Append(recordType).Append(" : ").Append(structuralInterface);
+            if (hasKeyedCollections) output.Append(", ").Append(hashInterface);
+            output.Append("\n{\n");
             foreach (var field in record.Fields)
             {
                 // C# object members can also be ordinary D# field names.
@@ -4094,7 +4323,16 @@ public static class CSharpEmitter
                 .Append("        return true");
             foreach (var field in record.Fields)
                 output.Append(" && ").Append(EqualValue(field.Type, "this.@" + field.Name, "__that.@" + field.Name));
-            output.Append(";\n    }\n}\n\n");
+            output.Append(";\n    }\n");
+            if (hasKeyedCollections)
+            {
+                output.Append("    int ").Append(hashInterface).Append(".__dsharp_hash()\n    {\n        int hash = 17;\n");
+                foreach (var field in record.Fields)
+                    output.Append("        hash = unchecked(hash * 31 + ").Append(container).Append(".").Append(hashDispatcher)
+                        .Append("<").Append(CType(field.Type)).Append(">(this.@").Append(field.Name).Append("));\n");
+                output.Append("        return hash;\n    }\n");
+            }
+            output.Append("}\n\n");
         }
         foreach (var union in module.Unions)
         {
@@ -4109,7 +4347,9 @@ public static class CSharpEmitter
             var nativeUnion = UniqueGlobal("__dsharp_native_union");
             var variants = union.Cases.Select((_, i) =>
                 UniqueGlobal("__dsharp_native_case_" + i.ToString(CultureInfo.InvariantCulture))).ToArray();
-            output.Append("public sealed class ").Append(type).Append(" : ").Append(structuralInterface).Append("\n{\n");
+            output.Append("public sealed class ").Append(type).Append(" : ").Append(structuralInterface);
+            if (hasKeyedCollections) output.Append(", ").Append(hashInterface);
+            output.Append("\n{\n");
             for (var caseIndex = 0; caseIndex < union.Cases.Count; caseIndex++)
             {
                 var unionCase = union.Cases[caseIndex];
@@ -4183,7 +4423,29 @@ public static class CSharpEmitter
                 }
                 output.Append(";\n");
             }
-            output.Append("            default: return false;\n        }\n    }\n}\n\n");
+            output.Append("            default: return false;\n        }\n    }\n");
+            if (hasKeyedCollections)
+            {
+                output.Append("    int ").Append(hashInterface).Append(".__dsharp_hash()\n    {\n")
+                    .Append("        int hash = unchecked(17 * 31 + __dsharp_tag);\n")
+                    .Append("        switch (__dsharp_tag)\n        {\n");
+                for (var caseIndex = 0; caseIndex < union.Cases.Count; caseIndex++)
+                {
+                    var unionCase = union.Cases[caseIndex];
+                    var caseSuffix = caseIndex.ToString(CultureInfo.InvariantCulture);
+                    output.Append("            case ").Append(caseSuffix).Append(":\n");
+                    for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
+                    {
+                        var accessor = ".__dsharp_case_" + caseSuffix + "_item_" + i.ToString(CultureInfo.InvariantCulture);
+                        output.Append("                hash = unchecked(hash * 31 + ").Append(container).Append(".")
+                            .Append(hashDispatcher).Append("<").Append(CType(unionCase.PayloadTypes[i])).Append(">(this")
+                            .Append(accessor).Append("));\n");
+                    }
+                    output.Append("                return hash;\n");
+                }
+                output.Append("            default: throw new global::System.InvalidOperationException(\"Invalid D# union state.\");\n        }\n    }\n");
+            }
+            output.Append("}\n\n");
         }
         if (exports is null)
             output.Append("public sealed class @").Append(module.Name).Append(" : ").Append(container)
@@ -4240,7 +4502,7 @@ public static class CSharpEmitter
                 .Append("    {\n        public T Value { get; }\n        public ").Append(signalType).Append("(T value) { Value = value; }\n    }\n")
                 .Append("    private static T ").Append(raiseMethod).Append("<T>(T value) => throw new ").Append(signalType).Append("<T>(value);\n");
         }
-        if (module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null)
+        if (module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null || hasKeyedCollections)
         {
             output.Append("    internal static bool ").Append(equalityDispatcher).Append("<__DSharp_Value>(__DSharp_Value __left, __DSharp_Value __right)\n    {\n")
                 .Append("        if (global::System.Object.ReferenceEquals(__left, __right)) return true;\n")
@@ -4250,6 +4512,15 @@ public static class CSharpEmitter
                 .Append("            for (int __i = 0; __i < __leftTuple.Length; __i++) if (!").Append(equalityDispatcher).Append("<object>(__leftTuple[__i], __rightTuple[__i])) return false;\n")
                 .Append("            return true;\n        }\n")
                 .Append("        return global::System.Collections.Generic.EqualityComparer<__DSharp_Value>.Default.Equals(__left, __right);\n    }\n");
+        }
+        if (hasKeyedCollections)
+        {
+            output.Append("    internal static int ").Append(hashDispatcher).Append("<__DSharp_Value>(__DSharp_Value value)\n    {\n")
+                .Append("        if (global::System.Object.ReferenceEquals(value, null)) return unchecked((int)0x9E3779B9);\n")
+                .Append("        if (value is ").Append(hashInterface).Append(" data) return data.__dsharp_hash();\n")
+                .Append("        if (value is ").Append(structuralInterface).Append(") throw new global::System.InvalidOperationException(\"Ineligible D# key.\");\n")
+                .Append("        if (value is string text) return global::System.StringComparer.Ordinal.GetHashCode(text);\n")
+                .Append("        return global::System.Collections.Generic.EqualityComparer<__DSharp_Value>.Default.GetHashCode(value);\n    }\n");
         }
         foreach (var function in module.Functions)
         {
@@ -4409,6 +4680,57 @@ public static class CSharpEmitter
                         output.Append("            return ").Append(operationReceiver).Append(".__dsharp_").Append(listOperation.Operation)
                             .Append(operationTypeArguments).Append("(").Append(string.Join(", ", operationArgumentNames)).Append(");\n            }\n");
                         return operationHelper + "()";
+                    case BoundMapSetFactory factory:
+                        if (factory.Operation is "map.empty" or "set.empty")
+                        {
+                            if (factory.Arguments.Count != 0) throw new InvalidOperationException("Invalid empty collection factory.");
+                            return CType(factory.Type) + ".__dsharp_empty()";
+                        }
+                        if (factory.Operation != "set.from" || factory.Arguments.Count != 1 || module.ListSymbol is null ||
+                            !GenericTypes.TryParse(factory.Type, out var factoryShape) || factoryShape.Arguments.Count != 1)
+                            throw new InvalidOperationException("Invalid bound collection factory.");
+                        var factoryId = (listCount++).ToString(CultureInfo.InvariantCulture);
+                        var factoryHelper = "__dsharp_collection_factory_" + factoryId;
+                        var factoryArg = "__dsharp_collection_argument_" + factoryId;
+                        output.Append("            ").Append(CType(factory.Type)).Append(" ").Append(factoryHelper).Append("()\n            {\n");
+                        var factoryValue = EmitExpression(factory.Arguments[0]);
+                        output.Append("            ").Append(CType(module.ListSymbol + "<" + factoryShape.Arguments[0] + ">"))
+                            .Append(" ").Append(factoryArg).Append(" = ").Append(factoryValue).Append(";\n")
+                            .Append("            return ").Append(CType(factory.Type)).Append(".__dsharp_from(").Append(factoryArg).Append(");\n            }\n");
+                        return factoryHelper + "()";
+                    case BoundMapSetOperation collectionOperation:
+                        if (!GenericTypes.TryParse(collectionOperation.ReceiverType, out var collectionShape) ||
+                            (collectionShape.Name != module.MapSymbol && collectionShape.Name != module.SetSymbol))
+                            throw new InvalidOperationException("Invalid bound collection operation receiver.");
+                        var collectionIsMap = collectionShape.Name == module.MapSymbol;
+                        if (collectionShape.Arguments.Count != (collectionIsMap ? 2 : 1))
+                            throw new InvalidOperationException("Invalid bound collection type arity.");
+                        var collectionArgTypes = collectionOperation.Operation switch
+                        {
+                            "count" => Array.Empty<string>(),
+                            "get" or "contains" or "add" => new[] { collectionShape.Arguments[0].ToString() },
+                            "set" when collectionIsMap => new[] { collectionShape.Arguments[0].ToString(), collectionShape.Arguments[1].ToString() },
+                            _ => throw new InvalidOperationException("Unknown bound collection operation.")
+                        };
+                        if (collectionArgTypes.Length != collectionOperation.Arguments.Count)
+                            throw new InvalidOperationException("Invalid bound collection operation arguments.");
+                        var collectionId = (listCount++).ToString(CultureInfo.InvariantCulture);
+                        var collectionHelper = "__dsharp_collection_operation_" + collectionId;
+                        var collectionReceiver = "__dsharp_collection_receiver_" + collectionId;
+                        output.Append("            ").Append(CType(collectionOperation.Type)).Append(" ").Append(collectionHelper).Append("()\n            {\n");
+                        var collectionValue = EmitExpression(collectionOperation.Receiver);
+                        output.Append("            ").Append(CType(collectionOperation.ReceiverType)).Append(" ").Append(collectionReceiver).Append(" = ").Append(collectionValue).Append(";\n");
+                        var collectionArguments = new List<string>();
+                        for (var i = 0; i < collectionOperation.Arguments.Count; i++)
+                        {
+                            var value = EmitExpression(collectionOperation.Arguments[i]);
+                            var argument = "__dsharp_collection_argument_" + collectionId + "_" + i.ToString(CultureInfo.InvariantCulture);
+                            output.Append("            ").Append(CType(collectionArgTypes[i])).Append(" ").Append(argument).Append(" = ").Append(value).Append(";\n");
+                            collectionArguments.Add(argument);
+                        }
+                        output.Append("            return ").Append(collectionReceiver).Append(".__dsharp_").Append(collectionOperation.Operation)
+                            .Append("(").Append(string.Join(", ", collectionArguments)).Append(");\n            }\n");
+                        return collectionHelper + "()";
                     case BoundNull nullable: return "default(" + CType(nullable.Type) + ")";
                     case BoundLambda lambda:
                         var lambdaId = (lambdaCount++).ToString(CultureInfo.InvariantCulture);
