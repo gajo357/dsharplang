@@ -1,0 +1,15 @@
+module Demo
+
+fn addLater(offset: int): (Task<int>) -> Task<int> {
+    async input => {
+        let value = await input
+        value + offset
+    }
+}
+
+async fn answer(): int {
+    let add = addLater(2)
+    await add(completed(40))
+}
+
+async fn completed(value: int): int { value }
