@@ -55,6 +55,7 @@ external interoperability guarantee follows from this lowering. See the
 | Async functions and await | Explicit `async fn` with logical return annotation; `Task<T>` calls and `await` in async functions | Tasks suspend and resume without blocking; nested expressions, early return, Result propagation and same-invocation builders preserve their behavior |
 | Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
 | Interfaces and services | Explicit interfaces, services implementing one or more interfaces, checked methods and constructor dependencies | Interface-typed calls dispatch to the supplied service instance; async methods and explicit dependencies retain their usual behavior |
+| Default interface methods | Checked method bodies alongside required signatures; explicit service methods resolve conflicts and take precedence | Default bodies call methods on the selected service instance, including async dispatch |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -221,11 +222,17 @@ explicitly constructed services, including multiple implemented interfaces,
 signature conformance and direct polymorphic dispatch. Dependencies are supplied
 at construction and remain private to each instance. Service/interface references
 are execution capabilities: they cannot be hidden in immutable data, captured by
-lambdas or retained by partial application. Default interface bodies (#44),
-application registration and method partial application remain separate work.
+lambdas or retained by partial application. Application registration and method partial application remain separate work.
 See the [D# example](../../examples/interfaces-services.ds),
 [adopted contract](implementation/issue-43-contract.md) and
 [implementation plan](implementation/issue-43-plan.md).
+[Issue #44](https://github.com/gajo357/dsharplang/issues/44) adds default
+interface method bodies. A default can call another method on the same interface
+and dispatches through the selected service; a matching service method overrides
+it. Conflicting defaults require an explicit service method. A bodyless signature
+also requires an explicit method, including when another implemented interface
+provides a same-named default. See the [D# example](../../examples/default-interface-methods.ds)
+and [implementation plan](implementation/issue-44-plan.md).
 [Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
 expressions and blocks. Their explicit `async` marker permits `await` in the
 lambda itself, and the resulting function value returns a Task. Immutable

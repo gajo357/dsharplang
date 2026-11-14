@@ -343,10 +343,20 @@ internal static class MultiFileResolver
                 interfaces.Add(contract with
                 {
                     Name = Rename(contract.Name, symbol.Internal),
-                    Methods = contract.Methods.Select(method => method with
+                    Methods = contract.Methods.Select(method =>
                     {
-                        Parameters = method.Parameters.Select(parameter => parameter with { Type = ResolveType(parameter.Type, typeParameters) }).ToArray(),
-                        ReturnType = ResolveType(method.ReturnType, typeParameters)
+                        // Same-interface calls are implicit receiver calls, so
+                        // do not rewrite them to identically named module or
+                        // imported functions. Parameters remain lexical names
+                        // and the rest is resolved in this declaring file.
+                        var scope = contract.Methods.Select(item => item.Name.Text).ToHashSet(StringComparer.Ordinal);
+                        foreach (var parameter in method.Parameters) scope.Add(parameter.Name.Text);
+                        return method with
+                        {
+                            Parameters = method.Parameters.Select(parameter => parameter with { Type = ResolveType(parameter.Type, typeParameters) }).ToArray(),
+                            ReturnType = ResolveType(method.ReturnType, typeParameters),
+                            Body = method.Body is null ? null : Block(method.Body, scope, typeParameters)
+                        };
                     }).ToArray()
                 });
             }
