@@ -3749,10 +3749,47 @@ public static class CSharpEmitter
             SetTypeParameters(union.TypeParameters, nominalProjections[union.Name]);
             var unionName = recordTypes[union.Name];
             var type = unionName + TypeParameterList(union.TypeParameters);
-            output.Append("public sealed class ").Append(type).Append(" : ").Append(structuralInterface).Append("\n{\n")
-                .Append("    internal int __dsharp_tag { get; }\n")
-                .Append("    private readonly object[] __dsharp_payload;\n")
-                .Append("    private ").Append(unionName).Append("(int tag, object[] payload) { __dsharp_tag = tag; __dsharp_payload = payload; }\n");
+            // C# unions discriminate by case *type*. A separate wrapper for each
+            // D# case preserves case identity even when payload types coincide,
+            // and holds null as a payload rather than as the union's default.
+            // Reserve names globally: generated payload types may mention other
+            // nominal D# types whose C# names are unqualified in this scope.
+            var nativeUnion = UniqueGlobal("__dsharp_native_union");
+            var variants = union.Cases.Select((_, i) =>
+                UniqueGlobal("__dsharp_native_case_" + i.ToString(CultureInfo.InvariantCulture))).ToArray();
+            output.Append("public sealed class ").Append(type).Append(" : ").Append(structuralInterface).Append("\n{\n");
+            for (var caseIndex = 0; caseIndex < union.Cases.Count; caseIndex++)
+            {
+                var unionCase = union.Cases[caseIndex];
+                var variant = variants[caseIndex];
+                output.Append("    private sealed class ").Append(variant).Append("\n    {\n");
+                for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
+                    output.Append("        internal readonly ").Append(CType(unionCase.PayloadTypes[i])).Append(" __item_")
+                        .Append(i.ToString(CultureInfo.InvariantCulture)).Append(";\n");
+                output.Append("        internal ").Append(variant).Append("(");
+                for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
+                {
+                    if (i != 0) output.Append(", ");
+                    output.Append(CType(unionCase.PayloadTypes[i])).Append(" __value_").Append(i.ToString(CultureInfo.InvariantCulture));
+                }
+                output.Append(")\n        {\n");
+                for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
+                {
+                    var index = i.ToString(CultureInfo.InvariantCulture);
+                    output.Append("            __item_").Append(index).Append(" = __value_").Append(index).Append(";\n");
+                }
+                output.Append("        }\n    }\n");
+            }
+            output.Append("    private union ").Append(nativeUnion).Append("(").Append(string.Join(", ", variants)).Append(");\n")
+                .Append("    private readonly ").Append(nativeUnion).Append(" __dsharp_payload;\n")
+                .Append("    private ").Append(unionName).Append("(").Append(nativeUnion).Append(" payload) { __dsharp_payload = payload; }\n")
+                .Append("    internal int __dsharp_tag => __dsharp_payload switch\n    {\n");
+            for (var caseIndex = 0; caseIndex < union.Cases.Count; caseIndex++)
+                output.Append("        ").Append(variants[caseIndex]).Append(" => ").Append(caseIndex.ToString(CultureInfo.InvariantCulture)).Append(",\n");
+            // The native struct's default is not a D# case. The only constructor
+            // is private and factories always supply a wrapper; fail closed if an
+            // invalid native state is nevertheless observed via foreign code.
+            output.Append("        _ => throw new global::System.InvalidOperationException(\"Invalid D# union state.\")\n    };\n");
             for (var caseIndex = 0; caseIndex < union.Cases.Count; caseIndex++)
             {
                 var unionCase = union.Cases[caseIndex];
@@ -3763,18 +3800,20 @@ public static class CSharpEmitter
                     if (i != 0) output.Append(", ");
                     output.Append(CType(unionCase.PayloadTypes[i])).Append(" __value_").Append(i.ToString(CultureInfo.InvariantCulture));
                 }
-                output.Append(") => new ").Append(type).Append("(").Append(caseSuffix).Append(", new object[] { ");
+                output.Append(") => new ").Append(type).Append("(new ").Append(variants[caseIndex]).Append("(");
                 for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
                 {
                     if (i != 0) output.Append(", ");
                     output.Append("__value_").Append(i.ToString(CultureInfo.InvariantCulture));
                 }
-                output.Append(" });\n");
+                output.Append("));\n");
                 for (var i = 0; i < unionCase.PayloadTypes.Count; i++)
                 {
                     var index = i.ToString(CultureInfo.InvariantCulture);
                     output.Append("    internal ").Append(CType(unionCase.PayloadTypes[i])).Append(" __dsharp_case_").Append(caseSuffix)
-                        .Append("_item_").Append(index).Append(" => (").Append(CType(unionCase.PayloadTypes[i])).Append(")__dsharp_payload[").Append(index).Append("];\n");
+                        .Append("_item_").Append(index).Append(" => __dsharp_payload is ").Append(variants[caseIndex])
+                        .Append(" __case ? __case.__item_").Append(index)
+                        .Append(" : throw new global::System.InvalidOperationException(\"Invalid D# union case.\");\n");
                 }
             }
             output.Append("    bool ").Append(structuralInterface).Append(".__dsharp_equals(object __other)\n    {\n")
