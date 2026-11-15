@@ -9,7 +9,6 @@ namespace DSharp.Tests;
 
 public sealed class OwnedResourceFactoryTests
 {
-    [Fact(DisplayName = "Owned resource factories transfer directly to using")]
     public async Task FactoriesTransferAndRejectEscapes()
     {
         const string source = """
