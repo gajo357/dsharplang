@@ -57,6 +57,7 @@ external interoperability guarantee follows from this lowering. See the
 | Interfaces and services | Explicit interfaces, services implementing one or more interfaces, checked methods and constructor dependencies | Interface-typed calls dispatch to the supplied service instance; async methods and explicit dependencies retain their usual behavior |
 | Default interface methods | Checked method bodies alongside required signatures; explicit service methods resolve conflicts and take precedence | Default bodies call methods on the selected service instance, including async dispatch |
 | Directly constructed scoped resources | Fresh `resource` declarations, enclosing-block and braced `using`, receiver-only scoped handles | Sync/async release runs on tested exits with C#-style cleanup failure behavior |
+| Owned resource function factories | Explicit non-generic functions return a fresh resource directly to `using`; async factories must be immediately awaited | Factory forwarding, async acquisition and cleanup execute without exposing an owned value as ordinary data |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -240,9 +241,18 @@ scopes. Cleanup runs once on tested exits, including async suspension, typed
 errors, faults and cancellation. Following C#, a cleanup exception replaces any
 in-flight outcome. Handles cannot escape; async operations are immediately awaited.
 Resource dependencies follow service dependency restrictions, and existing
-conservative return-inference rules apply. Provider-returned owned resources
+conservative return-inference rules apply. Provider-returned resources require
+the factory rules described below; method factories and `Result` transfers
 remain open work. See the [D# example](../../examples/scoped-resources.ds)
 and [contract](implementation/issue-45-contract.md).
+[Issue #170](https://github.com/gajo357/dsharplang/issues/170) adds directly
+consumed owned-resource function factories, including async factories awaited
+immediately by `using`. Factories and fresh resources cannot become ordinary
+values, and factories containing `using` are rejected to avoid losing a resource
+if cleanup interrupts transfer. Service/interface method factories and `Result`
+transfers remain open under #45. See the
+[D# example](../../examples/owned-resource-factories.ds) and
+[implementation plan](implementation/issue-170-plan.md).
 [Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
 expressions and blocks. Their explicit `async` marker permits `await` in the
 lambda itself, and the resulting function value returns a Task. Immutable
