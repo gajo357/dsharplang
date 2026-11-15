@@ -253,7 +253,6 @@ public sealed class OwnedResourceFactoryTests
             "fn bad<T>(value: T): Cursor { Cursor() }",
             "fn bad(): Cursor? { null }",
             "fn bad(): Option<Cursor> { None }",
-            "fn bad(): Result<Cursor, string> { Error(\"error\") }",
             // The newly created resource must not cross cleanup of an active scope.
             "fn bad(): Cursor { using other = Other()\n Cursor() }",
             "fn bad(): Cursor { using other = Other() { Cursor() } }",

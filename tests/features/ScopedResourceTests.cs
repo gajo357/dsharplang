@@ -287,6 +287,7 @@ public sealed class ScopedResourceTests
         await ImportedResourceUsesItsDeclaringModule();
         await new OwnedResourceFactoryTests().FactoriesTransferAndRejectEscapes();
         await new OwnedServiceFactoryTests().ServiceFactoriesTransferAndRejectEscapes();
+        await new OwnedResultResourceTests().OwnedResultsTransferAndRejectEscapes();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
