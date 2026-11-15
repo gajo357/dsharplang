@@ -270,11 +270,15 @@ public sealed record BoundFunction(string Name, int Value)
     public string? ResultLocal { get; init; }
     public bool IsAsync { get; init; }
 }
-public sealed record BoundInterfaceMethod(string Name, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync);
+public sealed record BoundInterfaceMethod(string Name, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync)
+{
+    public bool IsOwnedFactory { get; init; }
+}
 public sealed record BoundInterfaceDeclaration(string Name, IReadOnlyList<BoundInterfaceMethod> Methods);
 public sealed record BoundServiceMethod(string Name, string FunctionName, IReadOnlyList<string> ParameterTypes, string ReturnType, bool IsAsync)
 {
     public string? DefaultInterface { get; init; }
+    public bool IsOwnedFactory { get; init; }
 }
 public sealed record BoundServiceDeclaration(string Name, IReadOnlyList<string> DependencyTypes, IReadOnlyList<string> Interfaces, IReadOnlyList<BoundServiceMethod> Methods);
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
@@ -1601,7 +1605,8 @@ public static class Binder
             foreach (var method in item.Methods)
             {
                 if (!methods.TryAdd(method.Name.Text, method)) Fail("DS2040", method.Name, "Duplicate interface method.");
-                if (!SupportedType(method.ReturnType.Text)) Fail("DS2040", method.ReturnType, "Unsupported interface result type.");
+                if (!SupportedType(method.ReturnType.Text) && !resourceNames.Contains(method.ReturnType.Text))
+                    Fail("DS2040", method.ReturnType, "Unsupported interface result type.");
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var parameter in method.Parameters)
                 {
@@ -1725,7 +1730,8 @@ public static class Binder
                 functionTypeScopes.Add(syntheticName, noTypeScope);
                 syntheticFunctions.Add(synthetic);
                 boundMethods.Add(new BoundServiceMethod(method.Name.Text, syntheticName,
-                    contract.Parameters.Select(parameter => parameter.Type.Text).ToArray(), contract.ReturnType.Text, contract.IsAsync));
+                    contract.Parameters.Select(parameter => parameter.Type.Text).ToArray(), contract.ReturnType.Text, contract.IsAsync)
+                    { IsOwnedFactory = resourceNames.Contains(contract.ReturnType.Text) });
             }
             foreach (var (name, candidates) in declarations)
             {
@@ -1738,7 +1744,7 @@ public static class Binder
                 var method = selected.Method;
                 boundMethods.Add(new BoundServiceMethod(name, defaultBodies[(selected.Interface, name)],
                     method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
-                    { DefaultInterface = selected.Interface });
+                    { DefaultInterface = selected.Interface, IsOwnedFactory = resourceNames.Contains(method.ReturnType.Text) });
             }
             serviceMethods.Add(service.Name.Text, required);
             boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
@@ -1759,8 +1765,8 @@ public static class Binder
             var isOwnedFactory = !function.InferReturnType && resourceNames.Contains(function.ReturnType.Text);
             if (isOwnedFactory)
             {
-                if (function.TypeParameters.Count != 0 || syntheticFunctions.Contains(function))
-                    Fail("DS2041", function.ReturnType, "An owned resource factory must be a nongeneric top-level function.");
+                if (function.TypeParameters.Count != 0)
+                    Fail("DS2041", function.ReturnType, "An owned resource factory must be nongeneric.");
                 ownedFactories.Add(function.Name.Text);
             }
             else if (!function.InferReturnType && !SupportedType(function.ReturnType.Text, typeParameters)) Fail("DS2003", function.ReturnType, "Unsupported return type or unconstrained nullable type parameter.");
@@ -2295,19 +2301,29 @@ public static class Binder
             // never marked, so nesting an owned value into a different call
             // cannot smuggle it across the lifetime boundary.
             var ownedCalls = new HashSet<CallSyntax>(ReferenceEqualityComparer.Instance);
+            var ownedMemberCalls = new HashSet<MemberCallSyntax>(ReferenceEqualityComparer.Instance);
+            var awaitedOwnedMembers = new HashSet<MemberCallSyntax>(ReferenceEqualityComparer.Instance);
+            var awaitedOwnedCalls = new HashSet<CallSyntax>(ReferenceEqualityComparer.Instance);
             void MarkOwnedResult(ExpressionSyntax expression)
             {
                 switch (expression)
                 {
                     case GroupSyntax group: MarkOwnedResult(group.Inner); break;
+                    case MemberCallSyntax member:
+                        ownedMemberCalls.Add(member); break;
                     case CallSyntax call when resourceNames.Contains(call.Name.Text) ||
-                                              ownedFactories.Contains(call.Name.Text) && !signatures[call.Name.Text].IsAsync:
+                                              ownedFactories.Contains(call.Name.Text) && !signatures[call.Name.Text].IsAsync ||
+                                              IsDefaultMethodName(call.Name.Text):
                         ownedCalls.Add(call); break;
                     case AwaitSyntax awaited:
                         var operand = awaited.Operand;
                         while (operand is GroupSyntax awaitedGroup) operand = awaitedGroup.Inner;
                         if (operand is CallSyntax asyncCall && ownedFactories.Contains(asyncCall.Name.Text) && signatures[asyncCall.Name.Text].IsAsync)
                             ownedCalls.Add(asyncCall);
+                        else if (operand is CallSyntax implicitCall && IsDefaultMethodName(implicitCall.Name.Text))
+                        { ownedCalls.Add(implicitCall); awaitedOwnedCalls.Add(implicitCall); }
+                        else if (operand is MemberCallSyntax asyncMember)
+                        { ownedMemberCalls.Add(asyncMember); awaitedOwnedMembers.Add(asyncMember); }
                         break;
                     case IfSyntax conditional:
                         MarkOwnedBlock(conditional.Then); MarkOwnedBlock(conditional.Else); break;
@@ -3517,27 +3533,19 @@ public static class Binder
                             Fail("DS2006", owned.Name, "Duplicate or shadowed local binding.");
                         ExpressionSyntax acquisition = owned.Acquisition;
                         while (acquisition is GroupSyntax acquisitionGroup) acquisition = acquisitionGroup.Inner;
-                        bool awaitedAcquisition = acquisition is AwaitSyntax;
                         if (acquisition is AwaitSyntax acquisitionAwait)
                         {
                             acquisition = acquisitionAwait.Operand;
                             while (acquisition is GroupSyntax awaitedGroup) acquisition = awaitedGroup.Inner;
                         }
-                        if (acquisition is not CallSyntax constructor || locals.ContainsKey(constructor.Name.Text) ||
-                            functionTypeScope.ContainsKey(constructor.Name.Text))
+                        if (acquisition is not (CallSyntax or MemberCallSyntax))
                             Fail("DS2041", owned.Keyword, "Acquire a fresh resource or directly await an owned factory in the using initializer.");
-                        string resourceName;
-                        if (!awaitedAcquisition && resourceNames.Contains(constructor!.Name.Text)) resourceName = constructor.Name.Text;
-                        else if (ownedFactories.Contains(constructor!.Name.Text) && signatures[constructor.Name.Text].IsAsync == awaitedAcquisition)
-                            resourceName = signatures[constructor.Name.Text].ReturnType.Text;
-                        else
-                        {
-                            Fail("DS2041", owned.Keyword, "Acquire a fresh resource or directly await an owned factory in the using initializer.");
-                            throw new InvalidOperationException();
-                        }
                         MarkOwnedResult(owned.Acquisition);
                         var acquired = BindExpression(owned.Acquisition);
-                        var resource = services[resourceName];
+                        var resourceName = acquired.Type == "<never>" ? KnownType(acquired.Expression) : acquired.Type;
+                        if (resourceName is null || !resourceNames.Contains(resourceName))
+                            Fail("DS2041", owned.Keyword, "A using initializer must produce an owned resource directly.");
+                        var resource = services[resourceName!];
                         var releaseAsync = resourceDeclarations[resource.Name.Text].Methods.Single(method => method.Name.Text == "release").IsAsync;
                         if (releaseAsync && !awaitAllowed) Fail("DS2041", owned.Keyword, "Asynchronous resource cleanup requires an async function.");
                         var beforeScope = inferenceReachable;
@@ -3752,8 +3760,13 @@ public static class Binder
                         }
                         if (defaultReceivers.TryGetValue(function.Name.Text, out var callDefault) &&
                             interfaceMethods[callDefault.Interface].ContainsKey(call.Name.Text))
-                            return BindExpression(new MemberCallSyntax(new ValueSyntax(callDefault.Receiver), call.Name, call.OpenParen, call.Arguments)
-                                { TypeArguments = call.TypeArguments }, expectedResult);
+                        {
+                            var implicitMember = new MemberCallSyntax(new ValueSyntax(callDefault.Receiver), call.Name, call.OpenParen, call.Arguments)
+                                { TypeArguments = call.TypeArguments };
+                            if (ownedCalls.Contains(call)) ownedMemberCalls.Add(implicitMember);
+                            if (awaitedOwnedCalls.Contains(call)) awaitedOwnedMembers.Add(implicitMember);
+                            return BindExpression(implicitMember, expectedResult);
+                        }
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
                             if (resourceNames.Contains(call.Name.Text) && !ownedCalls.Contains(call))
@@ -3953,6 +3966,9 @@ public static class Binder
                                 Fail("DS2027", member.Member, "An explicit return type is required for indirect service calls.");
                             if (!dispatchMethods!.TryGetValue(member.Member.Text, out var dispatchMethod))
                                 Fail("DS2040", member.Member, "Unknown service or interface method.");
+                            if (resourceNames.Contains(dispatchMethod!.ReturnType.Text) &&
+                                (!ownedMemberCalls.Contains(member) || dispatchMethod.IsAsync != awaitedOwnedMembers.Contains(member)))
+                                Fail("DS2041", member.Member, "An owned factory method must be fully applied and transferred directly; async factories must be directly awaited.");
                             if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Service methods do not accept type arguments.");
                             if (member.Arguments.Count != dispatchMethod!.Parameters.Count)
                                 Fail("DS2012", member.Member, "Incorrect number of service method arguments.");
@@ -4877,7 +4893,8 @@ public static class Binder
             TaskSymbol = taskUsed ? taskSymbol : null,
             Interfaces = syntax.Interfaces.Select(item => new BoundInterfaceDeclaration(item.Name.Text,
                 item.Methods.Select(method => new BoundInterfaceMethod(method.Name.Text,
-                    method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)).ToArray())).ToArray(),
+                    method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
+                    { IsOwnedFactory = resourceNames.Contains(method.ReturnType.Text) }).ToArray())).ToArray(),
             Services = boundServiceDeclarations,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
@@ -5438,7 +5455,7 @@ public static class CSharpEmitter
             output.Append("public interface ").Append(capabilityTypes[contract.Name]).Append("\n{\n");
             foreach (var method in contract.Methods)
             {
-                output.Append("    ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
+                output.Append(method.IsOwnedFactory ? "    internal abstract " : "    ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
                     .Append(" ").Append(CapabilityMethod(method.Name)).Append("(");
                 for (var i = 0; i < method.ParameterTypes.Count; i++)
                 {
@@ -5475,7 +5492,7 @@ public static class CSharpEmitter
             output.Append("    }\n");
             foreach (var method in service.Methods)
             {
-                output.Append("    public ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
+                output.Append(method.IsOwnedFactory ? "    internal " : "    public ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
                     .Append(" ").Append(CapabilityMethod(method.Name)).Append("(");
                 var arguments = new List<string>();
                 if (method.DefaultInterface is not null) arguments.Add("this");
@@ -5490,6 +5507,29 @@ public static class CSharpEmitter
                 }
                 output.Append(") => ").Append(container).Append(".@").Append(method.FunctionName)
                     .Append("(").Append(string.Join(", ", arguments)).Append(");\n");
+                if (method.IsOwnedFactory)
+                {
+                    // Internal interface members cannot be satisfied by an
+                    // ordinary internal method. Emit explicit forwarding for
+                    // every interface sharing this checked source signature.
+                    // D# calls on a concrete service still use the internal
+                    // method above, while interface calls dispatch virtually.
+                    foreach (var interfaceName in service.Interfaces)
+                    {
+                        var contract = module.Interfaces.Single(item => item.Name == interfaceName);
+                        if (!contract.Methods.Any(item => item.Name == method.Name && item.IsOwnedFactory)) continue;
+                        output.Append("    ").Append(method.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(method.ReturnType) + ">" : CType(method.ReturnType))
+                            .Append(" ").Append(CType(interfaceName)).Append(".").Append(CapabilityMethod(method.Name)).Append("(");
+                        for (var i = 0; i < method.ParameterTypes.Count; i++)
+                        {
+                            if (i != 0) output.Append(", ");
+                            output.Append(CType(method.ParameterTypes[i])).Append(" __dsharp_arg_").Append(i.ToString(CultureInfo.InvariantCulture));
+                        }
+                        output.Append(") => ").Append(CapabilityMethod(method.Name)).Append("(")
+                            .Append(string.Join(", ", Enumerable.Range(0, method.ParameterTypes.Count).Select(i => "__dsharp_arg_" + i.ToString(CultureInfo.InvariantCulture))))
+                            .Append(");\n");
+                    }
+                }
             }
             output.Append("}\n\n");
         }

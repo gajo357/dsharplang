@@ -1,0 +1,30 @@
+module Demo
+
+resource Cursor(value: int) {
+    read(): int { value }
+    release(): Unit { () }
+}
+
+interface Store {
+    open(value: int): Cursor
+    // A default method forwards ownership through the selected implementation.
+    openDefault(value: int): Cursor { open(value) }
+    async openAsync(input: Task<int>): Cursor
+}
+
+service MemoryStore: Store {
+    open(value) { Cursor(value) }
+    openAsync(input) { Cursor(await input) }
+}
+
+fn answer(): int {
+    let store: Store = MemoryStore()
+    using cursor = store.openDefault(40)
+    cursor.read() + 2
+}
+
+async fn asyncAnswer(input: Task<int>): int {
+    let store: Store = MemoryStore()
+    using cursor = await store.openAsync(input)
+    cursor.read() + 2
+}
