@@ -1,8 +1,8 @@
 # Issue 45: Scoped resource ownership
 
 **Status:** The maintainer directed D# to follow C# `using` cleanup behavior.
-The direct-construction slice is implemented for review; #45 remains open for
-provider-returned ownership and its integration tests.
+Direct construction is implemented; immediate function-factory transfer is
+implemented for review. #45 remains open for method factories and Result transfer.
 
 [DEC-07](DEC-07.md) adopts bounded ownership and exactly-once cleanup. Its prior
 rule for separately reporting a cleanup failure when another failure is already
@@ -38,8 +38,10 @@ fn answer(): int {
 ```
 
 A `resource` declares operations and exactly one compiler-invoked `release`.
-Each initializer directly constructs a fresh resource. Constructor arguments
-are evaluated once before the handle is in scope. An `async release(): Unit`
+An initializer directly constructs a fresh resource or consumes a fully
+applied checked owned-resource function factory; an async factory must be
+immediately awaited. Constructor and factory arguments are evaluated once before
+the handle is in scope. An `async release(): Unit`
 is awaited and requires an async enclosing function or lambda. Async resource
 operations must be immediately awaited in their scope. Resource dependencies
 follow existing service rules: immutable data or explicit service/interface
@@ -70,9 +72,16 @@ cleanup reporter or implicit transaction rollback.
 
 ## Remaining #45 work
 
-Provider-returned owned tokens and linear transfers through `Task` or `Result`
-are not implemented. In particular, `using connection = (await db.open())?`
-is still a target rather than supported behavior. General borrowing, foreign
+Explicit nongeneric top-level function factories can return fresh resources for
+immediate consumption by `using`, including direct async calls under `await`.
+They cannot be used as values or partially applied, and a resource factory may
+not contain `using`: cleanup failure could otherwise lose a produced resource
+before ownership transfers. See the [factory plan](issue-170-plan.md).
+
+Service/interface method factories and linear transfers through `Result` or
+stored `Task` values are not implemented. In particular,
+`using connection = (await db.open())?` is still a target rather than supported
+behavior. General borrowing, foreign
 `IDisposable`/`IAsyncDisposable` mapping, database transactions, and implicit
 application registration remain separate work. Closing #45 requires the
 remaining ownership behavior and its acceptance tests; the

@@ -258,6 +258,7 @@ public sealed record BoundLocal(string Name, int Value, string? InitializerLocal
 }
 public sealed record BoundFunction(string Name, int Value)
 {
+    public bool IsOwnedFactory { get; init; }
     public IReadOnlyList<string> TypeParameters { get; init; } = Array.Empty<string>();
     public string ReturnType { get; init; } = "int";
     public BoundBlock? Body { get; init; }
@@ -1745,6 +1746,7 @@ public static class Binder
         }
         syntax = syntax with { Functions = syntax.Functions.Concat(syntheticFunctions).ToArray() };
         var signatures = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
+        var ownedFactories = new HashSet<string>(StringComparer.Ordinal);
         foreach (var function in syntax.Functions)
         {
             var typeParameters = Parameters(function.TypeParameters);
@@ -1754,7 +1756,14 @@ public static class Binder
             if (records.TryGetValue(function.Name.Text, out var conflictingRecord))
                 Fail("DS2015", function.Name.Span.Start > conflictingRecord.Name.Span.Start ? function.Name : conflictingRecord.Name,
                     "A function and record constructor cannot share a name.");
-            if (!function.InferReturnType && !SupportedType(function.ReturnType.Text, typeParameters)) Fail("DS2003", function.ReturnType, "Unsupported return type or unconstrained nullable type parameter.");
+            var isOwnedFactory = !function.InferReturnType && resourceNames.Contains(function.ReturnType.Text);
+            if (isOwnedFactory)
+            {
+                if (function.TypeParameters.Count != 0 || syntheticFunctions.Contains(function))
+                    Fail("DS2041", function.ReturnType, "An owned resource factory must be a nongeneric top-level function.");
+                ownedFactories.Add(function.Name.Text);
+            }
+            else if (!function.InferReturnType && !SupportedType(function.ReturnType.Text, typeParameters)) Fail("DS2003", function.ReturnType, "Unsupported return type or unconstrained nullable type parameter.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var parameter in function.Parameters)
             {
@@ -2281,6 +2290,50 @@ public static class Binder
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var resourceHandles = new HashSet<string>(StringComparer.Ordinal);
             var directResourceAwait = false;
+            // Only individual producer call nodes explicitly marked at a
+            // transfer boundary may produce an owned resource. Arguments are
+            // never marked, so nesting an owned value into a different call
+            // cannot smuggle it across the lifetime boundary.
+            var ownedCalls = new HashSet<CallSyntax>(ReferenceEqualityComparer.Instance);
+            void MarkOwnedResult(ExpressionSyntax expression)
+            {
+                switch (expression)
+                {
+                    case GroupSyntax group: MarkOwnedResult(group.Inner); break;
+                    case CallSyntax call when resourceNames.Contains(call.Name.Text) ||
+                                              ownedFactories.Contains(call.Name.Text) && !signatures[call.Name.Text].IsAsync:
+                        ownedCalls.Add(call); break;
+                    case AwaitSyntax awaited:
+                        var operand = awaited.Operand;
+                        while (operand is GroupSyntax awaitedGroup) operand = awaitedGroup.Inner;
+                        if (operand is CallSyntax asyncCall && ownedFactories.Contains(asyncCall.Name.Text) && signatures[asyncCall.Name.Text].IsAsync)
+                            ownedCalls.Add(asyncCall);
+                        break;
+                    case IfSyntax conditional:
+                        MarkOwnedBlock(conditional.Then); MarkOwnedBlock(conditional.Else); break;
+                    case MatchSyntax match:
+                        foreach (var arm in match.Arms) MarkOwnedResult(arm.Value);
+                        break;
+                }
+            }
+            void MarkOwnedBlock(BlockSyntax block) => MarkOwnedResult(block.Result);
+            void ValidateFactoryBody(object? node, bool insideLambda = false)
+            {
+                if (node is null or string || node is Token) return;
+                if (node is UsingSyntax owned)
+                    Fail("DS2041", owned.Keyword, "Owned factories cannot contain using scopes before ownership transfers.");
+                if (node is ReturnStatementSyntax returned && !insideLambda) MarkOwnedResult(returned.Value);
+                if (node is System.Collections.IEnumerable sequence)
+                {
+                    foreach (var item in sequence) ValidateFactoryBody(item, insideLambda);
+                    return;
+                }
+                var type = node.GetType();
+                if (!type.Name.EndsWith("Syntax", StringComparison.Ordinal)) return;
+                var nestedLambda = insideLambda || node is LambdaSyntax;
+                foreach (var property in type.GetProperties().Where(property => property.GetIndexParameters().Length == 0))
+                    ValidateFactoryBody(property.GetValue(node), nestedLambda);
+            }
             var boundLocals = new List<BoundLocal>();
             var tupleBindingCount = 0;
             bool hasReturn = false;
@@ -3464,14 +3517,27 @@ public static class Binder
                             Fail("DS2006", owned.Name, "Duplicate or shadowed local binding.");
                         ExpressionSyntax acquisition = owned.Acquisition;
                         while (acquisition is GroupSyntax acquisitionGroup) acquisition = acquisitionGroup.Inner;
-                        if (acquisition is not CallSyntax constructor || !resourceNames.Contains(constructor.Name.Text) ||
-                            locals.ContainsKey(constructor.Name.Text) || functionTypeScope.ContainsKey(constructor.Name.Text))
-                            Fail("DS2041", owned.Keyword, "Acquire a fresh resource directly in the using initializer.");
-                        var resource = services[constructor!.Name.Text];
-                        if (constructor.TypeArguments.Count != 0 || constructor.Arguments.Count != resource.Dependencies.Count)
-                            Fail("DS2041", constructor.Name, "Incorrect resource constructor arguments.");
-                        var acquired = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
-                            resource.Dependencies.Select(parameter => parameter.Type).ToArray(), constructor.Arguments, constructor.Name);
+                        bool awaitedAcquisition = acquisition is AwaitSyntax;
+                        if (acquisition is AwaitSyntax acquisitionAwait)
+                        {
+                            acquisition = acquisitionAwait.Operand;
+                            while (acquisition is GroupSyntax awaitedGroup) acquisition = awaitedGroup.Inner;
+                        }
+                        if (acquisition is not CallSyntax constructor || locals.ContainsKey(constructor.Name.Text) ||
+                            functionTypeScope.ContainsKey(constructor.Name.Text))
+                            Fail("DS2041", owned.Keyword, "Acquire a fresh resource or directly await an owned factory in the using initializer.");
+                        string resourceName;
+                        if (!awaitedAcquisition && resourceNames.Contains(constructor!.Name.Text)) resourceName = constructor.Name.Text;
+                        else if (ownedFactories.Contains(constructor!.Name.Text) && signatures[constructor.Name.Text].IsAsync == awaitedAcquisition)
+                            resourceName = signatures[constructor.Name.Text].ReturnType.Text;
+                        else
+                        {
+                            Fail("DS2041", owned.Keyword, "Acquire a fresh resource or directly await an owned factory in the using initializer.");
+                            throw new InvalidOperationException();
+                        }
+                        MarkOwnedResult(owned.Acquisition);
+                        var acquired = BindExpression(owned.Acquisition);
+                        var resource = services[resourceName];
                         var releaseAsync = resourceDeclarations[resource.Name.Text].Methods.Single(method => method.Name.Text == "release").IsAsync;
                         if (releaseAsync && !awaitAllowed) Fail("DS2041", owned.Keyword, "Asynchronous resource cleanup requires an async function.");
                         var beforeScope = inferenceReachable;
@@ -3480,7 +3546,7 @@ public static class Binder
                         resourceHandles.Add(owned.Name.Text);
                         try
                         {
-                            inferenceReachable = beforeScope && !acquired.Never;
+                            inferenceReachable = beforeScope && acquired.Type != "<never>";
                             scopeBody = BindBlock(owned.Body, expectedResultType: expectedResult);
                         }
                         finally
@@ -3497,9 +3563,9 @@ public static class Binder
                             actualType = expectedResult!;
                             scopeBody = (CoerceBlock(scopeBody.Block, actualType), actualType);
                         }
-                        return (new BoundUsing(owned.Name.Text, new BoundServiceConstruction(resource.Name.Text, acquired.Values),
+                        return (new BoundUsing(owned.Name.Text, acquired.Expression,
                             resource.Name.Text, scopeBody.Block, actualType, releaseAsync),
-                            acquired.Never || scopeBody.Type == "<never>" ? "<never>" : actualType);
+                            acquired.Type == "<never>" || scopeBody.Type == "<never>" ? "<never>" : actualType);
                     }
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
@@ -3660,6 +3726,8 @@ public static class Binder
                         }
                         if (!locals.ContainsKey(token.Text) && signatures.TryGetValue(token.Text, out var namedFunction))
                         {
+                            if (ownedFactories.Contains(token.Text))
+                                Fail("DS2041", token, "An owned resource factory cannot be used as a function value.");
                             if (resultHelpers.ContainsKey(token.Text)) { usedResultHelpers.Add(token.Text); resultUsed = true; }
                             var fullPattern = TypeShape.FunctionName + "<" + string.Join(",", namedFunction.Parameters.Select(p => p.Type.Text).Append(CallableResult(namedFunction))) + ">";
                             var inferred = BindGenericArguments(namedFunction.TypeParameters, Array.Empty<Token>(), Array.Empty<Token>(), Array.Empty<ExpressionSyntax>(), token, fullPattern, expectedResult);
@@ -3688,9 +3756,13 @@ public static class Binder
                                 { TypeArguments = call.TypeArguments }, expectedResult);
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
-                            if (resourceNames.Contains(call.Name.Text))
-                                Fail("DS2041", call.Name, "A resource must be acquired directly by a using scope.");
-                            if (cases.ContainsKey(call.Name.Text)) Fail("DS2018", call.Name, "Ambiguous service constructor and union case.");
+                            if (resourceNames.Contains(call.Name.Text) && !ownedCalls.Contains(call))
+                                Fail("DS2041", call.Name, "A resource must transfer directly to a using scope or owned factory result.");
+                            // A checked owned transfer already identifies a
+                            // resource constructor, including when a union
+                            // case has the same source name.
+                            if (cases.ContainsKey(call.Name.Text) && !resourceNames.Contains(call.Name.Text))
+                                Fail("DS2018", call.Name, "Ambiguous service constructor and union case.");
                             if (functionTypeScope.ContainsKey(call.Name.Text)) Fail("DS2026", call.Name, "A type parameter is not a service constructor.");
                             if (call.TypeArguments.Count != 0) Fail("DS2023", call.Name, "Service constructors do not accept type arguments.");
                             if (call.Arguments.Count != serviceConstructor.Dependencies.Count) Fail("DS2012", call.Name, "Incorrect number of service constructor arguments.");
@@ -3705,6 +3777,15 @@ public static class Binder
                                 call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
                         }
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
+                        if (ownedFactories.Contains(call.Name.Text))
+                        {
+                            if (!ownedCalls.Contains(call) || call.TypeArguments.Count != 0 || call.Arguments.Count != target!.Parameters.Count)
+                                Fail("DS2041", call.Name, "An owned factory must be fully applied and transferred directly.");
+                            var transferred = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                                target!.Parameters.Select(parameter => parameter.Type).ToArray(), call.Arguments, call.Name);
+                            return (new BoundCall(call.Name.Text, transferred.Values) { Location = call.Name },
+                                transferred.Never ? "<never>" : CallableResult(target));
+                        }
                         if (resultHelpers.ContainsKey(call.Name.Text)) { usedResultHelpers.Add(call.Name.Text); resultUsed = true; }
                         // A dead call cannot supply return evidence, and its
                         // callee may not yet have an inferred signature. The
@@ -4612,6 +4693,11 @@ public static class Binder
                 }
             }
             var sourceBody = function.Body ?? new BlockSyntax(function.Bindings, function.Expression ?? new ValueSyntax(function.Literal));
+            if (ownedFactories.Contains(function.Name.Text))
+            {
+                ValidateFactoryBody(sourceBody);
+                MarkOwnedBlock(sourceBody);
+            }
             if (function.InferReturnType)
             {
                 // Infer from the function's own reachable exits only, never
@@ -4646,6 +4732,7 @@ public static class Binder
                 Body = body.Block.Statements.Count == 0 ? null : body.Block with { Result = resultExpression },
                 HasReturn = hasReturn,
                 IsAsync = function.IsAsync,
+                IsOwnedFactory = ownedFactories.Contains(function.Name.Text),
                 ResultLocal = (result.Expression as BoundReference)?.Name,
                 ReturnType = function.ReturnType.Text,
                 ParameterTypes = function.Parameters.Select(p => p.Type.Text).ToArray(),
@@ -5423,6 +5510,7 @@ public static class CSharpEmitter
                 foreach (var export in group)
                 {
                     var function = module.Functions.Single(item => item.Name == export.InternalName);
+                    if (function.IsOwnedFactory) continue;
                     SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
                     output.Append("    public static ").Append(function.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(export.Name)
                         .Append(TypeParameterList(function.TypeParameters)).Append("(");
@@ -5525,7 +5613,7 @@ public static class CSharpEmitter
         foreach (var function in module.Functions)
         {
             SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
-            output.Append("    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
+            output.Append(function.IsOwnedFactory ? "    internal static " : "    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
                 .Append(TypeParameterList(function.TypeParameters)).Append("(");
             for (var i = 0; i < function.Parameters.Count; i++)
             {

@@ -1,0 +1,25 @@
+module Demo
+
+resource Cursor(value: int) {
+    read(): int { value }
+    release(): Unit { () }
+}
+
+// The fresh resource is transferred directly to the caller's using scope.
+fn open(value: int): Cursor { Cursor(value) }
+
+fn answer(): int {
+    using cursor = open(40)
+    cursor.read() + 2
+}
+
+// Async acquisition may suspend before the resource is created.
+async fn openAsync(input: Task<int>): Cursor {
+    let value = await input
+    Cursor(value)
+}
+
+async fn asyncAnswer(input: Task<int>): int {
+    using cursor = await openAsync(input)
+    cursor.read() + 2
+}
