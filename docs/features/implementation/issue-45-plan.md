@@ -2,107 +2,74 @@
 
 **Base:** `a9fe0b5` (merged #44 / PR #168).
 **Issue:** [#45](https://github.com/gajo357/dsharplang/issues/45).
-**Status:** The maintainer approved the owned-resource and explicit-reporter direction; the bounded direct-construction slice is implemented for review.
+**Status:** The direct-construction slice on PR #169 follows C# `using` semantics, as directed by the maintainer.
 
-## Prerequisites and scope
+## Scope and decisions
 
-Async functions (#41), interfaces and explicit services (#43), and lifecycle
-[DEC-07](DEC-07.md) are merged. DEC-07 adopts bounded ownership, exactly-once
-cleanup, awaiting async disposal, and reporting cleanup failures separately
-without replacing the primary outcome. It intentionally leaves the exact public
-API and compiler ownership enforcement open. The syntax reference's `using`
-example is proposed rather than adopted, and foreign disposal adapters are part
-of the separately unadopted DEC-06. No resource type or cleanup protocol exists
-in the current compiler.
+The maintainer approved scoped owned resources, then explicitly directed D# to
+follow C# cleanup behavior and remove the extra reporting clause. This supersedes
+DEC-07's prior rule requiring separate reporting of a secondary cleanup fault for
+this feature: if body and cleanup both fail, the cleanup exception is observable,
+as with C# `using`. If cleanup succeeds, the original return, typed failure,
+exception or cancellation is preserved.
 
-The maintainer approved the owned-resource and explicit-reporter direction.
-The [contract](issue-45-contract.md) records the broader design and remaining
-provider-transfer choices. This PR implements the bounded slice below; #45 stays
-open until provider-returned owned resources and their acceptance tests land.
+Implement fresh `resource` declarations with `using handle = Resource(args)`
+lasting through the remainder of its enclosing lexical block, and
+`using handle = Resource(args) { ... }` for an explicit nested scope. Cleanup is
+synchronous or awaited according to the declared release operation and runs once
+for every successful acquisition. Nested resources release in reverse acquisition
+order. Preserve receiver-only handles, immediate awaiting of async resource
+operations, capability restrictions, constructor argument evaluation order,
+lexical binding and existing source compatibility. No explicit cleanup callback.
 
-## Adopted first implementation slice
+The direct-construction slice does not support provider-returned owned tokens or
+transfers through `Task` or `Result`; keep #45 open. No general borrowing,
+application host, foreign disposable adapters or transaction behavior is claimed.
 
-The maintainer approved proceeding with owned resources and an explicit cleanup
-reporter. Implement fresh D# `resource Name(dependencies) { ... }` declarations
-and `using handle = Name(args) report reporter { ... }`; the compiler alone
-invokes exactly one `release(): Unit` or `async release(): Unit`. The reporter
-is an already-bound non-null `(string) -> Unit` function, passed by identifier;
-it receives a safe resource-name diagnostic for each secondary cleanup fault.
-A function reference or arbitrary expression is not evaluated as a reporter.
-The callable may fault: a generated combined fault must retain the primary,
-cleanup and reporter failures. Source handles are receiver-only, cannot be
-aliased or passed/returned/captured/stored, and async operations are immediately
-awaited. Only direct fresh resource construction is accepted; ordinary services
-are never implicitly owned. Provider-returned owned tokens, including acquisition
-through `Task` or `Result`, remain separate work, so this slice must not close
-#45. Do not claim general resource borrowing or foreign adapter behavior.
+## Implementation and files
 
-For an escaping top-level Result Error, an exception, or cancellation plus a
-cleanup fault, report that cleanup once and preserve the primary outcome when
-reporting succeeds. For normal success or successful early return, surface a
-cleanup fault. Reporter faults surface a combined failure retaining all causes.
-Nested scopes release in reverse order. Neither a handled nor nested Error value
-is treated as an escaping failure. The compiler's internal return signals must
-retain their semantics across cleanup.
-
-## Intended implementation steps
-
-1. After adoption, parse and resolve the selected source forms while preserving
-   spans, module/import behavior, and existing APIs.
-2. Track resource ownership and lifetimes across acquisition, local scopes,
-   control flow, generic calls, async suspension, data and closures; reject escape.
-3. Generate exactly-once cleanup for normal completion, early return, typed
-   failure, fault and cancellation, with the adopted dual-failure behavior.
-4. Add executable D# examples and new feature tests; update implementation status.
+1. Adjust syntax, binder, emitter and multi-file resolver in `src/DSharp.Compiler`
+   for declaration and braced forms, safe lexical lifetime and C#-like cleanup.
+2. Adjust the still-unmerged scoped-resource feature tests and D# example for the
+   explicitly requested change; preserve all unrelated established tests.
+3. Update the resource contract and implementation status with precise behavior.
 
 ## Acceptance-to-test map
 
-- AC1: sync and async acquisition/cleanup; success, early return, typed error,
-  fault, cancellation, failed acquisition and nested cleanup. Verify awaiting.
-- AC2: reject escapes through returns, immutable data, closures, partial calls,
-  tasks and indirect/generic routes; verify legitimate in-scope use.
-- AC3: exactly-once cleanup, acquisition evaluation order, and observable primary
-  and cleanup failures together, including typed errors and cancellation.
-
-Use generated execution, controlled async gates, and counters; C# compiles with
-warnings as errors. No implicit transaction rollback, general borrowing, CLR
-interop, application host, or resource-provider behavior is claimed.
+- Braced and enclosing-block scopes: execute both, nested blocks and loops;
+  verify acquisition order, no use before binding or after scope, no shadowing,
+  and inner-to-outer release including failure while acquiring a later resource.
+- Cleanup: test exactly once on normal completion, early return, `Result` `?`,
+  typed errors, faults and cancellation. If cleanup also faults, the cleanup
+  failure replaces the in-flight outcome; if cleanup succeeds, preserve it.
+- Async: use controlled tasks to verify release is awaited, including on
+  cancellation; reject unawaited resource operations or escaping tasks.
+- Safety: reject handle aliases, arguments, data, return, lambda captures,
+  partial applications, direct release and non-fresh resources. Verify source
+  paths and cross-module name resolution; compile generated C# with warnings as
+  errors. Provider-returned resources remain outside this slice.
 
 ## Verification
 
-For this proposal run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`
-and `bash scripts/verify-compiler.sh`, recording local limitations. After adoption
-run them again with feature tests and execute the D# example. Fix any PR CI failure
-on its existing branch.
+Run `bash .github/ai/bootstrap.sh`, `bash scripts/verify-compiler.sh`, and
+`bash .github/ai/verify.sh`. Check, compile and execute the D# example. Record
+actual results; fix any CI failures on the existing PR branch.
 
-### Proposal verification
+### Verification results
 
 - `bash .github/ai/bootstrap.sh` passed.
-- `bash scripts/verify-compiler.sh` passed 18 compiler and 376 feature tests;
-  this is baseline evidence and does not demonstrate resource behavior.
-- `bash .github/ai/verify.sh` passed documentation and all 25 automation
-  tests. Its isolated compiler stage could not pull the pinned SDK image locally
-  because the registry returned `Forbidden`; GitHub CI runs that stage.
+- `bash scripts/verify-compiler.sh` passed 18 compiler tests and 377 feature
+  tests, including generated C# built with warnings as errors for both using
+  forms, lifetime boundaries and cleanup precedence.
+- The D# example checks, compiles and runs; `Demo.run()` returns 42.
+- Independent generated-code probes passed for nested scopes, async cleanup,
+  cancellation, generic and nullable results, import resolution and escapes.
+- `bash .github/ai/verify.sh` passed documentation and 25 automation tests. Its
+  local isolated compiler stage could not download the pinned SDK image because
+  the registry returned `Forbidden`; GitHub CI runs that stage.
 
-Commands used SDK 11.0.100 from `/workspace/work/dotnet11`,
+Commands used SDK 11.0.100 via `/workspace/work/dotnet11`,
 `XDG_RUNTIME_DIR=/tmp/dsharp-xdg-verify`,
 `DOTNET_CLI_HOME=/tmp/dsharp-dotnet11-home`,
-`NUGET_PACKAGES=/tmp/dsharp-dotnet11-packages` and
+`NUGET_PACKAGES=/tmp/dsharp-dotnet11-packages`, and
 `npm_config_cache=/tmp/dsharp-npm-cache` for writable caches.
-
-### Direct-construction slice verification
-
-- `bash .github/ai/bootstrap.sh` passed.
-- `bash scripts/verify-compiler.sh` passed 18 compiler and 377 feature tests,
-  including the new scoped-resource execution and rejection suite. Generated C#
-  in that suite builds with warnings treated as errors.
-- The scoped-resource D# example checks, compiles and runs; `Demo.run()`
-  returns 42.
-- Independent generated-code probes covered nested cleanup faults, cancellation,
-  callback faults, imported resource names and the nullable Result matrix.
-- `bash .github/ai/verify.sh` passed documentation and 25 automation tests;
-  its local isolated compiler stage could not pull its pinned SDK image because
-  the registry returned `Forbidden`. GitHub CI runs that stage.
-
-The #45 issue remains open for provider-returned ownership and its integration
-coverage. The approved direction does not imply general borrowing or interop.

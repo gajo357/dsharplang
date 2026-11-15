@@ -316,7 +316,8 @@ internal static class MultiFileResolver
                     case IfSyntax conditional: return conditional with { Condition = Expression(conditional.Condition, scope, typeParameters), Then = Block(conditional.Then, scope, typeParameters), Else = Block(conditional.Else, scope, typeParameters) };
                     case UsingSyntax resourceUse:
                         // The newly scoped name exists only inside the body, not
-                        // in its initializer or reporter reference.
+                        // in its initializer. Declaration-style scopes are lowered
+                        // to the same body representation by the parser.
                         var usingScope = new HashSet<string>(scope, StringComparer.Ordinal) { resourceUse.Name.Text };
                         return resourceUse with { Acquisition = Expression(resourceUse.Acquisition, scope, typeParameters), Body = Block(resourceUse.Body, usingScope, typeParameters) };
                     case ForSyntax loop:

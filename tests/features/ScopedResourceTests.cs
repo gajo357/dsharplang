@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.Loader;
 using DSharp.Compiler;
@@ -10,7 +9,7 @@ namespace DSharp.Tests;
 
 public sealed class ScopedResourceTests
 {
-    [Fact(DisplayName = "Scoped resources release on each exit")]
+    [Fact(DisplayName = "Scoped resources follow C# disposal semantics")]
     public async Task ScopedResourcesExecuteAndRejectEscapes()
     {
         const string source = """
@@ -29,7 +28,7 @@ public sealed class ScopedResourceTests
                 }
                 release(): Unit {
                     let ignored = mark.mark(id * 10)
-                    if fails { let fault = 1 / 0
+                    if fails { let fault = 2147483647 + 1
                         () } else { () }
                 }
             }
@@ -47,72 +46,120 @@ public sealed class ScopedResourceTests
                 }
             }
 
-            fn normal(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(mark.mark(1), mark, false) report onCleanup { item.read() }
+            fn braced(mark: Tracker): int {
+                using item = Cursor(mark.mark(1), mark, false) { item.read() }
             }
-            fn early(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(1, mark, false) report onCleanup { return item.read() }
+            fn declared(mark: Tracker): int {
+                using item = Cursor(mark.mark(1), mark, false)
+                item.read()
             }
-            fn nested(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using outer = Cursor(1, mark, false) report onCleanup {
-                    using inner = Cursor(2, mark, false) report onCleanup { inner.read() }
+            fn declaredEarly(mark: Tracker): int {
+                using item = Cursor(1, mark, false)
+                return item.read()
+            }
+            fn boundary(mark: Tracker): int {
+                let value = if true {
+                    using item = Cursor(1, mark, false)
+                    item.read()
+                } else { 0 }
+                let ignored = mark.mark(99)
+                value
+            }
+            fn nested(mark: Tracker): int {
+                using outer = Cursor(1, mark, false)
+                using inner = Cursor(2, mark, false)
+                inner.read()
+            }
+            fn mixed(mark: Tracker): int {
+                using outer = Cursor(1, mark, false)
+                using inner = Cursor(2, mark, false) { inner.read() }
+            }
+            fn emptyRemainder(mark: Tracker): Unit {
+                using item = Cursor(1, mark, false)
+            }
+            fn iterations(mark: Tracker): int {
+                for number in [1, 2] {
+                    using item = Cursor(number, mark, false)
+                    let ignored = item.read()
+                    ()
                 }
+                42
             }
-            fn failAcquire(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(1 / 0, mark, false) report onCleanup { item.read() }
+            fn laterAcquireFails(mark: Tracker): int {
+                using outer = Cursor(1, mark, false)
+                using inner = Cursor(1 / 0, mark, false)
+                inner.read()
             }
-            fn failCleanup(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(1, mark, true) report onCleanup { item.read() }
+            fn generic<T>(mark: Tracker, value: T): T {
+                using item = Cursor(1, mark, false)
+                value
             }
-            fn failBody(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(1, mark, true) report onCleanup { 1 / 0 }
+            fn genericAnswer(mark: Tracker): int { generic<int>(mark, 42) }
+            fn inferred(mark: Tracker) {
+                using item = Cursor(1, mark, false)
+                42
             }
-            fn nestedFailures(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using outer = Cursor(1, mark, true) report onCleanup {
-                    using inner = Cursor(2, mark, true) report onCleanup { 1 / 0 }
-                }
+            fn failAcquire(mark: Tracker): int {
+                using item = Cursor(1 / 0, mark, false)
+                item.read()
             }
-            fn failEarly(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = Cursor(1, mark, true) report onCleanup { return 42 }
+            fn failCleanup(mark: Tracker): int {
+                using item = Cursor(1, mark, true) { item.read() }
             }
-            fn nullable(mark: Tracker, onCleanup: (string) -> Unit): string? {
-                using item = Cursor(1, mark, false) report onCleanup { null }
+            fn bodyFailure(mark: Tracker): int {
+                using item = Cursor(1, mark, false)
+                1 / 0
             }
-            fn nullableError(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string>? {
-                using item = Cursor(1, mark, true) report onCleanup { Error<int, string>("nullable") }
+            fn nestedMarkerFailures(mark: Tracker): int {
+                using outer = Cursor(1, mark, false)
+                using inner = Cursor(2, mark, false)
+                1 / 0
             }
-            fn nullableErrorEarly(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string>? {
-                using item = Cursor(1, mark, true) report onCleanup { return Error<int, string>("early") }
+            fn failBody(mark: Tracker): int {
+                using item = Cursor(1, mark, true)
+                1 / 0
             }
-            fn nullableNullFail(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string>? {
-                using item = Cursor(1, mark, true) report onCleanup { null }
+            fn nestedFailures(mark: Tracker): int {
+                using outer = Cursor(1, mark, true)
+                using inner = Cursor(2, mark, true)
+                1 / 0
             }
-            fn nullableSuccessFail(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string>? {
-                using item = Cursor(1, mark, true) report onCleanup { Success<int, string>(42) }
+            fn failEarly(mark: Tracker): int {
+                using item = Cursor(1, mark, true)
+                return 42
             }
-            fn propagate(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string> {
-                using item = Cursor(1, mark, true) report onCleanup {
-                    let value = Error<int, string>("primary")?
-                    Success(value)
-                }
+            fn nullable(mark: Tracker): string? {
+                using item = Cursor(1, mark, false) { null }
             }
-            fn resultCode(mark: Tracker, onCleanup: (string) -> Unit): int {
-                match propagate(mark, onCleanup) {
+            fn nullableError(mark: Tracker): Result<int, string>? {
+                using item = Cursor(1, mark, true) { Error<int, string>("nullable") }
+            }
+            fn nullableErrorEarly(mark: Tracker): Result<int, string>? {
+                using item = Cursor(1, mark, true)
+                return Error<int, string>("early")
+            }
+            fn nullableNullFail(mark: Tracker): Result<int, string>? {
+                using item = Cursor(1, mark, true) { null }
+            }
+            fn nullableSuccessFail(mark: Tracker): Result<int, string>? {
+                using item = Cursor(1, mark, true) { Success<int, string>(42) }
+            }
+            fn propagate(mark: Tracker, fails: bool): Result<int, string> {
+                using item = Cursor(1, mark, fails)
+                let value = Error<int, string>("primary")?
+                Success(value)
+            }
+            fn resultCode(mark: Tracker): int {
+                match propagate(mark, false) {
                     Success(value) => value
                     Error(error) => if error == "primary" { 42 } else { 0 }
                 }
             }
-            fn finalError(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string> {
-                using item = Cursor(1, mark, true) report onCleanup { Error("final") }
+            fn finalError(mark: Tracker): Result<int, string> {
+                using item = Cursor(1, mark, true) { Error("final") }
             }
-            fn finalCode(mark: Tracker, onCleanup: (string) -> Unit): int {
-                match finalError(mark, onCleanup) {
-                    Success(value) => value
-                    Error(error) => if error == "final" { 42 } else { 0 }
-                }
-            }
-            fn handled(mark: Tracker, onCleanup: (string) -> Unit): Result<int, string> {
-                using item = Cursor(1, mark, true) report onCleanup {
+            fn handled(mark: Tracker): Result<int, string> {
+                using item = Cursor(1, mark, true) {
                     let value = match Error<int, string>("handled") {
                         Error(_) => 42
                         Success(number) => number
@@ -120,11 +167,15 @@ public sealed class ScopedResourceTests
                     Success(value)
                 }
             }
-            fn nestedError(mark: Tracker, onCleanup: (string) -> Unit): Result<Result<int, string>, string> {
-                using item = Cursor(1, mark, true) report onCleanup { Success(Error<int, string>("nested")) }
+            fn nestedError(mark: Tracker): Result<Result<int, string>, string> {
+                using item = Cursor(1, mark, true) { Success(Error<int, string>("nested")) }
             }
-            async fn delayed(mark: Tracker, onCleanup: (string) -> Unit): int {
-                using item = AsyncCursor(mark) report onCleanup { await item.read() }
+            async fn delayed(mark: Tracker): int {
+                using item = AsyncCursor(mark)
+                await item.read()
+            }
+            async fn delayedBraced(mark: Tracker): int {
+                using item = AsyncCursor(mark) { await item.read() }
             }
             """;
         var result = DSharpCompiler.Compile(source, "scoped-resources.ds");
@@ -133,134 +184,103 @@ public sealed class ScopedResourceTests
         await WithGenerated(result.CSharp!, async type =>
         {
             var order = new ConcurrentQueue<int>();
-            var reports = new ConcurrentQueue<string>();
-            int Mark(int n) { order.Enqueue(n); return n; }
-            void Report(string name) => reports.Enqueue(name);
-            var tracker = (TrackerProxy)DispatchProxy.Create(Method(type, "normal").GetParameters()[0].ParameterType, typeof(TrackerProxy));
-            tracker.Mark = Mark;
-            object?[] Args(string name) => AdaptArguments(type, name, tracker, (Action<string>)Report);
-
-            Assert.Equal(42, Invoke<int>(type, "normal", Args("normal")));
-            Assert.Equal(new[] { 1, 2, 10 }, order);
-            Assert.Empty(reports);
-            order.Clear();
-            Assert.Equal(42, Invoke<int>(type, "early", Args("early")));
-            Assert.Equal(new[] { 2, 10 }, order);
-            order.Clear();
-            Assert.Null(Invoke<string?>(type, "nullable", Args("nullable")));
-            Assert.Equal(new[] { 10 }, order);
-            Assert.Empty(reports);
-            order.Clear();
-            foreach (var (name, payload) in new[] { ("nullableError", "nullable"), ("nullableErrorEarly", "early") })
+            var tracker = (TrackerProxy)DispatchProxy.Create(Method(type, "braced").GetParameters()[0].ParameterType, typeof(TrackerProxy));
+            tracker.Mark = n => { order.Enqueue(n); return n; };
+            object?[] Args(params object?[] extra) => new object?[] { tracker }.Concat(extra).ToArray();
+            void Seen(params int[] expected) { Assert.Equal(expected, order); order.Clear(); }
+            void CleanupFault(string name, params object?[] extra)
             {
-                var outcome = Method(type, name).Invoke(null, Args(name));
-                Assert.NotNull(outcome);
-                Assert.Equal(payload, outcome.GetType().GetProperty("__dsharp_case_1_item_0", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(outcome));
-                Assert.Equal(new[] { 10 }, order);
-                Assert.Equal("Cursor", Assert.Single(reports));
-                order.Clear(); reports.Clear();
+                var thrown = Assert.Throws<TargetInvocationException>(() => Method(type, name).Invoke(null, Args(extra)));
+                Assert.IsType<OverflowException>(thrown.InnerException);
             }
-            foreach (var name in new[] { "nullableNullFail", "nullableSuccessFail" })
+
+            Assert.Equal(42, Invoke<int>(type, "braced", Args())); Seen(1, 2, 10);
+            Assert.Equal(42, Invoke<int>(type, "declared", Args())); Seen(1, 2, 10);
+            Assert.Equal(42, Invoke<int>(type, "declaredEarly", Args())); Seen(2, 10);
+            Assert.Equal(42, Invoke<int>(type, "boundary", Args())); Seen(2, 10, 99);
+            Assert.Equal(42, Invoke<int>(type, "nested", Args())); Seen(2, 20, 10);
+            Assert.Equal(42, Invoke<int>(type, "mixed", Args())); Seen(2, 20, 10);
+            _ = Method(type, "emptyRemainder").Invoke(null, Args()); Seen(10);
+            Assert.Equal(42, Invoke<int>(type, "iterations", Args())); Seen(2, 10, 2, 20);
+            Assert.Equal(42, Invoke<int>(type, "genericAnswer", Args())); Seen(10);
+            Assert.Equal(42, Invoke<int>(type, "inferred", Args())); Seen(10);
+            var laterAcquisition = Assert.Throws<TargetInvocationException>(() => Method(type, "laterAcquireFails").Invoke(null, Args()));
+            Assert.IsType<DivideByZeroException>(laterAcquisition.InnerException); Seen(10);
+            Assert.Null(Invoke<string?>(type, "nullable", Args())); Seen(10);
+            var acquisition = Assert.Throws<TargetInvocationException>(() => Method(type, "failAcquire").Invoke(null, Args()));
+            Assert.IsType<DivideByZeroException>(acquisition.InnerException); Seen();
+
+            var bodyFailure = Assert.Throws<TargetInvocationException>(() => Method(type, "bodyFailure").Invoke(null, Args()));
+            Assert.IsType<DivideByZeroException>(bodyFailure.InnerException); Seen(10);
+            tracker.Mark = n => {
+                order.Enqueue(n);
+                if (n == 20) throw new ArgumentException("inner cleanup");
+                if (n == 10) throw new InvalidOperationException("outer cleanup");
+                return n;
+            };
+            var multipleFailures = Assert.Throws<TargetInvocationException>(() => Method(type, "nestedMarkerFailures").Invoke(null, Args()));
+            Assert.Equal("outer cleanup", Assert.IsType<InvalidOperationException>(multipleFailures.InnerException).Message);
+            Seen(20, 10);
+            tracker.Mark = n => { order.Enqueue(n); return n; };
+            CleanupFault("failCleanup"); Seen(2, 10);
+            CleanupFault("failBody"); Seen(10); // cleanup masks DivideByZeroException
+            CleanupFault("nestedFailures"); Seen(20, 10);
+            CleanupFault("failEarly"); Seen(10);
+            foreach (var name in new[] { "nullableError", "nullableErrorEarly", "nullableNullFail", "nullableSuccessFail", "finalError", "handled", "nestedError" })
             {
-                Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, name).Invoke(null, Args(name))).InnerException);
-                Assert.Equal(new[] { 10 }, order);
-                Assert.Empty(reports);
-                order.Clear();
+                CleanupFault(name); Seen(10);
             }
-            Assert.Equal(42, Invoke<int>(type, "nested", Args("nested")));
-            Assert.Equal(new[] { 2, 20, 10 }, order);
-            order.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "failAcquire").Invoke(null, Args("failAcquire"))).InnerException);
-            Assert.Empty(order);
-            Assert.Empty(reports);
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "failCleanup").Invoke(null, Args("failCleanup"))).InnerException);
-            Assert.Equal(new[] { 2, 10 }, order);
-            Assert.Empty(reports);
-            order.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "failEarly").Invoke(null, Args("failEarly"))).InnerException);
-            Assert.Equal(new[] { 10 }, order);
-            Assert.Empty(reports);
-            order.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "failBody").Invoke(null, Args("failBody"))).InnerException);
-            Assert.Equal(new[] { 10 }, order);
-            Assert.Equal("Cursor", Assert.Single(reports));
-            order.Clear(); reports.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "nestedFailures").Invoke(null, Args("nestedFailures"))).InnerException);
-            Assert.Equal(new[] { 20, 10 }, order);
-            Assert.Equal(new[] { "Cursor", "Cursor" }, reports);
-            order.Clear(); reports.Clear();
-            Assert.Equal(42, Invoke<int>(type, "resultCode", Args("resultCode")));
-            Assert.Equal(new[] { 10 }, order);
-            Assert.Single(reports);
-            order.Clear(); reports.Clear();
-            Assert.Equal(42, Invoke<int>(type, "finalCode", Args("finalCode")));
-            Assert.Equal(new[] { 10 }, order);
-            Assert.Single(reports);
-            order.Clear(); reports.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "handled").Invoke(null, Args("handled"))).InnerException);
-            Assert.Empty(reports);
-            order.Clear();
-            Assert.IsType<DivideByZeroException>(Assert.Throws<TargetInvocationException>(() => Method(type, "nestedError").Invoke(null, Args("nestedError"))).InnerException);
-            Assert.Empty(reports);
-            order.Clear();
+            Assert.Equal(42, Invoke<int>(type, "resultCode", Args())); Seen(10);
+            CleanupFault("propagate", true); Seen(10); // cleanup masks propagated Result.Error
 
-            Action<string> brokenReporter = _ => throw new InvalidOperationException("reporter failed");
-            var brokenArgs = AdaptArguments(type, "failBody", tracker, brokenReporter);
-            var combined = Assert.Throws<TargetInvocationException>(() => Method(type, "failBody").Invoke(null, brokenArgs)).InnerException!;
-            Assert.EndsWith("ScopeCleanupException", combined.GetType().Name);
-            Assert.Equal("Fault", combined.GetType().GetProperty("PrimaryKind")!.GetValue(combined));
-            Assert.IsType<DivideByZeroException>(combined.GetType().GetProperty("PrimaryOutcome")!.GetValue(combined));
-            Assert.IsType<DivideByZeroException>(combined.GetType().GetProperty("CleanupFailure")!.GetValue(combined));
-            Assert.IsType<InvalidOperationException>(combined.GetType().GetProperty("ReporterFailure")!.GetValue(combined));
-            order.Clear();
-            brokenArgs = AdaptArguments(type, "propagate", tracker, brokenReporter);
-            combined = Assert.Throws<TargetInvocationException>(() => Method(type, "propagate").Invoke(null, brokenArgs)).InnerException!;
-            Assert.EndsWith("ScopeCleanupException", combined.GetType().Name);
-            Assert.Equal("TypedError", combined.GetType().GetProperty("PrimaryKind")!.GetValue(combined));
-            var primary = combined.GetType().GetProperty("PrimaryOutcome")!.GetValue(combined)!;
-            Assert.Equal("primary", primary.GetType().GetProperty("__dsharp_case_1_item_0", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(primary));
-            Assert.IsType<DivideByZeroException>(combined.GetType().GetProperty("CleanupFailure")!.GetValue(combined));
-            Assert.IsType<InvalidOperationException>(combined.GetType().GetProperty("ReporterFailure")!.GetValue(combined));
-            order.Clear();
+            foreach (var name in new[] { "delayed", "delayedBraced" })
+            {
+                var ready = Gate();
+                var released = Gate();
+                tracker.Ready = () => ready.Task;
+                tracker.Released = () => released.Task;
+                var pending = Invoke<Task<int>>(type, name, Args());
+                Assert.False(pending.IsCompleted);
+                ready.SetResult(42);
+                await WaitUntil(() => order.Count > 0);
+                Assert.Equal(new[] { 2 }, order);
+                Assert.False(pending.IsCompleted);
+                released.SetResult(0);
+                Assert.Equal(42, await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+                Seen(2, 3);
 
-            var ready = Gate();
-            var released = Gate();
-            tracker.Ready = () => ready.Task;
-            tracker.Released = () => released.Task;
-            var delayedArgs = AdaptArguments(type, "delayed", tracker, (Action<string>)Report);
-            var pending = Invoke<Task<int>>(type, "delayed", delayedArgs);
-            Assert.False(pending.IsCompleted);
-            ready.SetResult(42);
-            await WaitUntil(() => order.Count > 0);
-            Assert.Equal(new[] { 2 }, order);
-            Assert.False(pending.IsCompleted);
-            released.SetResult(0);
-            Assert.Equal(42, await pending.WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.Equal(new[] { 2, 3 }, order);
-            Assert.Empty(reports);
+                ready = Gate(); released = Gate();
+                pending = Invoke<Task<int>>(type, name, Args());
+                var bodyException = new InvalidOperationException("body failed");
+                ready.SetException(bodyException);
+                released.SetResult(0);
+                Assert.Same(bodyException, await Assert.ThrowsAsync<InvalidOperationException>(async () => await pending));
+                Seen(3);
 
-            order.Clear(); reports.Clear();
-            ready = Gate(); released = Gate();
-            delayedArgs = AdaptArguments(type, "delayed", tracker, (Action<string>)Report);
-            pending = Invoke<Task<int>>(type, "delayed", delayedArgs);
-            ready.SetCanceled();
-            released.SetException(new InvalidOperationException("release failed"));
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
-            Assert.Equal("AsyncCursor", Assert.Single(reports));
+                ready = Gate(); released = Gate();
+                pending = Invoke<Task<int>>(type, name, Args());
+                ready.SetException(new InvalidOperationException("body failed"));
+                released.SetException(new ArgumentException("cleanup failed"));
+                Assert.Equal("cleanup failed", (await Assert.ThrowsAsync<ArgumentException>(async () => await pending)).Message);
+                Seen();
 
-            reports.Clear();
-            ready = Gate(); released = Gate();
-            delayedArgs = AdaptArguments(type, "delayed", tracker, brokenReporter);
-            pending = Invoke<Task<int>>(type, "delayed", delayedArgs);
-            ready.SetCanceled();
-            released.SetException(new InvalidOperationException("release failed"));
-            var cancelledAndUnreported = await Record.ExceptionAsync(async () => await pending);
-            Assert.NotNull(cancelledAndUnreported);
-            Assert.EndsWith("ScopeCleanupException", cancelledAndUnreported.GetType().Name);
-            Assert.Equal("Cancellation", cancelledAndUnreported.GetType().GetProperty("PrimaryKind")!.GetValue(cancelledAndUnreported));
-            Assert.IsAssignableFrom<OperationCanceledException>(cancelledAndUnreported.GetType().GetProperty("PrimaryOutcome")!.GetValue(cancelledAndUnreported));
-            Assert.Equal("release failed", Assert.IsType<InvalidOperationException>(cancelledAndUnreported.GetType().GetProperty("CleanupFailure")!.GetValue(cancelledAndUnreported)).Message);
-            Assert.Equal("reporter failed", Assert.IsType<InvalidOperationException>(cancelledAndUnreported.GetType().GetProperty("ReporterFailure")!.GetValue(cancelledAndUnreported)).Message);
+                ready = Gate(); released = Gate();
+                pending = Invoke<Task<int>>(type, name, Args());
+                ready.SetCanceled();
+                Assert.False(pending.IsCompleted);
+                released.SetResult(0);
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+                Seen(3);
+
+                ready = Gate(); released = Gate();
+                pending = Invoke<Task<int>>(type, name, Args());
+                ready.SetCanceled();
+                Assert.False(pending.IsCompleted); // async cleanup still awaited after cancellation
+                released.SetException(new InvalidOperationException("cleanup failed"));
+                var cleanup = await Assert.ThrowsAsync<InvalidOperationException>(async () => await pending);
+                Assert.Equal("cleanup failed", cleanup.Message); // cleanup masks cancellation
+                Seen();
+            }
         });
 
         RejectResourceEscapes();
@@ -283,8 +303,16 @@ public sealed class ScopedResourceTests
                 module App
                 import Lib
                 fn adjust(value: int): int { 0 }
-                fn answer(onCleanup: (string) -> Unit): int {
-                    using item = Lib.Cursor(40) report onCleanup { item.read() }
+                fn answer(): int {
+                    using item = Lib.Cursor(40)
+                    item.read()
+                }
+                fn braced(): int {
+                    using item = Lib.Cursor(40) { item.read() }
+                }
+                fn shadow(): int {
+                    using Lib = Lib.Cursor(40)
+                    Lib.read()
                 }
                 """)
         };
@@ -293,12 +321,18 @@ public sealed class ScopedResourceTests
         Assert.Empty(result.Diagnostics);
         await WithGenerated(result.CSharp!, type =>
         {
-            var reports = new List<string>();
-            var args = AdaptArguments(type, "answer", (Action<string>)reports.Add);
-            Assert.Equal(42, Invoke<int>(type, "answer", args));
-            Assert.Empty(reports);
+            Assert.Equal(42, Invoke<int>(type, "answer"));
+            Assert.Equal(42, Invoke<int>(type, "braced"));
+            Assert.Equal(42, Invoke<int>(type, "shadow"));
             return Task.CompletedTask;
         }, "App");
+        var outside = DSharpCompiler.Compile(new[]
+        {
+            sources[0],
+            new SourceFile("outside.ds", "module App\nimport Lib\nfn bad(): int { let value = using item = Lib.Cursor(40) { item.read() }\n item.read() }")
+        });
+        Assert.Null(outside.CSharp);
+        Assert.NotEmpty(outside.Diagnostics);
     }
 
     private static void RejectResourceEscapes()
@@ -310,20 +344,18 @@ public sealed class ScopedResourceTests
         var invalid = new[]
         {
             "fn f(): Unit { let item = Item()\n () }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup { item.release()\n 42 } }",
-            "fn f(onCleanup: (string) -> Unit): Item { using item = Item() report onCleanup { item } }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup { let alias = item\n alias.read() } }",
-            "fn id<T>(x: T): T { x }\nfn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup { id(item).read() } }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup { let later: () -> int = () => item.read()\n later() } }",
-            "fn use(value: Item): int { value.read() }\nfn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup { use(item) } }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = 42 report onCleanup { item } }",
-            "fn f(): int { using item = Item() report missing { item.read() } }",
-            "fn f(onCleanup: (int) -> Unit): int { using item = Item() report onCleanup { item.read() } }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = Item() report onCleanup() { item.read() } }",
-            "fn f<T>(value: T, onCleanup: (string) -> Unit): T { using item = Item() report onCleanup { value } }",
-            "fn f(onCleanup: (string) -> Unit): int { let value = using item = Item() report onCleanup { null }\n 42 }",
-            "async fn f(input: AsyncSource, onCleanup: (string) -> Unit): int { using item = AsyncItem(input) report onCleanup { let task = item.read()\n await task } }",
-            "fn f(onCleanup: (string) -> Unit): int { using item = AsyncRelease() report onCleanup { 42 } }"
+            "fn f(): int { using item = Item() { item.release()\n 42 } }",
+            "fn f(): Item { using item = Item() { item } }",
+            "fn f(): int { using item = Item()\n let alias = item\n alias.read() }",
+            "fn id<T>(x: T): T { x }\nfn f(): int { using item = Item() { id(item).read() } }",
+            "fn f(): int { using item = Item() { let later: () -> int = () => item.read()\n later() } }",
+            "fn use(value: Item): int { value.read() }\nfn f(): int { using item = Item() { use(item) } }",
+            "fn f(): int { using item = 42 { item } }",
+            "fn f(): int { let x = using item = Item() { item.read() }\n item.read() }",
+            "fn f(): int { let value = using item = Item() { null }\n 42 }",
+            "async fn f(input: AsyncSource): int { using item = AsyncItem(input) { let task = item.read()\n await task } }",
+            "fn f(): int { using item = AsyncRelease() { 42 } }",
+            "fn f(): int { using item = Item() report missing { item.read() } }"
         };
         foreach (var body in invalid)
         {
@@ -344,12 +376,10 @@ public sealed class ScopedResourceTests
                 async use(input: Task<int>): int { await input }
                 release(): Unit { () }
             }
-            async fn bad(src: Source, onCleanup: (string) -> Unit): int {
-                using outer = Outer() report onCleanup {
-                    using inner = Inner(src) report onCleanup {
-                        await outer.use(inner.read())
-                    }
-                }
+            async fn bad(src: Source): int {
+                using outer = Outer()
+                using inner = Inner(src)
+                await outer.use(inner.read())
             }
             """;
         var escaped = DSharpCompiler.Compile(nestedTaskEscape, "invalid-resource.ds");
@@ -381,23 +411,6 @@ public sealed class ScopedResourceTests
 
     private static MethodInfo Method(Type type, string name) => type.GetMethod(name, BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)!;
     private static T Invoke<T>(Type type, string name, params object?[] arguments) => (T)Method(type, name).Invoke(null, arguments)!;
-    private static object?[] AdaptArguments(Type type, string name, params object[] values)
-    {
-        var parameters = Method(type, name).GetParameters();
-        return values.Select((value, index) => value switch
-        {
-            Action<string> report => Adapt(parameters[index].ParameterType, typeof(string), report),
-            _ => value
-        }).ToArray();
-    }
-    private static Delegate Adapt(Type delegateType, Type argumentType, Delegate callback)
-    {
-        var argument = Expression.Parameter(argumentType, "value");
-        var call = Expression.Invoke(Expression.Constant(callback), argument);
-        var returnType = delegateType.GetMethod("Invoke")!.ReturnType;
-        Expression body = callback is Action<string> ? Expression.Block(call, Expression.Default(returnType)) : call;
-        return Expression.Lambda(delegateType, body, argument).Compile();
-    }
 
     private static async Task WithGenerated(string csharp, Func<Type, Task> verify, string module = "Demo")
     {

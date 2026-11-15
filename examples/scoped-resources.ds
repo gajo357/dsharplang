@@ -1,17 +1,20 @@
 module Demo
 
-// The resource owns its cleanup; the using scope calls release exactly once.
+// The compiler releases each resource at the end of its scope.
 resource Cursor(value: int) {
     read(): int { value }
     release(): Unit { () }
 }
 
-fn answer(onCleanup: (string) -> Unit): int {
-    using cursor = Cursor(40) report onCleanup {
+// A braced scope releases cursor when the block finishes.
+fn answer(): int {
+    using cursor = Cursor(40) {
         cursor.read() + 2
     }
 }
 
+// A declaration releases cursor at the end of the enclosing block.
 fn run(): int {
-    answer((resourceName: string) => ())
+    using cursor = Cursor(40)
+    cursor.read() + 2
 }

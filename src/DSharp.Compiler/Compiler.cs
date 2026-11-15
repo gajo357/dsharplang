@@ -46,7 +46,7 @@ public sealed record IfSyntax(Token If, ExpressionSyntax Condition, BlockSyntax 
     public Token? MissingElseLocation { get; init; }
 }
 public sealed record ForSyntax(Token Keyword, Token Name, ExpressionSyntax Source, BlockSyntax Body) : ExpressionSyntax(Keyword);
-public sealed record UsingSyntax(Token Keyword, Token Name, ExpressionSyntax Acquisition, Token Reporter, BlockSyntax Body) : ExpressionSyntax(Keyword);
+public sealed record UsingSyntax(Token Keyword, Token Name, ExpressionSyntax Acquisition, BlockSyntax Body) : ExpressionSyntax(Keyword);
 public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
 public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ListSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
@@ -154,10 +154,7 @@ public sealed record BoundBlock(IReadOnlyList<BoundLocal> Locals, BoundExpressio
 }
 public sealed record BoundIf(BoundExpression Condition, BoundBlock Then, BoundBlock Else, string Type) : BoundExpression;
 public sealed record BoundFor(string Name, BoundExpression Source, string SourceType, string ElementType, BoundBlock Body) : BoundExpression;
-public sealed record BoundUsing(string Name, BoundExpression Acquisition, string ResourceType, BoundExpression Reporter, BoundBlock Body, string Type, string ReturnType, bool AsyncRelease, bool ResultIsStandard, bool ReturnIsStandard) : BoundExpression
-{
-    public string DisplayName { get; init; } = ResourceType;
-}
+public sealed record BoundUsing(string Name, BoundExpression Acquisition, string ResourceType, BoundBlock Body, string Type, bool AsyncRelease) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
@@ -692,9 +689,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var name = Identifier();
             Expect("=");
             var acquisition = Expression(Current.Span.Line, stopAtBlock: true);
-            Expect("report");
-            var reporter = Identifier();
-            left = new UsingSyntax(keyword, name, acquisition, reporter, Block());
+            left = new UsingSyntax(keyword, name, acquisition, Block());
         }
         else if (Current.Text is "-" or "!")
         {
@@ -944,11 +939,39 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private BlockSyntax Block()
     {
         Expect("{");
+        return BlockContents();
+    }
+
+    private BlockSyntax BlockContents()
+    {
         var bindings = new List<LetBindingSyntax>();
         var statements = new List<StatementSyntax>();
         ExpressionSyntax? result = null;
         while (Current.Text != "}" && Current.Text != "")
         {
+            if (Current.Text == "using")
+            {
+                // A declaration owns the rest of its enclosing lexical block.
+                // Desugaring to a nested scope also gives multiple declarations
+                // their normal reverse-order cleanup, including on early exits.
+                var start = position;
+                var keyword = Take();
+                var name = Identifier();
+                Expect("=");
+                var acquisition = Expression(Current.Span.Line, stopAtBlock: true);
+                if (Current.Text != "{")
+                {
+                    var end = tokens[position - 1];
+                    if (Current.Text != "}" && Current.Span.Line == end.Span.Line)
+                        throw Error("Expected a newline after a using declaration.");
+                    var remainder = BlockContents();
+                    result = new UsingSyntax(keyword, name, acquisition, remainder);
+                    return new(bindings, result) { Statements = statements };
+                }
+                // A braced using remains an expression; let the normal parser
+                // handle subsequent operators and block-statement separation.
+                position = start;
+            }
             if (Current.Text == "let")
             {
                 var keyword = Take();
@@ -3437,15 +3460,8 @@ public static class Binder
                             loopSource.Type == "<never>" ? "<never>" : "Unit");
                     case UsingSyntax owned:
                     {
-                        if (currentReturnType is null || activeTypeParameters.Contains(currentReturnType.TrimEnd('?')))
-                            Fail("DS2041", owned.Keyword, "A resource scope requires a concrete enclosing result type.");
                         if (locals.ContainsKey(owned.Name.Text) || inaccessibleCaptures.Contains(owned.Name.Text))
                             Fail("DS2006", owned.Name, "Duplicate or shadowed local binding.");
-                        if (!locals.TryGetValue(owned.Reporter.Text, out var reporterLocal) ||
-                            !GenericTypes.TryParse(reporterLocal.Type, out var reporterShape) || !reporterShape.IsFunction ||
-                            reporterShape.IsNullable || reporterShape.Arguments.Count != 2 ||
-                            reporterShape.Arguments[0].ToString() != "string" || reporterShape.Arguments[1].ToString() != "Unit")
-                            Fail("DS2041", owned.Reporter, "The reporter must be an existing (string) -> Unit local or parameter.");
                         ExpressionSyntax acquisition = owned.Acquisition;
                         while (acquisition is GroupSyntax acquisitionGroup) acquisition = acquisitionGroup.Inner;
                         if (acquisition is not CallSyntax constructor || !resourceNames.Contains(constructor.Name.Text) ||
@@ -3473,8 +3489,6 @@ public static class Binder
                             resourceHandles.Remove(owned.Name.Text);
                             locals.Remove(owned.Name.Text);
                         }
-                        if (activeTypeParameters.Contains(scopeBody.Type.TrimEnd('?')))
-                            Fail("DS2041", owned.Keyword, "A resource scope requires a concrete result type.");
                         var actualType = scopeBody.Type == "<never>" ? "Unit" : scopeBody.Type;
                         if (actualType == "<null>")
                         {
@@ -3483,11 +3497,8 @@ public static class Binder
                             actualType = expectedResult!;
                             scopeBody = (CoerceBlock(scopeBody.Block, actualType), actualType);
                         }
-                        bool StandardResult(string type) => GenericTypes.TryParse(type, out var shape) && shape.Name == resultSymbol;
                         return (new BoundUsing(owned.Name.Text, new BoundServiceConstruction(resource.Name.Text, acquired.Values),
-                            resource.Name.Text, new BoundReference(owned.Reporter.Text), scopeBody.Block, actualType, currentReturnType!,
-                            releaseAsync, StandardResult(actualType), StandardResult(currentReturnType!))
-                            { DisplayName = syntax.TypeDisplayNames.TryGetValue(resource.Name.Text, out var sourceName) ? sourceName : resource.Name.Text },
+                            resource.Name.Text, scopeBody.Block, actualType, releaseAsync),
                             acquired.Never || scopeBody.Type == "<never>" ? "<never>" : actualType);
                     }
                     case IfSyntax conditional:
@@ -5491,14 +5502,6 @@ public static class CSharpEmitter
                 .Append("    {\n        public T Value { get; }\n        public ").Append(signalType).Append("(T value) { Value = value; }\n    }\n")
                 .Append("    private static T ").Append(raiseMethod).Append("<T>(T value) => throw new ").Append(signalType).Append("<T>(value);\n");
         }
-        var scopeExceptionType = UniqueGlobal("__DSharp_ScopeCleanupException");
-        if (hasUsing)
-            output.Append("    public sealed class ").Append(scopeExceptionType).Append(" : global::System.Exception\n")
-                .Append("    {\n        public string PrimaryKind { get; }\n        public object PrimaryOutcome { get; }\n")
-                .Append("        public global::System.Exception CleanupFailure { get; }\n        public global::System.Exception ReporterFailure { get; }\n")
-                .Append("        public ").Append(scopeExceptionType).Append("(string kind, object primary, global::System.Exception cleanup, global::System.Exception reporter)\n")
-                .Append("            : base(\"Resource cleanup and reporting failed.\", new global::System.AggregateException(cleanup, reporter))\n")
-                .Append("        { PrimaryKind = kind; PrimaryOutcome = primary; CleanupFailure = cleanup; ReporterFailure = reporter; }\n    }\n");
         if (module.Records.Count > 0 || module.Unions.Count > 0 || listTypeName is not null || hasKeyedCollections)
         {
             output.Append("    internal static bool ").Append(equalityDispatcher).Append("<__DSharp_Value>(__DSharp_Value __left, __DSharp_Value __right)\n    {\n")
@@ -5907,60 +5910,17 @@ public static class CSharpEmitter
                     case BoundUsing owned:
                         var usingId = (usingCount++).ToString(CultureInfo.InvariantCulture);
                         var usingHelper = "__dsharp_using_" + usingId;
-                        var usingBody = "__dsharp_using_body_" + usingId;
                         var usingResource = "__dsharp_using_resource_" + usingId;
-                        var usingReporter = "__dsharp_using_reporter_" + usingId;
-                        var usingResult = "__dsharp_using_result_" + usingId;
-                        var usingPrimary = "__dsharp_using_primary_" + usingId;
-                        var usingOutcome = "__dsharp_using_outcome_" + usingId;
-                        var usingKind = "__dsharp_using_kind_" + usingId;
-                        var usingFailed = "__dsharp_using_failed_" + usingId;
-                        var usingFault = "__dsharp_using_fault_" + usingId;
-                        var usingReturn = "__dsharp_using_return_" + usingId;
-                        var usingCleanup = "__dsharp_using_cleanup_" + usingId;
-                        var usingReportFault = "__dsharp_using_report_fault_" + usingId;
                         output.Append("            ").Append(HelperResult(owned.Type, owned)).Append(" ").Append(usingHelper).Append(HelperBody(owned));
                         var usingAcquisition = EmitExpression(owned.Acquisition);
-                        output.Append("            ").Append(CType(owned.ResourceType)).Append(" ").Append(usingResource).Append(" = ").Append(usingAcquisition).Append(";\n");
-                        var usingReporterValue = EmitExpression(owned.Reporter);
-                        output.Append("            var ").Append(usingReporter).Append(" = ").Append(usingReporterValue).Append(";\n")
-                            .Append("            ").Append(CType(owned.Type)).Append(" ").Append(usingResult).Append(" = default(").Append(CType(owned.Type)).Append(");\n")
-                            .Append("            global::System.Exception ").Append(usingPrimary).Append(" = null;\n")
-                            .Append("            object ").Append(usingOutcome).Append(" = null;\n")
-                            .Append("            string ").Append(usingKind).Append(" = null;\n")
-                            .Append("            bool ").Append(usingFailed).Append(" = false;\n")
-                            .Append("            try\n            {\n")
-                            .Append("            ").Append(HelperResult(owned.Type, owned.Body)).Append(" ").Append(usingBody).Append(HelperBody(owned.Body));
+                        output.Append("            ").Append(CType(owned.ResourceType)).Append(" ").Append(usingResource).Append(" = ").Append(usingAcquisition).Append(";\n")
+                            .Append("            try\n            {\n");
                         localNames.Add(owned.Name, usingResource);
                         EmitBlock(owned.Body, owned.Type);
                         localNames.Remove(owned.Name);
-                        output.Append("            }\n            ").Append(usingResult).Append(" = ").Append(HelperCall(usingBody, owned.Body)).Append(";\n");
-                        if (owned.ResultIsStandard)
-                            output.Append("            if (").Append(usingResult).Append(" is not null && ").Append(usingResult).Append(".__dsharp_tag == 1) { ")
-                                .Append(usingFailed).Append(" = true; ").Append(usingKind).Append(" = \"TypedError\"; ")
-                                .Append(usingOutcome).Append(" = ").Append(usingResult).Append("; }\n");
-                        output.Append("            }\n            catch (global::System.Exception ").Append(usingFault).Append(")\n            {\n")
-                            .Append("            ").Append(usingPrimary).Append(" = ").Append(usingFault).Append(";\n")
-                            .Append("            if (").Append(usingFault).Append(" is ").Append(signalType).Append("<").Append(CType(owned.ReturnType)).Append("> ").Append(usingReturn).Append(")\n            {\n");
-                        if (owned.ReturnIsStandard)
-                            output.Append("            if (").Append(usingReturn).Append(".Value is not null && ").Append(usingReturn).Append(".Value.__dsharp_tag == 1) { ")
-                                .Append(usingFailed).Append(" = true; ").Append(usingKind).Append(" = \"TypedError\"; ")
-                                .Append(usingOutcome).Append(" = ").Append(usingReturn).Append(".Value; }\n");
-                        else output.Append("            _ = ").Append(usingReturn).Append(";\n");
-                        output.Append("            }\n            else\n            {\n")
-                            .Append("            ").Append(usingFailed).Append(" = true; ").Append(usingOutcome).Append(" = ").Append(usingFault).Append(";\n")
-                            .Append("            ").Append(usingKind).Append(" = ").Append(usingFault).Append(" is global::System.OperationCanceledException ? \"Cancellation\" : \"Fault\";\n")
-                            .Append("            }\n            }\n            try\n            {\n            _ = ");
+                        output.Append("            }\n            finally\n            {\n            _ = ");
                         if (owned.AsyncRelease) output.Append("await ");
-                        output.Append(usingResource).Append(".").Append(CapabilityMethod("release")).Append("();\n            }\n")
-                            .Append("            catch (global::System.Exception ").Append(usingCleanup).Append(")\n            {\n")
-                            .Append("            if (!").Append(usingFailed).Append(") throw;\n            try { _ = ").Append(usingReporter).Append(".Invoke(\"")
-                            .Append(owned.DisplayName.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal))
-                            .Append("\"); }\n")
-                            .Append("            catch (global::System.Exception ").Append(usingReportFault).Append(") { throw new ").Append(scopeExceptionType)
-                            .Append("(").Append(usingKind).Append(", ").Append(usingOutcome).Append(", ").Append(usingCleanup).Append(", ").Append(usingReportFault).Append("); }\n")
-                            .Append("            }\n            if (").Append(usingPrimary).Append(" is not null) global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(")
-                            .Append(usingPrimary).Append(").Throw();\n            return ").Append(usingResult).Append(";\n            }\n");
+                        output.Append(usingResource).Append(".").Append(CapabilityMethod("release")).Append("();\n            }\n            }\n");
                         return HelperCall(usingHelper, owned);
                     case BoundFor loop:
                         var forId = (forCount++).ToString(CultureInfo.InvariantCulture);
