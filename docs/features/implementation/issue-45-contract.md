@@ -1,8 +1,9 @@
 # Issue 45: Scoped resource ownership
 
 **Status:** The maintainer directed D# to follow C# `using` cleanup behavior.
-Direct construction is implemented; immediate function-factory transfer is
-implemented for review. #45 remains open for method factories and Result transfer.
+Direct construction and immediate function-factory transfer are implemented;
+service/interface method factories are implemented for review. #45 remains open
+for Result transfer.
 
 [DEC-07](DEC-07.md) adopts bounded ownership and exactly-once cleanup. Its prior
 rule for separately reporting a cleanup failure when another failure is already
@@ -39,7 +40,7 @@ fn answer(): int {
 
 A `resource` declares operations and exactly one compiler-invoked `release`.
 An initializer directly constructs a fresh resource or consumes a fully
-applied checked owned-resource function factory; an async factory must be
+applied checked owned-resource function or service/interface method factory; an async factory must be
 immediately awaited. Constructor and factory arguments are evaluated once before
 the handle is in scope. An `async release(): Unit`
 is awaited and requires an async enclosing function or lambda. Async resource
@@ -78,8 +79,12 @@ They cannot be used as values or partially applied, and a resource factory may
 not contain `using`: cleanup failure could otherwise lose a produced resource
 before ownership transfers. See the [factory plan](issue-170-plan.md).
 
-Service/interface method factories and linear transfers through `Result` or
-stored `Task` values are not implemented. In particular,
+Checked service/interface methods and supported defaults may also return a fresh
+resource for immediate use, with async methods directly awaited. Their bodies
+follow the same non-escape and no-`using` rules as owned-returning functions.
+See the [service factory plan](issue-172-plan.md).
+
+Linear transfers through `Result` or stored `Task` values are not implemented. In particular,
 `using connection = (await db.open())?` is still a target rather than supported
 behavior. General borrowing, foreign
 `IDisposable`/`IAsyncDisposable` mapping, database transactions, and implicit
