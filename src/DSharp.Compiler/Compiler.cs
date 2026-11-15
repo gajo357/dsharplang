@@ -46,6 +46,7 @@ public sealed record IfSyntax(Token If, ExpressionSyntax Condition, BlockSyntax 
     public Token? MissingElseLocation { get; init; }
 }
 public sealed record ForSyntax(Token Keyword, Token Name, ExpressionSyntax Source, BlockSyntax Body) : ExpressionSyntax(Keyword);
+public sealed record UsingSyntax(Token Keyword, Token Name, ExpressionSyntax Acquisition, BlockSyntax Body) : ExpressionSyntax(Keyword);
 public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : ExpressionSyntax(Open);
 public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ListSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
@@ -100,6 +101,10 @@ public sealed record ServiceDeclarationSyntax(Token Name, IReadOnlyList<Paramete
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
+public sealed record ResourceDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ServiceMethodSyntax> Methods)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
 public sealed record UnarySyntax(Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Operator);
 public sealed record AwaitSyntax(Token Keyword, ExpressionSyntax Operand) : ExpressionSyntax(Keyword);
 public sealed record BinarySyntax(ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Operator);
@@ -149,6 +154,7 @@ public sealed record BoundBlock(IReadOnlyList<BoundLocal> Locals, BoundExpressio
 }
 public sealed record BoundIf(BoundExpression Condition, BoundBlock Then, BoundBlock Else, string Type) : BoundExpression;
 public sealed record BoundFor(string Name, BoundExpression Source, string SourceType, string ElementType, BoundBlock Body) : BoundExpression;
+public sealed record BoundUsing(string Name, BoundExpression Acquisition, string ResourceType, BoundBlock Body, string Type, bool AsyncRelease) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
@@ -238,6 +244,7 @@ public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Func
     public IReadOnlyList<UnionDeclarationSyntax> Unions { get; init; } = Array.Empty<UnionDeclarationSyntax>();
     public IReadOnlyList<InterfaceDeclarationSyntax> Interfaces { get; init; } = Array.Empty<InterfaceDeclarationSyntax>();
     public IReadOnlyList<ServiceDeclarationSyntax> Services { get; init; } = Array.Empty<ServiceDeclarationSyntax>();
+    public IReadOnlyList<ResourceDeclarationSyntax> Resources { get; init; } = Array.Empty<ResourceDeclarationSyntax>();
     // Resolver-only metadata for source-facing diagnostics. Bound nominal
     // identities stay opaque and distinct even when source names overlap. A
     // shared empty map preserves existing equality for directly parsed modules.
@@ -676,6 +683,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var source = Expression(Current.Span.Line, stopAtBlock: true);
             left = new ForSyntax(keyword, name, source, Block());
         }
+        else if (Current.Text == "using")
+        {
+            var keyword = Take();
+            var name = Identifier();
+            Expect("=");
+            var acquisition = Expression(Current.Span.Line, stopAtBlock: true);
+            left = new UsingSyntax(keyword, name, acquisition, Block());
+        }
         else if (Current.Text is "-" or "!")
         {
             var op = Take();
@@ -924,11 +939,39 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private BlockSyntax Block()
     {
         Expect("{");
+        return BlockContents();
+    }
+
+    private BlockSyntax BlockContents()
+    {
         var bindings = new List<LetBindingSyntax>();
         var statements = new List<StatementSyntax>();
         ExpressionSyntax? result = null;
         while (Current.Text != "}" && Current.Text != "")
         {
+            if (Current.Text == "using")
+            {
+                // A declaration owns the rest of its enclosing lexical block.
+                // Desugaring to a nested scope also gives multiple declarations
+                // their normal reverse-order cleanup, including on early exits.
+                var start = position;
+                var keyword = Take();
+                var name = Identifier();
+                Expect("=");
+                var acquisition = Expression(Current.Span.Line, stopAtBlock: true);
+                if (Current.Text != "{")
+                {
+                    var end = tokens[position - 1];
+                    if (Current.Text != "}" && Current.Span.Line == end.Span.Line)
+                        throw Error("Expected a newline after a using declaration.");
+                    var remainder = BlockContents();
+                    result = new UsingSyntax(keyword, name, acquisition, remainder);
+                    return new(bindings, result) { Statements = statements };
+                }
+                // A braced using remains an expression; let the normal parser
+                // handle subsequent operators and block-statement separation.
+                position = start;
+            }
             if (Current.Text == "let")
             {
                 var keyword = Take();
@@ -1001,6 +1044,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var unions = new List<UnionDeclarationSyntax>();
         var interfaces = new List<InterfaceDeclarationSyntax>();
         var services = new List<ServiceDeclarationSyntax>();
+        var resources = new List<ResourceDeclarationSyntax>();
         IReadOnlyList<ParameterSyntax> TypedParameters()
         {
             Expect("(");
@@ -1040,7 +1084,29 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (Current.Text != "")
         {
-            var declarationDocs = Documentation("fn", "async", "type", "interface", "service");
+            var declarationDocs = Documentation("fn", "async", "type", "interface", "service", "resource");
+            if (Current.Text == "resource")
+            {
+                Take();
+                var resourceName = Identifier();
+                var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
+                Expect("{");
+                var methods = new List<ServiceMethodSyntax>();
+                while (Current.Text is not ("}" or ""))
+                {
+                    var methodDocs = Documentation("async", "<method>");
+                    var isAsyncMethod = Current.Text == "async";
+                    if (isAsyncMethod) Take();
+                    var methodName = Identifier();
+                    var resourceParameters = ServiceParameters();
+                    Expect(":");
+                    var returnType = TypeToken();
+                    methods.Add(new(methodName, resourceParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
+                }
+                Expect("}");
+                resources.Add(new(resourceName, dependencies, methods) { DocumentationComments = declarationDocs });
+                continue;
+            }
             if (Current.Text == "interface")
             {
                 Take();
@@ -1168,8 +1234,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType, IsAsync = isAsync });
         }
-        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0) throw Error("Expected at least one declaration.");
-        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Imports = imports };
+        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0 && resources.Count == 0) throw Error("Expected at least one declaration.");
+        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Imports = imports };
     }
 }
 
@@ -1205,6 +1271,44 @@ public static class Binder
     public static BoundModule Bind(ModuleSyntax syntax, string path = "<source>")
     {
         void Fail(string code, Token token, string message) => throw new SourceError(new(code, token.OriginPath ?? path, token.Span, message));
+        // Resource declarations are private nominal capabilities, lowered to
+        // service machinery only after their source-level ownership is checked.
+        var resourceNames = new HashSet<string>(StringComparer.Ordinal);
+        var resourceDeclarations = syntax.Resources.GroupBy(item => item.Name.Text, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var resourceInterfaces = new List<InterfaceDeclarationSyntax>();
+        var privateResourceContracts = new HashSet<string>(StringComparer.Ordinal);
+        var resourceServices = new List<ServiceDeclarationSyntax>();
+        var occupiedTypes = syntax.Records.Select(item => item.Name.Text).Concat(syntax.Unions.Select(item => item.Name.Text))
+            .Concat(syntax.Interfaces.Select(item => item.Name.Text)).Concat(syntax.Services.Select(item => item.Name.Text))
+            .Concat(syntax.Resources.Select(item => item.Name.Text)).ToHashSet(StringComparer.Ordinal);
+        var resourceIndex = 0;
+        foreach (var resource in syntax.Resources)
+        {
+            if (!resourceNames.Add(resource.Name.Text)) Fail("DS2041", resource.Name, "Duplicate resource declaration.");
+            var releases = resource.Methods.Where(method => method.Name.Text == "release").ToArray();
+            if (releases.Length != 1 || releases[0].Parameters.Count != 0 || releases[0].ReturnType?.Text != "Unit")
+                Fail("DS2041", resource.Name, "A resource requires exactly one release(): Unit method.");
+            var methodNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var method in resource.Methods)
+            {
+                if (!methodNames.Add(method.Name.Text)) Fail("DS2041", method.Name, "Duplicate resource operation.");
+                if (method.ReturnType is null || method.Parameters.Any(parameter => parameter.Type is null))
+                    Fail("DS2041", method.Name, "Resource operations require explicit parameter and result types.");
+            }
+            string contractName;
+            do contractName = "__dsharp_resource_contract_" + (resourceIndex++).ToString(CultureInfo.InvariantCulture);
+            while (!occupiedTypes.Add(contractName));
+            privateResourceContracts.Add(contractName);
+            var contractToken = resource.Name with { Text = contractName };
+            var methods = resource.Methods.Select(method => new InterfaceMethodSyntax(method.Name,
+                method.Parameters.Select(parameter => new ParameterSyntax(parameter.Name, parameter.Type!)).ToArray(),
+                method.ReturnType!, method.IsAsync)).ToArray();
+            resourceInterfaces.Add(new(contractToken, methods));
+            resourceServices.Add(new(resource.Name, resource.Dependencies, new[] { contractToken }, resource.Methods));
+        }
+        syntax = syntax with { Interfaces = syntax.Interfaces.Concat(resourceInterfaces).ToArray(),
+            Services = syntax.Services.Concat(resourceServices).ToArray() };
         // Give every declared type parameter a distinct internal identity. The
         // lexer cannot produce '$', so these symbols cannot capture a source
         // type, even when a type parameter shadows a nominal type or Unit.
@@ -1437,6 +1541,7 @@ public static class Binder
             {
                 bool ContainsTask(TypeShape item) => item.Name == taskSymbol || item.Arguments.Any(ContainsTask);
                 bool ContainsCapability(TypeShape item) => interfaces.ContainsKey(item.Name) || services.ContainsKey(item.Name) || item.Arguments.Any(ContainsCapability);
+                if (resourceNames.Contains(value.Name) || privateResourceContracts.Contains(value.Name)) return false;
                 if ((interfaces.ContainsKey(value.Name) || services.ContainsKey(value.Name)) && value.IsNullable) return false;
                 if (!value.IsFunction && value.Name != taskSymbol &&
                     value.Arguments.Any(argument => argument.ContainsFunction || ContainsTask(argument) || ContainsCapability(argument))) return false;
@@ -1555,6 +1660,12 @@ public static class Binder
         foreach (var service in syntax.Services)
         {
             if (service.Interfaces.Count == 0) Fail("DS2040", service.Name, "A service must implement an interface.");
+            if (!resourceNames.Contains(service.Name.Text) && service.Interfaces.Any(item => privateResourceContracts.Contains(item.Text)))
+                Fail("DS2041", service.Name, "Resource contracts are not source-visible.");
+            if (resourceNames.Contains(service.Name.Text))
+                foreach (var operation in service.Methods)
+                    if (operation.ReturnType is null || !DataType(operation.ReturnType.Text))
+                        Fail("DS2041", operation.Name, "A resource operation must return immutable data.");
             var implemented = new HashSet<string>(StringComparer.Ordinal);
             var required = new Dictionary<string, InterfaceMethodSyntax>(StringComparer.Ordinal);
             var declarations = new Dictionary<string, List<(string Interface, InterfaceMethodSyntax Method)>>(StringComparer.Ordinal);
@@ -1781,6 +1892,7 @@ public static class Binder
                 TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                 ListSyntax list => list.Elements.Any(NeverExpression),
                 ForSyntax loop => NeverExpression(loop.Source),
+                UsingSyntax owned => NeverExpression(owned.Acquisition) || NeverBlock(owned.Body),
                 AwaitSyntax awaited => NeverExpression(awaited.Operand),
                 PropagateSyntax propagation => NeverExpression(propagation.Operand),
                 IfSyntax conditional => NeverExpression(conditional.Condition) ||
@@ -1933,6 +2045,14 @@ public static class Binder
                         {
                             var loopNames = new HashSet<string>(names, StringComparer.Ordinal) { loop.Name.Text };
                             Block(loop.Body, loopNames);
+                        }
+                        break;
+                    case UsingSyntax owned:
+                        Expression(owned.Acquisition, names);
+                        if (includeUnreachable || !NeverExpression(owned.Acquisition))
+                        {
+                            var scopedNames = new HashSet<string>(names, StringComparer.Ordinal) { owned.Name.Text };
+                            Block(owned.Body, scopedNames);
                         }
                         break;
                     case IfSyntax conditional:
@@ -2159,6 +2279,8 @@ public static class Binder
             bool IsDefaultMethodName(string name) => defaultReceivers.TryGetValue(function.Name.Text, out var receiver) &&
                 interfaceMethods[receiver.Interface].ContainsKey(name);
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
+            var resourceHandles = new HashSet<string>(StringComparer.Ordinal);
+            var directResourceAwait = false;
             var boundLocals = new List<BoundLocal>();
             var tupleBindingCount = 0;
             bool hasReturn = false;
@@ -2284,6 +2406,7 @@ public static class Binder
                     TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                     ListSyntax list => list.Elements.Any(NeverExpression),
                     ForSyntax loop => NeverExpression(loop.Source),
+                    UsingSyntax owned => NeverExpression(owned.Acquisition) || NeverBlock(owned.Body),
                     AwaitSyntax awaited => NeverExpression(awaited.Operand),
                     PropagateSyntax propagation => NeverExpression(propagation.Operand),
                     IfSyntax conditional => NeverExpression(conditional.Condition) ||
@@ -2627,6 +2750,7 @@ public static class Binder
                 BoundTuple tuple => tuple.Type,
                 BoundList list => list.Type,
                 BoundFor => "Unit",
+                BoundUsing owned => owned.Type,
                 BoundListOperation list => list.Type,
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
@@ -3134,7 +3258,13 @@ public static class Binder
                         if (!awaitAllowed) Fail("DS2026", awaited.Keyword, "Await is allowed only inside an async function.");
                         var awaitHint = expectedResult is not null && SupportedType(expectedResult, activeTypeParameters)
                             ? taskSymbol + "<" + expectedResult + ">" : null;
-                        var awaitOperand = BindExpression(awaited.Operand, awaitHint);
+                        ExpressionSyntax directOperand = awaited.Operand;
+                        while (directOperand is GroupSyntax awaitedGroup) directOperand = awaitedGroup.Inner;
+                        var savedDirectAwait = directResourceAwait;
+                        directResourceAwait = directOperand is MemberCallSyntax { Receiver: ValueSyntax directHandle } && resourceHandles.Contains(directHandle.Value.Text);
+                        (BoundExpression Expression, string Type) awaitOperand;
+                        try { awaitOperand = BindExpression(awaited.Operand, awaitHint); }
+                        finally { directResourceAwait = savedDirectAwait; }
                         var awaitedType = awaitOperand.Type == "<never>" ? KnownType(awaitOperand.Expression) : awaitOperand.Type;
                         if (awaitedType is null || !GenericTypes.TryParse(awaitedType, out var taskShape) ||
                             taskShape.Name != taskSymbol || taskShape.IsNullable || taskShape.Arguments.Count != 1)
@@ -3328,6 +3458,49 @@ public static class Binder
                         return (new BoundFor(loop.Name.Text, Coerce(loopSource.Expression, loopSourceType!, loopSource.Type),
                             loopSourceType!, loopElementType, CoerceBlock(loopBody.Block, "Unit")),
                             loopSource.Type == "<never>" ? "<never>" : "Unit");
+                    case UsingSyntax owned:
+                    {
+                        if (locals.ContainsKey(owned.Name.Text) || inaccessibleCaptures.Contains(owned.Name.Text))
+                            Fail("DS2006", owned.Name, "Duplicate or shadowed local binding.");
+                        ExpressionSyntax acquisition = owned.Acquisition;
+                        while (acquisition is GroupSyntax acquisitionGroup) acquisition = acquisitionGroup.Inner;
+                        if (acquisition is not CallSyntax constructor || !resourceNames.Contains(constructor.Name.Text) ||
+                            locals.ContainsKey(constructor.Name.Text) || functionTypeScope.ContainsKey(constructor.Name.Text))
+                            Fail("DS2041", owned.Keyword, "Acquire a fresh resource directly in the using initializer.");
+                        var resource = services[constructor!.Name.Text];
+                        if (constructor.TypeArguments.Count != 0 || constructor.Arguments.Count != resource.Dependencies.Count)
+                            Fail("DS2041", constructor.Name, "Incorrect resource constructor arguments.");
+                        var acquired = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                            resource.Dependencies.Select(parameter => parameter.Type).ToArray(), constructor.Arguments, constructor.Name);
+                        var releaseAsync = resourceDeclarations[resource.Name.Text].Methods.Single(method => method.Name.Text == "release").IsAsync;
+                        if (releaseAsync && !awaitAllowed) Fail("DS2041", owned.Keyword, "Asynchronous resource cleanup requires an async function.");
+                        var beforeScope = inferenceReachable;
+                        (BoundBlock Block, string Type) scopeBody;
+                        locals.Add(owned.Name.Text, (0, resource.Name.Text));
+                        resourceHandles.Add(owned.Name.Text);
+                        try
+                        {
+                            inferenceReachable = beforeScope && !acquired.Never;
+                            scopeBody = BindBlock(owned.Body, expectedResultType: expectedResult);
+                        }
+                        finally
+                        {
+                            inferenceReachable = beforeScope;
+                            resourceHandles.Remove(owned.Name.Text);
+                            locals.Remove(owned.Name.Text);
+                        }
+                        var actualType = scopeBody.Type == "<never>" ? "Unit" : scopeBody.Type;
+                        if (actualType == "<null>")
+                        {
+                            if (expectedResult is null || !IsNullable(expectedResult))
+                                Fail("DS2002", owned.Keyword, "Cannot infer the contained type of a null resource scope result.");
+                            actualType = expectedResult!;
+                            scopeBody = (CoerceBlock(scopeBody.Block, actualType), actualType);
+                        }
+                        return (new BoundUsing(owned.Name.Text, new BoundServiceConstruction(resource.Name.Text, acquired.Values),
+                            resource.Name.Text, scopeBody.Block, actualType, releaseAsync),
+                            acquired.Never || scopeBody.Type == "<never>" ? "<never>" : actualType);
+                    }
                     case IfSyntax conditional:
                         var condition = BindExpression(conditional.Condition);
                         Require(conditional.Condition, condition.Type, "bool");
@@ -3456,6 +3629,8 @@ public static class Binder
                             original.Type == "<never>" || changes.Never ? "<never>" : originalType!);
                     case ValueSyntax valueSyntax:
                         var token = valueSyntax.Value;
+                        if (resourceHandles.Contains(token.Text))
+                            Fail("DS2041", token, "A resource handle can only be used as the direct receiver of an operation.");
                         if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(token.Text) && !inaccessibleCaptures.Contains(token.Text) &&
                             preludeNames.TryGetValue(token.Text, out var preludeValueName))
                             token = token with { Text = preludeValueName };
@@ -3513,6 +3688,8 @@ public static class Binder
                                 { TypeArguments = call.TypeArguments }, expectedResult);
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
+                            if (resourceNames.Contains(call.Name.Text))
+                                Fail("DS2041", call.Name, "A resource must be acquired directly by a using scope.");
                             if (cases.ContainsKey(call.Name.Text)) Fail("DS2018", call.Name, "Ambiguous service constructor and union case.");
                             if (functionTypeScope.ContainsKey(call.Name.Text)) Fail("DS2026", call.Name, "A type parameter is not a service constructor.");
                             if (call.TypeArguments.Count != 0) Fail("DS2023", call.Name, "Service constructors do not accept type arguments.");
@@ -3571,6 +3748,26 @@ public static class Binder
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
                     {
+                        if (member.Receiver is ValueSyntax scopedReceiver && resourceHandles.Contains(scopedReceiver.Value.Text) &&
+                            locals.TryGetValue(scopedReceiver.Value.Text, out var scopedLocal))
+                        {
+                            if (member.Member.Text == "release") Fail("DS2041", member.Member, "Cleanup is managed by the using scope.");
+                            if (!serviceMethods[scopedLocal.Type].TryGetValue(member.Member.Text, out var operation))
+                                Fail("DS2041", member.Member, "Unknown resource operation.");
+                            if (member.TypeArguments.Count != 0 || member.Arguments.Count != operation!.Parameters.Count)
+                                Fail("DS2041", member.Member, "Incorrect resource operation arguments.");
+                            if (operation!.IsAsync && !directResourceAwait)
+                                Fail("DS2041", member.Member, "An async resource operation must be immediately awaited.");
+                            var previousDirectAwait = directResourceAwait;
+                            directResourceAwait = false;
+                            (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) args;
+                            try { args = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), operation.Parameters.Select(parameter => parameter.Type).ToArray(), member.Arguments, member.Member); }
+                            finally { directResourceAwait = previousDirectAwait; }
+                            var operationType = operation.IsAsync ? taskSymbol + "<" + operation.ReturnType.Text + ">" : operation.ReturnType.Text;
+                            if (operation.IsAsync) taskUsed = true;
+                            return (new BoundServiceCall(new BoundReference(scopedReceiver.Value.Text), scopedLocal.Type, member.Member.Text, args.Values, operationType),
+                                args.Never ? "<never>" : operationType);
+                        }
                         var builderReceiverSyntax = member.Receiver;
                         while (builderReceiverSyntax is GroupSyntax builderGroup) builderReceiverSyntax = builderGroup.Inner;
                         if (builderReceiverSyntax is ValueSyntax builderReceiver &&
@@ -4130,6 +4327,7 @@ public static class Binder
                     TupleSyntax tuple => tuple.Elements.Any(Never),
                     ListSyntax list => list.Elements.Any(Never),
                     ForSyntax loop => Never(loop.Source),
+                    UsingSyntax owned => Never(owned.Acquisition) || NeverBlock(owned.Body),
                     AwaitSyntax awaited => Never(awaited.Operand),
                     IfSyntax conditional => Never(conditional.Condition) ||
                         (LiteralCondition(conditional.Condition) == true ? NeverBlock(conditional.Then) :
@@ -5257,13 +5455,27 @@ public static class CSharpEmitter
                 .Where(property => property.GetIndexParameters().Length == 0)
                 .Any(property => NeedsLambdaReturn(property.GetValue(node)));
         }
+        bool ContainsUsing(object? node)
+        {
+            if (node is null or string) return false;
+            if (node is BoundUsing) return true;
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) if (ContainsUsing(item)) return true;
+                return false;
+            }
+            var type = node.GetType();
+            return type.Name.StartsWith("Bound", StringComparison.Ordinal) && type.GetProperties()
+                .Where(property => property.GetIndexParameters().Length == 0)
+                .Any(property => ContainsUsing(property.GetValue(node)));
+        }
         // Generated expression helpers form real C# function boundaries.
         // Propagate suspension through each one that contains an await; a
         // source lambda is its own boundary, whether synchronous or async.
         bool ContainsAwait(object? node)
         {
             if (node is null or string || node is BoundLambda) return false;
-            if (node is BoundAwait) return true;
+            if (node is BoundAwait or BoundUsing { AsyncRelease: true }) return true;
             if (node is System.Collections.IEnumerable sequence)
             {
                 foreach (var item in sequence) if (ContainsAwait(item)) return true;
@@ -5283,7 +5495,8 @@ public static class CSharpEmitter
         string HelperBody(object node) => ContainsAwait(node)
             ? "()\n            {\n            await global::System.Threading.Tasks.Task.CompletedTask;\n"
             : "()\n            {\n";
-        if (module.Functions.Any(f => f.HasReturn || NeedsLambdaReturn(f)))
+        var hasUsing = module.Functions.Any(ContainsUsing);
+        if (module.Functions.Any(f => f.HasReturn || NeedsLambdaReturn(f)) || hasUsing)
         {
             output.Append("    private sealed class ").Append(signalType).Append("<T> : global::System.Exception\n")
                 .Append("    {\n        public T Value { get; }\n        public ").Append(signalType).Append("(T value) { Value = value; }\n    }\n")
@@ -5346,6 +5559,7 @@ public static class CSharpEmitter
             var lambdaCount = 0;
             var listCount = 0;
             var forCount = 0;
+            var usingCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
@@ -5693,6 +5907,21 @@ public static class CSharpEmitter
                         var neverValue = EmitExpression(never.Expression);
                         output.Append("            _ = ").Append(neverValue).Append(";\n            throw new global::System.InvalidOperationException(\"Noncompleting expression completed.\");\n            }\n");
                         return HelperCall(neverHelper, never);
+                    case BoundUsing owned:
+                        var usingId = (usingCount++).ToString(CultureInfo.InvariantCulture);
+                        var usingHelper = "__dsharp_using_" + usingId;
+                        var usingResource = "__dsharp_using_resource_" + usingId;
+                        output.Append("            ").Append(HelperResult(owned.Type, owned)).Append(" ").Append(usingHelper).Append(HelperBody(owned));
+                        var usingAcquisition = EmitExpression(owned.Acquisition);
+                        output.Append("            ").Append(CType(owned.ResourceType)).Append(" ").Append(usingResource).Append(" = ").Append(usingAcquisition).Append(";\n")
+                            .Append("            try\n            {\n");
+                        localNames.Add(owned.Name, usingResource);
+                        EmitBlock(owned.Body, owned.Type);
+                        localNames.Remove(owned.Name);
+                        output.Append("            }\n            finally\n            {\n            _ = ");
+                        if (owned.AsyncRelease) output.Append("await ");
+                        output.Append(usingResource).Append(".").Append(CapabilityMethod("release")).Append("();\n            }\n            }\n");
+                        return HelperCall(usingHelper, owned);
                     case BoundFor loop:
                         var forId = (forCount++).ToString(CultureInfo.InvariantCulture);
                         var forHelper = "__dsharp_for_" + forId;
