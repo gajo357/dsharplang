@@ -59,6 +59,7 @@ external interoperability guarantee follows from this lowering. See the
 | Directly constructed scoped resources | Fresh `resource` declarations, enclosing-block and braced `using`, receiver-only scoped handles | Sync/async release runs on tested exits with C#-style cleanup failure behavior |
 | Owned resource function factories | Explicit non-generic functions return a fresh resource directly to `using`; async factories must be immediately awaited | Factory forwarding, async acquisition and cleanup execute without exposing an owned value as ordinary data |
 | Owned resource service factories | Interface and service methods, including supported defaults, return fresh resources directly to `using` | Checked polymorphic dispatch, forwarding and immediate async acquisition preserve scoped ownership |
+| Owned resources through Result | Checked factories return `Result<Resource,E>` only for direct forwarding or immediate `?` into `using` | Success transfers one scoped resource; Error propagates without acquiring it |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
@@ -243,13 +244,14 @@ errors, faults and cancellation. Following C#, a cleanup exception replaces any
 in-flight outcome. Handles cannot escape; async operations are immediately awaited.
 Resource dependencies follow service dependency restrictions, and existing
 conservative return-inference rules apply. Provider-returned resources require
-the factory rules described below; `Result` transfers remain open work. See the [D# example](../../examples/scoped-resources.ds)
+the factory rules described below; owned results have the restricted transfer
+rules described below. See the [D# example](../../examples/scoped-resources.ds)
 and [contract](implementation/issue-45-contract.md).
 [Issue #170](https://github.com/gajo357/dsharplang/issues/170) adds directly
 consumed owned-resource function factories, including async factories awaited
 immediately by `using`. Factories and fresh resources cannot become ordinary
 values, and factories containing `using` are rejected to avoid losing a resource
-if cleanup interrupts transfer. `Result` transfers remain open under #45. See the
+if cleanup interrupts transfer. See the
 [D# example](../../examples/owned-resource-factories.ds) and
 [implementation plan](implementation/issue-170-plan.md).
 [Issue #172](https://github.com/gajo357/dsharplang/issues/172) extends owned
@@ -258,8 +260,14 @@ methods. Immediate calls and awaited async calls retain checked dispatch and
 receiver/argument evaluation order. Method values, ownership escapes and `using`
 inside an owned-return body remain rejected. See the
 [D# example](../../examples/owned-service-factories.ds) and
-[implementation plan](implementation/issue-172-plan.md). `Result` transfer
-remains open under #45.
+[implementation plan](implementation/issue-172-plan.md).
+[Issue #174](https://github.com/gajo357/dsharplang/issues/174) supports immediate
+transfer through the standard `Result<Resource,E>` from checked sync and async
+function or service factories. `Success` transfers ownership to `using` through
+`?`; `Error` propagates without acquiring a resource. These results cannot be
+stored, copied, matched or passed as ordinary data. See the
+[D# example](../../examples/owned-result-resources.ds) and
+[implementation plan](implementation/issue-174-plan.md).
 [Issue #42](https://github.com/gajo357/dsharplang/issues/42) adds async lambda
 expressions and blocks. Their explicit `async` marker permits `await` in the
 lambda itself, and the resulting function value returns a Task. Immutable

@@ -1,9 +1,9 @@
 # Issue 45: Scoped resource ownership
 
 **Status:** The maintainer directed D# to follow C# `using` cleanup behavior.
-Direct construction and immediate function-factory transfer are implemented;
-service/interface method factories are implemented for review. #45 remains open
-for Result transfer.
+Direct construction, immediately consumed function and service factories, and
+transfer-only standard `Result` acquisition are implemented. #45 remains open
+for the remaining ownership boundaries and integration evidence.
 
 [DEC-07](DEC-07.md) adopts bounded ownership and exactly-once cleanup. Its prior
 rule for separately reporting a cleanup failure when another failure is already
@@ -84,9 +84,14 @@ resource for immediate use, with async methods directly awaited. Their bodies
 follow the same non-escape and no-`using` rules as owned-returning functions.
 See the [service factory plan](issue-172-plan.md).
 
-Linear transfers through `Result` or stored `Task` values are not implemented. In particular,
-`using connection = (await db.open())?` is still a target rather than supported
-behavior. General borrowing, foreign
+A checked producer may return the standard `Result<Resource,E>` for immediate
+`?` consumption in `using`, including `using connection = (await db.open())?`.
+`Success` transfers a fresh resource; `Error` propagates without acquiring one.
+Such results and producer tasks cannot be stored, matched or copied as ordinary
+data. See the [owned Result plan](issue-174-plan.md).
+
+General first-class ownership transfers, stored `Task` or `Result` values,
+general borrowing, foreign
 `IDisposable`/`IAsyncDisposable` mapping, database transactions, and implicit
 application registration remain separate work. Closing #45 requires the
 remaining ownership behavior and its acceptance tests; the

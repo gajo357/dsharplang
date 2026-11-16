@@ -1,0 +1,48 @@
+module Demo
+
+resource Cursor(value: int) {
+    read(): int { value }
+    release(): Unit { () }
+}
+
+interface Store {
+    open(value: int): Result<Cursor, string>
+    openDefault(value: int): Result<Cursor, string> { open(value) }
+    async openAsync(input: Task<int>): Result<Cursor, string>
+}
+
+service MemoryStore: Store {
+    open(value) {
+        if value >= 0 { Success(Cursor(value)) } else { Error("missing") }
+    }
+    openAsync(input) {
+        let value = await input
+        if value >= 0 { Success(Cursor(value)) } else { Error("missing") }
+    }
+}
+
+fn load(value: int): Result<int, string> {
+    let store: Store = MemoryStore()
+    using cursor = store.openDefault(value)?
+    Success(cursor.read() + 2)
+}
+
+fn answer(): int {
+    match load(40) {
+        Success(value) => value
+        Error(_) => 0
+    }
+}
+
+async fn asyncLoad(input: Task<int>): Result<int, string> {
+    let store: Store = MemoryStore()
+    using cursor = (await store.openAsync(input))?
+    Success(cursor.read() + 2)
+}
+
+async fn asyncAnswer(input: Task<int>): int {
+    match await asyncLoad(input) {
+        Success(value) => value
+        Error(_) => 0
+    }
+}

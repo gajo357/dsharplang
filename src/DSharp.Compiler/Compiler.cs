@@ -1561,6 +1561,14 @@ public static class Binder
         bool ContainsTask(TypeShape shape) => shape.Name == taskSymbol || shape.Arguments.Any(ContainsTask);
         bool ContainsCapability(TypeShape shape) => interfaces.ContainsKey(shape.Name) || services.ContainsKey(shape.Name) || shape.Arguments.Any(ContainsCapability);
         bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape) && !ContainsCapability(shape);
+        // Resource-bearing Results are affine transfer envelopes, never normal
+        // data. Recognize only the intrinsic Result with a direct, nonnullable
+        // resource success type and an independently valid immutable error.
+        bool OwnedResult(string type) => GenericTypes.TryParse(type, out var shape) &&
+            shape.Name == resultSymbol && !shape.IsNullable && shape.Arguments.Count == 2 &&
+            !shape.Arguments[0].IsNullable && resourceNames.Contains(shape.Arguments[0].ToString()) &&
+            SupportedType(shape.Arguments[1].ToString()) && DataType(shape.Arguments[1].ToString());
+        bool OwnedTransfer(string type) => resourceNames.Contains(type) || OwnedResult(type);
         // A callable's signature can mention an interface without holding an
         // interface value. Its own captures/partials are checked separately.
         bool RetainsCapability(TypeShape shape) => !shape.IsFunction &&
@@ -1605,7 +1613,7 @@ public static class Binder
             foreach (var method in item.Methods)
             {
                 if (!methods.TryAdd(method.Name.Text, method)) Fail("DS2040", method.Name, "Duplicate interface method.");
-                if (!SupportedType(method.ReturnType.Text) && !resourceNames.Contains(method.ReturnType.Text))
+                if (!SupportedType(method.ReturnType.Text) && !OwnedTransfer(method.ReturnType.Text))
                     Fail("DS2040", method.ReturnType, "Unsupported interface result type.");
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var parameter in method.Parameters)
@@ -1731,7 +1739,7 @@ public static class Binder
                 syntheticFunctions.Add(synthetic);
                 boundMethods.Add(new BoundServiceMethod(method.Name.Text, syntheticName,
                     contract.Parameters.Select(parameter => parameter.Type.Text).ToArray(), contract.ReturnType.Text, contract.IsAsync)
-                    { IsOwnedFactory = resourceNames.Contains(contract.ReturnType.Text) });
+                    { IsOwnedFactory = OwnedTransfer(contract.ReturnType.Text) });
             }
             foreach (var (name, candidates) in declarations)
             {
@@ -1744,7 +1752,7 @@ public static class Binder
                 var method = selected.Method;
                 boundMethods.Add(new BoundServiceMethod(name, defaultBodies[(selected.Interface, name)],
                     method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
-                    { DefaultInterface = selected.Interface, IsOwnedFactory = resourceNames.Contains(method.ReturnType.Text) });
+                    { DefaultInterface = selected.Interface, IsOwnedFactory = OwnedTransfer(method.ReturnType.Text) });
             }
             serviceMethods.Add(service.Name.Text, required);
             boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
@@ -1762,7 +1770,7 @@ public static class Binder
             if (records.TryGetValue(function.Name.Text, out var conflictingRecord))
                 Fail("DS2015", function.Name.Span.Start > conflictingRecord.Name.Span.Start ? function.Name : conflictingRecord.Name,
                     "A function and record constructor cannot share a name.");
-            var isOwnedFactory = !function.InferReturnType && resourceNames.Contains(function.ReturnType.Text);
+            var isOwnedFactory = !function.InferReturnType && OwnedTransfer(function.ReturnType.Text);
             if (isOwnedFactory)
             {
                 if (function.TypeParameters.Count != 0)
@@ -2304,11 +2312,31 @@ public static class Binder
             var ownedMemberCalls = new HashSet<MemberCallSyntax>(ReferenceEqualityComparer.Instance);
             var awaitedOwnedMembers = new HashSet<MemberCallSyntax>(ReferenceEqualityComparer.Instance);
             var awaitedOwnedCalls = new HashSet<CallSyntax>(ReferenceEqualityComparer.Instance);
+            var ownedResultCases = new HashSet<ExpressionSyntax>(ReferenceEqualityComparer.Instance);
+            var ownedPropagations = new HashSet<PropagateSyntax>(ReferenceEqualityComparer.Instance);
+            bool IntrinsicCase(CallSyntax call) => (call.Name.Text is "Success" or "Error") &&
+                !locals.ContainsKey(call.Name.Text) && !signatures.ContainsKey(call.Name.Text) &&
+                !records.ContainsKey(call.Name.Text) && !services.ContainsKey(call.Name.Text) &&
+                !IsDefaultMethodName(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                candidates.Count == 1 && candidates[0].Union.Name.Text == resultSymbol;
+            bool IntrinsicMemberCase(MemberCallSyntax member) => member.Receiver is ValueSyntax qualifier &&
+                (member.Member.Text is "Success" or "Error") && !locals.ContainsKey(qualifier.Value.Text) &&
+                !functionTypeScope.ContainsKey(qualifier.Value.Text) && UnionQualifier(qualifier.Value.Text) == resultSymbol;
             void MarkOwnedResult(ExpressionSyntax expression)
             {
                 switch (expression)
                 {
                     case GroupSyntax group: MarkOwnedResult(group.Inner); break;
+                    case CallSyntax resultCase when OwnedResult(function.ReturnType.Text) && IntrinsicCase(resultCase):
+                        ownedResultCases.Add(resultCase);
+                        if (resultCase.Name.Text == "Success" && resultCase.Arguments.Count == 1)
+                            MarkOwnedResult(resultCase.Arguments[0]);
+                        break;
+                    case MemberCallSyntax resultCase when OwnedResult(function.ReturnType.Text) && IntrinsicMemberCase(resultCase):
+                        ownedResultCases.Add(resultCase);
+                        if (resultCase.Member.Text == "Success" && resultCase.Arguments.Count == 1)
+                            MarkOwnedResult(resultCase.Arguments[0]);
+                        break;
                     case MemberCallSyntax member:
                         ownedMemberCalls.Add(member); break;
                     case CallSyntax call when resourceNames.Contains(call.Name.Text) ||
@@ -2888,10 +2916,26 @@ public static class Binder
             }
             (BoundExpression Expression, string Type) BindCase(UnionDeclarationSyntax union,
                 UnionCaseSyntax unionCase, Token name, IReadOnlyList<ExpressionSyntax> arguments,
-                IReadOnlyList<Token>? explicitTypes = null, string? expectedResult = null, bool called = false)
+                IReadOnlyList<Token>? explicitTypes = null, string? expectedResult = null, bool called = false,
+                bool ownedCase = false)
             {
                 if (union.Name.Text == resultSymbol) resultUsed = true;
                 if (union.Name.Text == optionSymbol) optionUsed = true;
+                if (ownedCase && union.Name.Text == resultSymbol && expectedResult is not null && OwnedResult(expectedResult))
+                {
+                    if (arguments.Count != 1) Fail("DS2018", name, "An owned Result case requires one payload.");
+                    GenericTypes.TryParse(expectedResult, out var ownedShape);
+                    if (explicitTypes is { Count: > 0 } && (explicitTypes.Count != 2 ||
+                        explicitTypes[0].Text != ownedShape!.Arguments[0].ToString() ||
+                        explicitTypes[1].Text != ownedShape.Arguments[1].ToString()))
+                        Fail("DS2023", name, "Owned Result case type arguments must match the factory result.");
+                    var payloadType = ownedShape!.Arguments[unionCase.Name.Text == "Success" ? 0 : 1].ToString();
+                    var payload = BindExpression(arguments[0], payloadType);
+                    Require(arguments[0], payload.Type, payloadType);
+                    return (new BoundUnionConstruction(expectedResult, unionCase.Name.Text,
+                        new[] { Coerce(payload.Expression, payloadType, payload.Type) }),
+                        payload.Type == "<never>" ? "<never>" : expectedResult);
+                }
                 if (called && union.Name.Text == resultSymbol && unionCase.Name.Text == "Success" && arguments.Count == 0)
                 {
                     var unitExpected = explicitTypes is { Count: > 0 }
@@ -2913,11 +2957,11 @@ public static class Binder
             }
             (BoundExpression Expression, string Type) BindQualifiedCase(UnionDeclarationSyntax union,
                 Token name, IReadOnlyList<ExpressionSyntax> arguments, IReadOnlyList<Token>? explicitTypes = null,
-                string? expectedResult = null, bool called = false)
+                string? expectedResult = null, bool called = false, bool ownedCase = false)
             {
                 var unionCase = union.Cases.FirstOrDefault(item => item.Name.Text == name.Text);
                 if (unionCase is null) Fail("DS2018", name, "Unknown union case.");
-                return BindCase(union, unionCase!, name, arguments, explicitTypes, expectedResult, called);
+                return BindCase(union, unionCase!, name, arguments, explicitTypes, expectedResult, called, ownedCase);
             }
             BoundPattern BindPattern(PatternSyntax pattern, string expected, List<string> introduced)
             {
@@ -3399,6 +3443,9 @@ public static class Binder
                         hasReturn = true;
                         resultUsed = true;
                         var successType = operandShape.Arguments[0].ToString();
+                        if (resourceNames.Contains(successType) &&
+                            (!ownedPropagations.Contains(propagation) || !OwnedResult(propagatedType!)))
+                            Fail("DS2041", propagation.Operator, "An owned Result must be propagated directly into a using acquisition.");
                         return (new BoundPropagation(propagated.Expression, propagatedType!, successType, currentReturnType!),
                             propagated.Type == "<never>" ? "<never>" : successType);
                     case MatchSyntax match:
@@ -3533,6 +3580,13 @@ public static class Binder
                             Fail("DS2006", owned.Name, "Duplicate or shadowed local binding.");
                         ExpressionSyntax acquisition = owned.Acquisition;
                         while (acquisition is GroupSyntax acquisitionGroup) acquisition = acquisitionGroup.Inner;
+                        if (acquisition is PropagateSyntax ownedPropagation)
+                        {
+                            ownedPropagations.Add(ownedPropagation);
+                            MarkOwnedResult(ownedPropagation.Operand);
+                            acquisition = ownedPropagation.Operand;
+                            while (acquisition is GroupSyntax propagatedGroup) acquisition = propagatedGroup.Inner;
+                        }
                         if (acquisition is AwaitSyntax acquisitionAwait)
                         {
                             acquisition = acquisitionAwait.Operand;
@@ -3540,7 +3594,7 @@ public static class Binder
                         }
                         if (acquisition is not (CallSyntax or MemberCallSyntax))
                             Fail("DS2041", owned.Keyword, "Acquire a fresh resource or directly await an owned factory in the using initializer.");
-                        MarkOwnedResult(owned.Acquisition);
+                        if (owned.Acquisition is not PropagateSyntax) MarkOwnedResult(owned.Acquisition);
                         var acquired = BindExpression(owned.Acquisition);
                         var resourceName = acquired.Type == "<never>" ? KnownType(acquired.Expression) : acquired.Type;
                         if (resourceName is null || !resourceNames.Contains(resourceName))
@@ -3787,7 +3841,8 @@ public static class Binder
                         {
                             var selected = BareCase(call.Name);
                             return BindCase(selected.Union, selected.Case, call.Name, call.Arguments,
-                                call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
+                                call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true,
+                                ownedResultCases.Contains(call));
                         }
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
                         if (ownedFactories.Contains(call.Name.Text))
@@ -3952,7 +4007,8 @@ public static class Binder
                         if (member.Receiver is ValueSyntax memberQualifier && !locals.ContainsKey(memberQualifier.Value.Text) &&
                             unions.TryGetValue(UnionQualifier(memberQualifier.Value.Text), out var memberUnion))
                             return BindQualifiedCase(memberUnion, member.Member, member.Arguments,
-                                member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true);
+                                member.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true,
+                                ownedResultCases.Contains(member));
                         var listReceiver = BindExpression(member.Receiver);
                         var listReceiverType = listReceiver.Type == "<never>" ? KnownType(listReceiver.Expression) : listReceiver.Type;
                         if (listReceiverType is not null &&
@@ -3966,7 +4022,7 @@ public static class Binder
                                 Fail("DS2027", member.Member, "An explicit return type is required for indirect service calls.");
                             if (!dispatchMethods!.TryGetValue(member.Member.Text, out var dispatchMethod))
                                 Fail("DS2040", member.Member, "Unknown service or interface method.");
-                            if (resourceNames.Contains(dispatchMethod!.ReturnType.Text) &&
+                            if (OwnedTransfer(dispatchMethod!.ReturnType.Text) &&
                                 (!ownedMemberCalls.Contains(member) || dispatchMethod.IsAsync != awaitedOwnedMembers.Contains(member)))
                                 Fail("DS2041", member.Member, "An owned factory method must be fully applied and transferred directly; async factories must be directly awaited.");
                             if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Service methods do not accept type arguments.");
@@ -4894,7 +4950,7 @@ public static class Binder
             Interfaces = syntax.Interfaces.Select(item => new BoundInterfaceDeclaration(item.Name.Text,
                 item.Methods.Select(method => new BoundInterfaceMethod(method.Name.Text,
                     method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
-                    { IsOwnedFactory = resourceNames.Contains(method.ReturnType.Text) }).ToArray())).ToArray(),
+                    { IsOwnedFactory = OwnedTransfer(method.ReturnType.Text) }).ToArray())).ToArray(),
             Services = boundServiceDeclarations,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
