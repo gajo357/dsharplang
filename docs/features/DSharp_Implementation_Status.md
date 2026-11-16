@@ -52,6 +52,7 @@ external interoperability guarantee follows from this lowering. See the
 | Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
 | Immutable List.fold partial application | `items.fold(initial)` produces a function taking the fold callback | Receiver and initial are captured once in order; each completed call folds the captured list left to right |
 | Empty-prefix immutable collection methods | `List.append/get/filter`, `Map.get/contains/set` and `Set.add/contains` accept `()` as a partial call | Receiver is captured once; the intrinsic operation runs when its arguments are supplied |
+| Generic List empty-prefix methods | `map<U>()` and `fold<A>()` accept explicit or contextually inferred types | Receiver is captured once; callbacks and iteration run only on completed calls |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
@@ -251,7 +252,7 @@ and service/interface capability captures remain rejected, including through
 generic substitution. Omitted returns can be inferred for tested immediate calls
 and pipes when the receiver and callback are statically known. Unknown callbacks
 and unproven targets remain conservative. Other collection partials and
-polymorphic empty-prefix calls remain separate work under #129. See the
+unsupported empty-prefix forms remain separate work under #129. See the
 [D# example](../../examples/list_fold_partial.ds) and
 [implementation plan](implementation/issue-183-plan.md).
 `Map` and `Set` are implemented separately in
@@ -288,10 +289,26 @@ their behavior; a compatible expected callable or pipe can select the intrinsic
 partial when that full result is incompatible. An omitted-return function that
 immediately invokes or pipes into an empty collection partial may still require
 a return annotation. Bare method values,
-polymorphic List `map`/`fold` empty calls, extension empty calls, and service or
-interface method partials remain separate work under #129. See the
+extension empty calls, and service or interface method partials remain separate
+work under #129. See the
 [D# example](../../examples/collection_empty_partials.ds) and
 [implementation plan](implementation/issue-187-plan.md).
+[Issue #189](https://github.com/gajo357/dsharplang/issues/189) adds empty-prefix
+`List<T>.map<U>()` and `List<T>.fold<A>()`. Their result or accumulator type can
+be supplied explicitly or established from a compatible expected callable or pipe
+context. The list is captured once; callbacks and iteration run only when all
+arguments are supplied. `map<U>` retains immutable-data requirements, and staged
+`fold<A>` calls retain capability and ownership checks, including through generic
+substitution. A call without sufficient type evidence is rejected unless an
+existing applicable full extension supplies the call. Previously valid full
+extension calls retain their behavior; compatible callable or pipe context can
+select the intrinsic when the extension result is incompatible, and ambiguous
+applicable extensions remain errors. An omitted-return function immediately
+invoking or piping into these partials may still need a return annotation. Bare
+method values, extension empty prefixes and service/interface method partials
+remain separate work under #129. See the
+[D# example](../../examples/generic_list_empty_partials.ds) and
+[implementation plan](implementation/issue-189-plan.md).
 [Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and
 explicitly constructed services, including multiple implemented interfaces,
 signature conformance and direct polymorphic dispatch. Dependencies are supplied

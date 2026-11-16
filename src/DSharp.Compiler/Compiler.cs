@@ -144,7 +144,10 @@ public sealed record BoundTuple(IReadOnlyList<BoundExpression> Elements, string 
 public sealed record BoundTupleItem(BoundExpression Tuple, int Index) : BoundExpression;
 public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string Type) : BoundExpression;
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
-public sealed record BoundCollectionMethodPartial(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<string> ParameterTypes, string ReturnType, string Type) : BoundExpression;
+public sealed record BoundCollectionMethodPartial(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<string> ParameterTypes, string ReturnType, string Type) : BoundExpression
+{
+    public IReadOnlyList<string> TypeArguments { get; init; } = Array.Empty<string>();
+}
 public sealed record BoundListFoldPartial(BoundExpression Receiver, string ReceiverType, BoundExpression Initial, string AccumulatorType, string ElementType, string Type) : BoundExpression;
 public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
@@ -4735,6 +4738,68 @@ public static class Binder
                                 };
                             return false;
                         }
+                        // Empty generic List methods need an explicit type or a
+                        // structurally compatible callable/pipe context. Do not
+                        // invent a type for an unconstrained map()/fold().
+                        (string[] Parameters, string Result, string Type, string TypeArgument)? GenericEmptyListPartial()
+                        {
+                            if (listReceiverType is null || member.Arguments.Count != 0 ||
+                                member.Member.Text is not ("map" or "fold") || member.TypeArguments.Count > 1 ||
+                                !GenericTypes.TryParse(listReceiverType, out var list) || list.IsNullable ||
+                                list.Name != listSymbol || list.Arguments.Count != 1) return null;
+                            var element = list.Arguments[0].ToString();
+                            var isMap = member.Member.Text == "map";
+                            string? inferred = member.TypeArguments.Count == 1
+                                ? ScopedType(member.TypeArguments[0], functionTypeScope).Text : null;
+                            string? FromCallback(TypeShape callback, bool fold)
+                            {
+                                if (!callback.IsFunction || callback.IsNullable || callback.Arguments.Count != (fold ? 3 : 2)) return null;
+                                if (fold)
+                                    return callback.Arguments[1].ToString() == element && callback.Arguments[0].ToString() == callback.Arguments[2].ToString()
+                                        ? callback.Arguments[0].ToString() : null;
+                                return callback.Arguments[0].ToString() == element ? callback.Arguments[1].ToString() : null;
+                            }
+                            string? FromExpected(string? expected, bool remainingAfterPipe)
+                            {
+                                if (expected is null || !GenericTypes.TryParse(expected, out var shape) || shape.IsNullable) return null;
+                                if (isMap && remainingAfterPipe)
+                                    return shape.Name == listSymbol && shape.Arguments.Count == 1 ? shape.Arguments[0].ToString() : null;
+                                if (!shape.IsFunction || shape.Arguments.Count != (isMap || remainingAfterPipe ? 2 : 3)) return null;
+                                if (isMap)
+                                {
+                                    var argument = FromCallback(shape.Arguments[0], false);
+                                    var result = shape.Arguments[1];
+                                    return argument is not null && result.Name == listSymbol && !result.IsNullable &&
+                                        result.Arguments.Count == 1 && result.Arguments[0].ToString() == argument ? argument : null;
+                                }
+                                var initial = remainingAfterPipe ? null : shape.Arguments[0].ToString();
+                                var accumulator = FromCallback(shape.Arguments[remainingAfterPipe ? 0 : 1], true);
+                                return accumulator is not null && shape.Arguments[^1].ToString() == accumulator &&
+                                    (initial is null || initial == accumulator) ? accumulator : null;
+                            }
+                            var expectedHint = FromExpected(expectedResult, false) ?? FromExpected(pipeOutputType, true);
+                            if (inferred is null) inferred = expectedHint;
+                            if (inferred is null && pipeInputType is not null && GenericTypes.TryParse(pipeInputType, out var input))
+                                inferred = isMap ? FromCallback(input, false) : pipeInputType;
+                            if (inferred is null) return null;
+                            var callbackType = isMap ? TypeShape.FunctionName + "<" + element + "," + inferred + ">" :
+                                TypeShape.FunctionName + "<" + inferred + "," + element + "," + inferred + ">";
+                            var parameters = isMap ? new[] { callbackType } : new[] { inferred, callbackType };
+                            var result = isMap ? listSymbol + "<" + inferred + ">" : inferred;
+                            return (parameters, result, TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(result)) + ">", inferred);
+                        }
+                        var genericEmptyListPartial = GenericEmptyListPartial();
+                        if (member.TypeArguments.Count > 0 && genericEmptyListPartial is { } explicitlyTypedPartial)
+                        {
+                            if (!SupportedType(explicitlyTypedPartial.TypeArgument, activeTypeParameters))
+                                Fail("DS2023", member.TypeArguments[0], "Unsupported type argument.");
+                            if (member.Member.Text == "map" && !DataType(explicitlyTypedPartial.TypeArgument))
+                                Fail("DS2026", member.Member, "List.map must produce immutable data values.");
+                            return (new BoundCollectionMethodPartial(listReceiver.Expression, listReceiverType!, member.Member.Text,
+                                explicitlyTypedPartial.Parameters, explicitlyTypedPartial.Result, explicitlyTypedPartial.Type)
+                                { TypeArguments = new[] { explicitlyTypedPartial.TypeArgument } },
+                                listReceiver.Type == "<never>" ? "<never>" : explicitlyTypedPartial.Type);
+                        }
                         if (listReceiverType is not null && member.TypeArguments.Count == 0)
                         {
                             // Monomorphic collection methods with required parameters
@@ -4781,7 +4846,9 @@ public static class Binder
                                 var function = TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(result)) + ">";
                                 return (parameters, result, function);
                             }
-                            var emptyCollectionPartial = EmptyCollectionPartial();
+                            var ordinaryEmptyPartial = EmptyCollectionPartial();
+                            (string[] Parameters, string Result, string Type)? emptyCollectionPartial = ordinaryEmptyPartial ??
+                                (genericEmptyListPartial is { } inferredGeneric ? (inferredGeneric.Parameters, inferredGeneric.Result, inferredGeneric.Type) : null);
                             bool PipeCompatibleCallable(string callable)
                             {
                                 if (pipeInputType is null && !pipeNullInput || !GenericTypes.TryParse(callable, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2 ||
@@ -4859,8 +4926,14 @@ public static class Binder
                             if (emptyCollectionPartial is { } emptyPartial)
                             {
                                 if (member.Member.Text == "get") optionUsed = true;
-                                return (new BoundCollectionMethodPartial(listReceiver.Expression, listReceiverType, member.Member.Text,
-                                    emptyPartial.Parameters, emptyPartial.Result, emptyPartial.Type),
+                                if (genericEmptyListPartial is { } generic && !SupportedType(generic.TypeArgument, activeTypeParameters))
+                                    Fail("DS2023", member.Member, "Unsupported type argument.");
+                                if (genericEmptyListPartial is { } mappedGeneric && member.Member.Text == "map" && !DataType(mappedGeneric.TypeArgument))
+                                    Fail("DS2026", member.Member, "List.map must produce immutable data values.");
+                                var partial = new BoundCollectionMethodPartial(listReceiver.Expression, listReceiverType, member.Member.Text,
+                                    emptyPartial.Parameters, emptyPartial.Result, emptyPartial.Type);
+                                if (genericEmptyListPartial is { } genericType) partial = partial with { TypeArguments = new[] { genericType.TypeArgument } };
+                                return (partial,
                                     listReceiver.Type == "<never>" ? "<never>" : emptyPartial.Type);
                             }
                             // Fully supplied extension calls above retain their
@@ -5643,7 +5716,36 @@ public static class Binder
                 if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) && !cases.ContainsKey(name.Value.Text) && signatures.ContainsKey(name.Value.Text))
                     return BindExpression(new CallSyntax(name.Value, location, arguments), expectedResult);
-                var receiver = BindExpression(receiverSyntax);
+                (BoundExpression Expression, string Type) receiver;
+                if (unwrappedReceiver is MemberCallSyntax { Member.Text: "map" or "fold", Arguments.Count: 0 } emptyGeneric && arguments.Count > 0)
+                {
+                    // The first grouped argument is evidence for the otherwise
+                    // unbound generic type, just as the left side of a pipe is.
+                    // Probe only for type information; the actual arguments are
+                    // bound and evaluated in their original order below.
+                    var savedReturns = inferredReturns;
+                    if (savedReturns is not null) inferredReturns = new List<string>();
+                    var savedReachability = inferenceReachable;
+                    var savedHasReturn = hasReturn;
+                    var savedTupleCount = tupleBindingCount;
+                    string? argumentType = null;
+                    var argumentIsNull = false;
+                    try
+                    {
+                        inferenceReachable = false;
+                        var probe = BindExpression(arguments[0]);
+                        argumentType = probe.Type == "<never>" ? KnownType(probe.Expression) : probe.Type;
+                        argumentIsNull = argumentType == "<null>";
+                        if (argumentType is "<null>" or "<never>") argumentType = null;
+                    }
+                    catch (SourceError) { /* The expected result may provide context instead. */ }
+                    finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
+                    if (emptyGeneric.Member.Text == "fold" && arguments.Count > 1 && argumentType is null && argumentIsNull &&
+                        expectedResult is not null && IsNullable(expectedResult)) argumentType = expectedResult;
+                    var remainingHint = emptyGeneric.Member.Text == "map" || arguments.Count == 1 ? expectedResult : null;
+                    receiver = BindExpression(receiverSyntax, null, argumentType, remainingHint, argumentIsNull);
+                }
+                else receiver = BindExpression(receiverSyntax);
                 var type = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
                 if (type is null || !GenericTypes.TryParse(type, out var shape) || !shape.IsFunction)
                     Fail("DS1002", location, "Only function values are callable.");
@@ -6930,8 +7032,10 @@ public static class CSharpEmitter
                             .Append(collectionPartialReceiver).Append(" = ").Append(collectionPartialSource).Append(";\n")
                             .Append("            return ((").Append(CType(collectionPartial.Type)).Append(")((")
                             .Append(string.Join(", ", collectionPartialArguments)).Append(") => ")
-                            .Append(collectionPartialReceiver).Append(".__dsharp_").Append(collectionPartial.Operation)
-                            .Append("(").Append(string.Join(", ", collectionPartialArguments)).Append(")));\n            }\n");
+                            .Append(collectionPartialReceiver).Append(".__dsharp_").Append(collectionPartial.Operation);
+                        if (collectionPartial.TypeArguments.Count > 0)
+                            output.Append("<").Append(string.Join(", ", collectionPartial.TypeArguments.Select(CType))).Append(">");
+                        output.Append("(").Append(string.Join(", ", collectionPartialArguments)).Append(")));\n            }\n");
                         return HelperCall(collectionPartialHelper, collectionPartial);
                     case BoundListFoldPartial foldPartial:
                         // Capture in source order. The callback and iteration run

@@ -1,0 +1,9 @@
+module Demo
+
+fn answer(): int {
+    let values = [10, 20]
+    let map = values.map<int>()
+    let fold = values.fold<int>()
+    let updated = map(value => value + 1)
+    fold(10, (total, value) => total + value) + updated.length()
+}
