@@ -63,7 +63,7 @@ external interoperability guarantee follows from this lowering. See the
 | Owned resources through Result | Checked factories return `Result<Resource,E>` only for direct forwarding or immediate `?` into `using` | Success transfers one scoped resource; Error propagates without acquiring it |
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
-| Checked int arithmetic | Unary minus, +, -, *, /, %, precedence and parentheses; int-only operands checked | Precedence/signed division execute; overflow and zero division fault at invocation |
+| Checked integer arithmetic | Eight integer widths, context-typed literals, decimal/hex/binary forms, separators and `L`; matching operand types required | Checked arithmetic, unsigned negation and zero/overflow faults execute at invocation |
 | Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function, record and union declarations | Comments preserve source locations and do not change execution |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
@@ -74,8 +74,8 @@ Preserve syntax reference revision 0.3 selected behaviour and the adopted
 [DEC-02 grammar contract](implementation/DEC-02.md); freeze other provisional
 contracts before implementing them. Worker-call failure representation,
 queue lifecycle, durable serialization, middleware, authorization capability
-validity, numeric extensions and safe .NET interop remain decisions for later
-small milestones. No agent isolation or durability follows from this bootstrap.
+validity, remaining numeric library APIs and safe .NET interop remain decisions for
+later small milestones. No agent isolation or durability follows from this bootstrap.
 
 ## Planned work
 
@@ -85,8 +85,8 @@ is implemented: immutable function-local bindings with optional type annotations
 no reassignment or shadowing. A binding begins a statement; its expression can
 continue inside delimiters or after an operator.
 [Issue #19](https://github.com/gajo357/dsharplang/issues/19) extends initializers and
-final expressions with checked int arithmetic and parentheses. Numeric tokens
-remain nonnegative literals in 0..2147483647; unary minus is an operator, and
+final expressions with checked int arithmetic and parentheses. In that baseline,
+unsuffixed literals default to int; unary minus is an operator, and
 `-2147483648` is still rejected. Binary operators are left-associative with
 multiplicative precedence. Operands evaluate left to right. Division truncates
 toward zero; remainder follows the dividend sign. Overflow (including the CLR
@@ -104,6 +104,18 @@ See [the example](../../examples/let-bindings.ds) and
 [implementation plan and evidence](implementation/issue-7-plan.md).
 Also see [the arithmetic example](../../examples/int-arithmetic.ds) and
 [arithmetic plan/evidence](implementation/issue-19-plan.md).
+[Issue #48](https://github.com/gajo357/dsharplang/issues/48) adds `sbyte`, `byte`,
+`short`, `ushort`, `uint`, `long` and `ulong` alongside `int`. Unsuffixed integer
+literals use an expected integer type when available and otherwise default to
+`int`; `L` selects `long`. Decimal, hexadecimal and binary magnitudes support
+separators between digits. Magnitudes must fit before unary negation, including
+for signed minimum values. Arithmetic and comparisons require matching types;
+checked overflow and division faults occur at execution. Numeric values work in
+the tested nullable, generic, collection, match and multi-file contexts. Explicit
+conversion entry-point names remain a later library API decision. Existing value
+identifiers such as `short` remain accepted for compatibility, despite DEC-02
+reserving numeric names globally; that conflict is unresolved. #48 remains open. See the [D# example](../../examples/integer_widths.ds) and
+[implementation plan](implementation/issue-48-plan.md).
 [Issue #20](https://github.com/gajo357/dsharplang/issues/20) adds explicit int
 parameters and positional calls in the same module, resolved regardless of
 declaration order. Parameter names cannot be duplicated, reassigned or redeclared

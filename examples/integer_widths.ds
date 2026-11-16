@@ -1,0 +1,18 @@
+module Demo
+
+// Integer literals use the expected type; arithmetic keeps that type.
+type Pixel {
+    red: byte
+    green: byte
+    blue: byte
+}
+
+fn answer(): uint {
+    let pixel = Pixel {
+        red = 0x20
+        green = 0b10
+        blue = 8
+    }
+    let count: uint = 32
+    count + 10
+}

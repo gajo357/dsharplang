@@ -168,6 +168,7 @@ public sealed record BoundIf(BoundExpression Condition, BoundBlock Then, BoundBl
 public sealed record BoundFor(string Name, BoundExpression Source, string SourceType, string ElementType, BoundBlock Body) : BoundExpression;
 public sealed record BoundUsing(string Name, BoundExpression Acquisition, string ResourceType, BoundBlock Body, string Type, bool AsyncRelease) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
+public sealed record BoundInteger(ulong Magnitude, string Type) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
@@ -226,7 +227,10 @@ public sealed record BoundMatch(BoundExpression Scrutinee, string ScrutineeType,
 {
     public bool HasCompletingArm { get; init; } = true;
 }
-public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression;
+public sealed record BoundUnary(string Operator, BoundExpression Operand) : BoundExpression
+{
+    public string OperandType { get; init; } = "int";
+}
 public sealed record BoundBinary(BoundExpression Left, string Operator, BoundExpression Right) : BoundExpression
 {
     public string OperandType { get; init; } = "int";
@@ -314,6 +318,45 @@ public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Me
     public Diagnostic Diagnostic { get; } = diagnostic;
 }
 
+// Integer tokens represent a magnitude, not a signed or two's-complement bit
+// pattern. Validate separators against digits in the selected base and avoid
+// overflowing while accumulating even for an adversarially long token.
+internal static class IntegerLiterals
+{
+    internal static bool TryParse(string text, out ulong magnitude, out bool isLong)
+    {
+        magnitude = 0;
+        isLong = text.EndsWith('L');
+        var end = isLong ? text.Length - 1 : text.Length;
+        var start = 0;
+        uint radix = 10;
+        if (end >= 2 && text[0] == '0' && text[1] is 'x' or 'b')
+        {
+            radix = text[1] == 'x' ? 16U : 2U;
+            start = 2;
+        }
+        if (start == end) return false;
+        var previousDigit = false;
+        for (var i = start; i < end; i++)
+        {
+            var c = text[i];
+            if (c == '_')
+            {
+                if (!previousDigit || i + 1 == end) return false;
+                previousDigit = false;
+                continue;
+            }
+            var digit = c is >= '0' and <= '9' ? c - '0' :
+                c is >= 'a' and <= 'f' ? c - 'a' + 10 :
+                c is >= 'A' and <= 'F' ? c - 'A' + 10 : -1;
+            if (digit < 0 || digit >= radix || magnitude > (ulong.MaxValue - (uint)digit) / radix) return false;
+            magnitude = magnitude * radix + (uint)digit;
+            previousDigit = true;
+        }
+        return previousDigit;
+    }
+}
+
 public static class Lexer
 {
     public static IReadOnlyList<Token> Lex(string source, string path = "<source>")
@@ -388,7 +431,7 @@ public static class Lexer
             else if (char.IsAsciiLetter(c) || c == '_')
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
-                do { Advance(); } while (i < source.Length && char.IsAsciiDigit(source[i]));
+                do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>" or "->" or "??" or "?." or "|>")) { Advance(); Advance(); }
             else if ("(),.:{}[]=+-*/%!<>|?".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
@@ -421,9 +464,16 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             throw Error("Expected an identifier.");
         return Take();
     }
+    private Token DeclaredTypeIdentifier()
+    {
+        var name = Identifier();
+        if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong")
+            throw new SourceError(new("DS1002", path, name.Span, "A built-in integer type name cannot be declared as a type or type parameter."));
+        return name;
+    }
     private static bool TypeName(string text) => text.Length > 0 &&
         (char.IsAsciiLetter(text[0]) || text[0] == '_') &&
-        (!Reserved.Contains(text) || text is "int" or "bool" or "string" or "char");
+        (!Reserved.Contains(text) || text is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "string" or "char");
 
     // Recognize the complete adopted type grammar before consulting symbols. This
     // deliberately recognizes function/tuple/qualified types that a later stage
@@ -546,7 +596,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var parameters = new List<Token>();
         do
         {
-            parameters.Add(Identifier());
+            parameters.Add(DeclaredTypeIdentifier());
             if (Current.Text != ",") break;
             Take();
         } while (true);
@@ -754,7 +804,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         else
         {
             var text = Current.Text;
-            if (text.Length == 0 || !(text[0] is '"' or '\'' || text is "true" or "false" || text.All(char.IsAsciiDigit) ||
+            if (text.Length == 0 || !(text[0] is '"' or '\'' || text is "true" or "false" || char.IsAsciiDigit(text[0]) ||
                 ((char.IsAsciiLetter(text[0]) || text[0] == '_') && !Reserved.Contains(text))))
                 throw new SourceError(new("DS2002", path, Current.Span, "Expected a supported literal, local or parenthesized expression."));
             var name = Take();
@@ -885,9 +935,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         Token? minus = null;
         if (Current.Text == "-") minus = Take();
         var text = Current.Text;
-        if (text.Length > 0 && (text[0] is '"' or '\'' || text is "true" or "false" || text.All(char.IsAsciiDigit)))
+        if (text.Length > 0 && (text[0] is '"' or '\'' || text is "true" or "false" || char.IsAsciiDigit(text[0])))
         {
-            if (minus is not null && !text.All(char.IsAsciiDigit)) throw Error("Expected an integer after '-'.");
+            if (minus is not null && !char.IsAsciiDigit(text[0])) throw Error("Expected an integer after '-'.");
             return new LiteralPatternSyntax(Take(), minus);
         }
         if (minus is not null) throw Error("Expected an integer after '-'.");
@@ -1144,7 +1194,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "resource")
             {
                 Take();
-                var resourceName = Identifier();
+                var resourceName = DeclaredTypeIdentifier();
                 var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
                 Expect("{");
                 var methods = new List<ServiceMethodSyntax>();
@@ -1166,7 +1216,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "interface")
             {
                 Take();
-                var interfaceName = Identifier();
+                var interfaceName = DeclaredTypeIdentifier();
                 Expect("{");
                 var methods = new List<InterfaceMethodSyntax>();
                 while (Current.Text is not ("}" or ""))
@@ -1190,7 +1240,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             if (Current.Text == "service")
             {
                 Take();
-                var serviceName = Identifier();
+                var serviceName = DeclaredTypeIdentifier();
                 var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
                 Expect(":");
                 var contracts = new List<Token>();
@@ -1219,7 +1269,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             }
             if (Current.Text == "type")
             {
-                Take(); var recordName = Identifier(); var typeParameters = TypeParameters(); Expect("{");
+                Take(); var recordName = DeclaredTypeIdentifier(); var typeParameters = TypeParameters(); Expect("{");
                 if (Current.Text == "|")
                 {
                     var cases = new List<UnionCaseSyntax>();
@@ -1297,6 +1347,15 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
 
 public static class Binder
 {
+    private static bool IntegerType(string? type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong";
+    private static ulong IntegerMaximum(string type) => type switch
+    {
+        "sbyte" => (ulong)sbyte.MaxValue, "byte" => byte.MaxValue,
+        "short" => (ulong)short.MaxValue, "ushort" => ushort.MaxValue,
+        "int" => int.MaxValue, "uint" => uint.MaxValue,
+        "long" => long.MaxValue, "ulong" => ulong.MaxValue,
+        _ => throw new InvalidOperationException("Not an integer type.")
+    };
     private static string DecodeText(Token token, string path)
     {
         var raw = token.Text;
@@ -1581,7 +1640,9 @@ public static class Binder
         bool IsNullable(string type) => type.EndsWith("?", StringComparison.Ordinal);
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["int"] = 0, ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
+            ["int"] = 0, ["sbyte"] = 0, ["byte"] = 0, ["short"] = 0, ["ushort"] = 0,
+            ["uint"] = 0, ["long"] = 0, ["ulong"] = 0,
+            ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
             [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1
         };
         foreach (var record in syntax.Records) arities.Add(record.Name.Text, record.TypeParameters.Count);
@@ -1611,7 +1672,7 @@ public static class Binder
             {
                 if (candidate.IsFunction || candidate.IsTuple || candidate.Name == listSymbol ||
                     candidate.Name == mapSymbol || candidate.Name == setSymbol || scope.Contains(candidate.Name)) return false;
-                if (candidate.Name is "int" or "bool" or "string" or "char" or "Unit") return candidate.Arguments.Count == 0;
+                if (candidate.Name is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "string" or "char" or "Unit") return candidate.Arguments.Count == 0;
                 if (candidate.Arguments.Any(argument => argument.ContainsFunction)) return false;
                 if (!records.TryGetValue(candidate.Name, out var record) && !unions.TryGetValue(candidate.Name, out _)) return false;
                 if (!candidate.Arguments.All(argument => EligibleKey(argument, new HashSet<string>(visiting, StringComparer.Ordinal)))) return false;
@@ -1984,13 +2045,24 @@ public static class Binder
             // Conservative syntactic subsumption is sufficient to avoid
             // inventing call edges from obvious duplicate/dead match arms;
             // typed pattern usefulness is checked later during binding.
+            bool IntegerPatternValue(LiteralPatternSyntax literal, out System.Numerics.BigInteger value)
+            {
+                value = default;
+                if (!IntegerLiterals.TryParse(literal.Literal.Text, out var magnitude, out _)) return false;
+                value = new System.Numerics.BigInteger(magnitude);
+                if (literal.Minus is not null) value = -value;
+                return true;
+            }
+            bool SameLiteral(LiteralPatternSyntax a, LiteralPatternSyntax b) =>
+                IntegerPatternValue(a, out var first) && IntegerPatternValue(b, out var second) ? first == second :
+                a.Literal.Text == b.Literal.Text && (a.Minus is null) == (b.Minus is null);
             bool Subsumes(PatternSyntax prior, PatternSyntax next) => (prior, next) switch
             {
                 (WildcardPatternSyntax, _) => true,
                 (NullPatternSyntax, NullPatternSyntax) => true,
                 (UnitPatternSyntax, UnitPatternSyntax) => true,
                 (NamePatternSyntax a, NamePatternSyntax b) => a.Name.Text == b.Name.Text,
-                (LiteralPatternSyntax a, LiteralPatternSyntax b) => a.Literal.Text == b.Literal.Text && (a.Minus is null) == (b.Minus is null),
+                (LiteralPatternSyntax a, LiteralPatternSyntax b) => SameLiteral(a, b),
                 (CasePatternSyntax a, CasePatternSyntax b) => a.Qualifier?.Text == b.Qualifier?.Text && a.Name.Text == b.Name.Text &&
                     a.Arguments.Count == b.Arguments.Count && a.Arguments.Zip(b.Arguments).All(pair => Subsumes(pair.First, pair.Second)),
                 _ => false
@@ -2206,10 +2278,10 @@ public static class Binder
                         PatternSyntax? singleton = literalSource switch
                         {
                             ValueSyntax value when value.Value.Text is "true" or "false" ||
-                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) ||
+                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) ||
                                 value.Value.Text.StartsWith('"') || value.Value.Text.StartsWith('\'') => new LiteralPatternSyntax(value.Value),
                             UnarySyntax { Operator.Text: "-", Operand: ValueSyntax value } unary when
-                                int.TryParse(value.Value.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
+                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
                             UnitSyntax unit => new UnitPatternSyntax(unit.Unit),
                             NullSyntax nullValue => new NullPatternSyntax(nullValue.Null),
                             _ => null
@@ -2219,8 +2291,7 @@ public static class Binder
                             if (singleton is not LiteralPatternSyntax point || pattern is not LiteralPatternSyntax literal) return true;
                             if (point.Literal.Text is "true" or "false" && literal.Literal.Text is "true" or "false")
                                 return point.Literal.Text == literal.Literal.Text;
-                            if (int.TryParse((point.Minus is null ? "" : "-") + point.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var a) &&
-                                int.TryParse((literal.Minus is null ? "" : "-") + literal.Literal.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var b)) return a == b;
+                            if (IntegerPatternValue(point, out var a) && IntegerPatternValue(literal, out var b)) return a == b;
                             return true; // Different spellings of text literals can denote the same value.
                         }
                         bool Covered(List<PatternSyntax> previous, PatternSyntax target) =>
@@ -3085,13 +3156,13 @@ public static class Binder
                         if (expected != "Unit") Fail("DS2019", unit.Token, $"Expected a {DisplayType(expected)} pattern.");
                         return new BoundLiteralPattern(new BoundUnit(), "Unit");
                     case LiteralPatternSyntax literal:
-                        var literalValue = BindExpression(new ValueSyntax(literal.Literal));
-                        if (literal.Minus is not null && literalValue.Type != "int")
-                            Fail("DS2019", literal.Token, "Only an int literal can be negative.");
+                        var literalValue = BindExpression(new ValueSyntax(literal.Literal), expected);
+                        if (literal.Minus is not null && !IntegerType(literalValue.Type))
+                            Fail("DS2019", literal.Token, "Only an integer literal can be negative.");
                         if (literalValue.Type != expected)
                             Fail("DS2019", literal.Token, $"Expected a {DisplayType(expected)} pattern.");
                         return new BoundLiteralPattern(literal.Minus is null ? literalValue.Expression :
-                            new BoundUnary("-", literalValue.Expression), literalValue.Type);
+                            new BoundUnary("-", literalValue.Expression) { OperandType = literalValue.Type }, literalValue.Type);
                     case NamePatternSyntax name:
                         if (locals.ContainsKey(name.Name.Text) || inaccessibleCaptures.Contains(name.Name.Text))
                             Fail("DS2006", name.Name, "A pattern binding cannot shadow a visible local or parameter.");
@@ -3565,8 +3636,8 @@ public static class Binder
                         var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
                         BoundPattern? singletonPattern = scrutinee.Expression switch
                         {
-                            BoundBool or BoundInt or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
-                            BoundUnary { Operator: "-", Operand: BoundInt } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundBool or BoundInt or BoundInteger or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundUnary { Operator: "-", Operand: BoundInt or BoundInteger } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
                             BoundNull => new BoundNullPattern(),
                             _ => null
                         };
@@ -3873,11 +3944,15 @@ public static class Binder
                             return (new BoundText(text, isChar), isChar ? "char" : "string");
                         }
                         if (token.Text is "true" or "false") return (new BoundBool(token.Text == "true"), "bool");
-                        if (token.Text.Length > 0 && token.Text.All(char.IsAsciiDigit))
+                        if (token.Text.Length > 0 && char.IsAsciiDigit(token.Text[0]))
                         {
-                            if (!int.TryParse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
-                                Fail("DS2004", token, "Integer literal is outside the int range.");
-                            return (new BoundInt(literal), "int");
+                            if (!IntegerLiterals.TryParse(token.Text, out var magnitude, out var longSuffix))
+                                Fail("DS2004", token, "Invalid integer literal or magnitude outside the supported range.");
+                            var hinted = expectedResult is not null && IsNullable(expectedResult) ? expectedResult[..^1] : expectedResult;
+                            var integerType = longSuffix ? "long" : IntegerType(hinted) ? hinted! : "int";
+                            if (magnitude > IntegerMaximum(integerType))
+                                Fail("DS2004", token, $"Integer literal is outside the {integerType} range.");
+                            return integerType == "int" ? (new BoundInt((int)magnitude), integerType) : (new BoundInteger(magnitude, integerType), integerType);
                         }
                         if (!locals.ContainsKey(token.Text) && inaccessibleCaptures.Contains(token.Text))
                             Fail("DS2026", token, "Lambda capture is not supported.");
@@ -4416,20 +4491,75 @@ public static class Binder
                         throw new InvalidOperationException("Unreachable after source error.");
                     }
                     case UnarySyntax unary:
-                        var operand = BindExpression(unary.Operand);
-                        var expected = unary.Operator.Text == "!" ? "bool" : "int";
+                        var operand = BindExpression(unary.Operand, unary.Operator.Text == "!" ? "bool" : expectedResult);
+                        var expected = unary.Operator.Text == "!" ? "bool" : operand.Type == "<never>" ? "int" : operand.Type;
+                        if (unary.Operator.Text != "!" && !IntegerType(expected))
+                            Fail("DS2002", unary.Operand.Token, "Unary arithmetic requires an integer operand.");
                         Require(unary.Operand, operand.Type, expected);
-                        return (new BoundUnary(unary.Operator.Text, Coerce(operand.Expression, expected, operand.Type)), operand.Type == "<never>" ? "<never>" : expected);
+                        return (new BoundUnary(unary.Operator.Text, Coerce(operand.Expression, expected, operand.Type)) { OperandType = expected }, operand.Type == "<never>" ? "<never>" : expected);
                     case BinarySyntax binary:
-                        var left = BindExpression(binary.Left);
+                        // A literal is contextual even on the left of a typed operand.
+                        // Probe the other operand to obtain its type without recording
+                        // return inference or changing runtime evaluation order.
+                        bool NumericLiteral(ExpressionSyntax expression)
+                        {
+                            while (expression is GroupSyntax group) expression = group.Inner;
+                            if (expression is UnarySyntax { Operator.Text: "-" } unaryLiteral) return NumericLiteral(unaryLiteral.Operand);
+                            if (expression is BinarySyntax { Operator.Text: "+" or "-" or "*" or "/" or "%" } numericBinary)
+                                return NumericLiteral(numericBinary.Left) && NumericLiteral(numericBinary.Right);
+                            return expression is ValueSyntax value && value.Value.Text.Length > 0 && char.IsAsciiDigit(value.Value.Text[0]);
+                        }
+                        bool FixedLongLiteral(ExpressionSyntax expression)
+                        {
+                            while (expression is GroupSyntax group) expression = group.Inner;
+                            if (expression is UnarySyntax { Operator.Text: "-" } unaryLiteral) return FixedLongLiteral(unaryLiteral.Operand);
+                            if (expression is BinarySyntax { Operator.Text: "+" or "-" or "*" or "/" or "%" } numericBinary)
+                                return FixedLongLiteral(numericBinary.Left) || FixedLongLiteral(numericBinary.Right);
+                            return expression is ValueSyntax value && value.Value.Text.Length > 0 && char.IsAsciiDigit(value.Value.Text[0]) && value.Value.Text.EndsWith("L", StringComparison.Ordinal);
+                        }
+                        bool FreshUnionCase(ExpressionSyntax expression)
+                        {
+                            while (expression is GroupSyntax group) expression = group.Inner;
+                            if (expression is CallSyntax call)
+                                return !locals.ContainsKey(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                                    candidates.Count == 1 && !signatures.ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text);
+                            return expression is MemberCallSyntax { Receiver: ValueSyntax qualifier } member &&
+                                !locals.ContainsKey(qualifier.Value.Text) && unions.ContainsKey(UnionQualifier(qualifier.Value.Text)) &&
+                                unions[UnionQualifier(qualifier.Value.Text)].Cases.Any(item => item.Name.Text == member.Member.Text);
+                        }
+                        var op = binary.Operator.Text;
+                        string? IntegerHint(string? type) => IntegerType(type) ? type :
+                            type is not null && IsNullable(type) && IntegerType(type[..^1]) ? type[..^1] : null;
+                        string? binaryHint = op is not ("==" or "!=" or "<" or "<=" or ">" or ">=" or "&&" or "||") ? IntegerHint(expectedResult) : null;
+                        var numericLeftNeedsHint = NumericLiteral(binary.Left) && (!NumericLiteral(binary.Right) || FixedLongLiteral(binary.Right));
+                        var caseLeftNeedsHint = op is "==" or "!=" && FreshUnionCase(binary.Left);
+                        if (binaryHint is null && (numericLeftNeedsHint || caseLeftNeedsHint))
+                        {
+                            var savedReturns = inferredReturns;
+                            if (savedReturns is not null) inferredReturns = new List<string>();
+                            var savedReachability = inferenceReachable;
+                            var savedReturn = hasReturn;
+                            var savedTupleCount = tupleBindingCount;
+                            try
+                            {
+                                var probe = BindExpression(binary.Right);
+                                if (caseLeftNeedsHint && SupportedType(probe.Type, activeTypeParameters)) binaryHint = probe.Type;
+                                else if (IntegerType(probe.Type)) binaryHint = probe.Type;
+                                else if (op is "==" or "!=") binaryHint = IntegerHint(probe.Type);
+                            }
+                            catch (SourceError) { }
+                            finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedReturn; tupleBindingCount = savedTupleCount; }
+                        }
+                        var left = BindExpression(binary.Left, binaryHint);
                         var savedBinaryReachable = inferenceReachable;
                         var literalLeft = LiteralCondition(binary.Left);
                         inferenceReachable = savedBinaryReachable && left.Type != "<never>" &&
                             !(binary.Operator.Text == "&&" && literalLeft == false) &&
                             !(binary.Operator.Text == "||" && literalLeft == true);
-                        var right = BindExpression(binary.Right);
+                        var rightHint = IntegerType(left.Type) ? left.Type :
+                            op is "==" or "!=" && SupportedType(left.Type, activeTypeParameters) ? left.Type : null;
+                        var right = BindExpression(binary.Right, rightHint);
                         inferenceReachable = savedBinaryReachable;
-                        var op = binary.Operator.Text;
                         if (op is "&&" or "||")
                         {
                             Require(binary.Left, left.Type, "bool"); Require(binary.Right, right.Type, "bool");
@@ -4463,8 +4593,10 @@ public static class Binder
                                 Fail("DS2023", binary.Operator, "Equality on an unconstrained type parameter is not supported.");
                             return (new BoundBinary(Coerce(left.Expression, operandType!, left.Type), op, Coerce(right.Expression, operandType!, right.Type)) { OperandType = operandType! }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : "bool");
                         }
-                        Require(binary.Left, left.Type, "int"); Require(binary.Right, right.Type, "int");
-                        return (new BoundBinary(Coerce(left.Expression, "int", left.Type), op, Coerce(right.Expression, "int", right.Type)), left.Type == "<never>" || right.Type == "<never>" ? "<never>" : op is "<" or "<=" or ">" or ">=" ? "bool" : "int");
+                        var integerOperand = left.Type == "<never>" ? right.Type == "<never>" ? "int" : right.Type : left.Type;
+                        if (!IntegerType(integerOperand)) Fail("DS2002", (left.Type == "<never>" ? binary.Right : binary.Left).Token, "Arithmetic and ordered comparisons require integer operands.");
+                        Require(binary.Left, left.Type, integerOperand); Require(binary.Right, right.Type, integerOperand);
+                        return (new BoundBinary(Coerce(left.Expression, integerOperand, left.Type), op, Coerce(right.Expression, integerOperand, right.Type)) { OperandType = integerOperand }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : op is "<" or "<=" or ">" or ">=" ? "bool" : integerOperand);
                     default: throw new InvalidOperationException("Unknown expression syntax.");
                 }
             }
@@ -5366,7 +5498,7 @@ public static class CSharpEmitter
                 shape.Name == module.MapSymbol || shape.Name == module.SetSymbol);
         bool IsTypeParameter(string type) => GenericTypes.TryParse(type, out var shape) &&
             shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name);
-        static bool IsValueType(string type) => type is "int" or "bool" or "char" or "Unit" ||
+        static bool IsValueType(string type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "char" or "Unit" ||
             GenericTypes.TryParse(type, out var shape) && shape.IsTuple && !shape.IsNullable;
         string CType(string type)
         {
@@ -5980,6 +6112,7 @@ public static class CSharpEmitter
             var listCount = 0;
             var forCount = 0;
             var usingCount = 0;
+            var integerHelperCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
@@ -6321,6 +6454,14 @@ public static class CSharpEmitter
                         output.Append("            int ").Append(name).Append(" = ")
                             .Append(literal.Value.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                         return name;
+                    case BoundInteger literal:
+                        // Emit typed locals so C# cannot turn an otherwise valid
+                        // D# expression into a compile-time overflow diagnostic.
+                        var integerName = "__dsharp_int_" + (literalCount++).ToString(CultureInfo.InvariantCulture);
+                        output.Append("            ").Append(CType(literal.Type)).Append(" ").Append(integerName)
+                            .Append(" = checked((").Append(CType(literal.Type)).Append(")")
+                            .Append(literal.Magnitude.ToString(CultureInfo.InvariantCulture)).Append("UL);\n");
+                        return integerName;
                     case BoundNever never:
                         var neverHelper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
                         output.Append("            ").Append(HelperResult(never.Type, never)).Append(" ").Append(neverHelper).Append(HelperBody(never));
@@ -6532,7 +6673,15 @@ public static class CSharpEmitter
                         }
                         var callTypes = typeArguments.Count == 0 ? "" : "<" + string.Join(", ", typeArguments) + ">";
                         return container + ".@" + call.Name + callTypes + "(" + string.Join(", ", args) + ")";
-                    case BoundUnary unary: return "(" + unary.Operator + EmitExpression(unary.Operand) + ")";
+                    case BoundUnary unary:
+                        var unaryOperand = EmitExpression(unary.Operand);
+                        if (unary.Operator != "-") return "(" + unary.Operator + unaryOperand + ")";
+                        // C# promotes narrow values and has no unary minus for
+                        // ulong. A checked subtraction retains D#'s unsigned
+                        // negation rule, including zero.
+                        if (unary.OperandType == "ulong") return "checked(0UL - (" + unaryOperand + "))";
+                        return unary.OperandType == "int" ? "(-" + unaryOperand + ")" :
+                            "checked((" + CType(unary.OperandType) + ")(-(" + unaryOperand + ")))";
                     case BoundBinary binary:
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
@@ -6543,7 +6692,21 @@ public static class CSharpEmitter
                             var equals = EqualValue(binary.OperandType, left, right);
                             return binary.Operator == "!=" ? "(!(" + equals + "))" : equals;
                         }
-                        return "(" + left + " " + binary.Operator + " " + right + ")";
+                        if (binary.Operator == "%" && binary.OperandType is "sbyte" or "short")
+                        {
+                            // CLR promotes these operands to int before %, so
+                            // explicitly preserve D#'s minimum / -1 fault.
+                            var integerRemainderHelper = "__dsharp_integer_remainder_" + (integerHelperCount++).ToString(CultureInfo.InvariantCulture);
+                            var type = CType(binary.OperandType);
+                            output.Append("            ").Append(type).Append(" ").Append(integerRemainderHelper).Append("(").Append(type)
+                                .Append(" a, ").Append(type).Append(" b) { if (a == ").Append(type)
+                                .Append(".MinValue && b == -1) throw new global::System.OverflowException(); return checked((")
+                                .Append(type).Append(")(a % b)); }\n");
+                            return integerRemainderHelper + "(" + left + ", " + right + ")";
+                        }
+                        var operation = "(" + left + " " + binary.Operator + " " + right + ")";
+                        return binary.Operator is "+" or "-" or "*" or "/" or "%" && binary.OperandType is "sbyte" or "byte" or "short" or "ushort"
+                            ? "checked((" + CType(binary.OperandType) + ")" + operation + ")" : operation;
                     default: throw new InvalidOperationException("Unknown bound expression.");
                 }
             }
