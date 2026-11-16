@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace DSharp.Compiler;
 
 // Checks whether the unguarded rows cover every value of the scrutinee type.
@@ -34,13 +36,18 @@ internal static class MatchCoverage
         static bool EqualLiteral(BoundLiteralPattern left, BoundLiteralPattern right)
         {
             if (left.Type != right.Type) return false;
-            static int? Integer(BoundExpression value) => value switch
+            // Literal tokens with different bases or separators can have the
+            // same magnitude. Compare the bound values, not their spelling;
+            // BigInteger also covers ulong's entire range and signed negation.
+            static BigInteger? Integer(BoundExpression value) => value switch
             {
-                BoundInt number => number.Value,
-                BoundUnary { Operator: "-", Operand: BoundInt number } => -number.Value,
+                BoundInt number => new BigInteger(number.Value),
+                BoundInteger number => new BigInteger(number.Magnitude),
+                BoundUnary { Operator: "-", Operand: BoundInt number } => -new BigInteger(number.Value),
+                BoundUnary { Operator: "-", Operand: BoundInteger number } => -new BigInteger(number.Magnitude),
                 _ => null
             };
-            if (left.Type == "int")
+            if (left.Type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong")
             {
                 var a = Integer(left.Value);
                 var b = Integer(right.Value);
