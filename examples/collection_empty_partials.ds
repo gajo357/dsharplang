@@ -1,0 +1,12 @@
+module Demo
+
+fn answer(): int {
+    let values = [1, 2]
+    let append = values.append()
+    let updated = 40 |> append
+    let at = updated.get()
+    match at(2) {
+        None => 0
+        Some(value) => value + 2
+    }
+}
