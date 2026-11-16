@@ -67,6 +67,11 @@ public sealed record MemberCallSyntax(ExpressionSyntax Receiver, Token Member, T
     public IReadOnlyList<Token> TypeArguments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<string>? ExtensionCandidates { get; init; }
 }
+public sealed record ConditionalMemberCallSyntax(ExpressionSyntax Receiver, Token Operator, Token Member, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(Operator)
+{
+    public IReadOnlyList<Token> TypeArguments { get; init; } = Array.Empty<Token>();
+    public IReadOnlyList<string>? ExtensionCandidates { get; init; }
+}
 public sealed record RecordFieldSyntax(Token Name, Token Type);
 public sealed record RecordDeclarationSyntax(Token Name, IReadOnlyList<RecordFieldSyntax> Fields)
 {
@@ -217,6 +222,8 @@ public sealed record BoundConditionalFieldAccess(BoundExpression Receiver, strin
 {
     public string FieldType { get; init; } = "";
 }
+public sealed record BoundConditionalCall(BoundExpression Receiver, string ReceiverType, string ReceiverName,
+    BoundExpression Call, string Type) : BoundExpression;
 public sealed record BoundCoalesce(BoundExpression Left, BoundExpression Right, string ContainedType, string Type) : BoundExpression;
 public sealed record BoundRecordUpdate(BoundExpression Receiver, string Type, IReadOnlyList<BoundRecordInitializer> Fields) : BoundExpression;
 public sealed record BoundUnionCase(string Name, IReadOnlyList<string> PayloadTypes);
@@ -1022,9 +1029,25 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             {
                 var optionalOperator = Take();
                 var field = Identifier();
-                if (Current.Text == "(" && (line is null || Current.Span.Line == field.Span.Line))
-                    throw new SourceError(new("DS1002", path, optionalOperator.Span, "Conditional method calls are not supported."));
-                left = new ConditionalFieldAccessSyntax(left, optionalOperator, field);
+                var genericCall = HasGenericCallShape();
+                if (genericCall || (Current.Text == "(" && (line is null || Current.Span.Line == field.Span.Line)))
+                {
+                    var typeArguments = genericCall ? CallTypeArguments() : Array.Empty<Token>();
+                    var open = Expect("(");
+                    var args = new List<ExpressionSyntax>();
+                    if (Current.Text != ")")
+                    {
+                        do
+                        {
+                            args.Add(Expression());
+                            if (Current.Text != ",") break;
+                            Take();
+                        } while (true);
+                    }
+                    Expect(")");
+                    left = new ConditionalMemberCallSyntax(left, optionalOperator, field, open, args) { TypeArguments = typeArguments };
+                }
+                else left = new ConditionalFieldAccessSyntax(left, optionalOperator, field);
                 continue;
             }
             if (Current.Text == ".")
@@ -1083,7 +1106,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool AllowsContinuation(ExpressionSyntax expression) => expression switch
     {
-        IfSyntax or ForSyntax or MatchSyntax or GroupSyntax or TupleSyntax or ListSyntax or CallSyntax or MemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
+        IfSyntax or ForSyntax or MatchSyntax or GroupSyntax or TupleSyntax or ListSyntax or CallSyntax or MemberCallSyntax or ConditionalMemberCallSyntax or InvokeSyntax or LambdaSyntax or BinarySyntax or CoalesceSyntax or PipeSyntax or PropagateSyntax or RecordConstructionSyntax or FieldAccessSyntax or ConditionalFieldAccessSyntax or RecordUpdateSyntax => true,
         UnarySyntax unary => AllowsContinuation(unary.Operand),
         AwaitSyntax awaited => AllowsContinuation(awaited.Operand),
         _ => false
@@ -2270,6 +2293,10 @@ public static class Binder
                 CallSyntax call => call.Arguments.Any(NeverExpression),
                 InvokeSyntax invoke => NeverExpression(invoke.Receiver) || invoke.Arguments.Any(NeverExpression),
                 MemberCallSyntax member => NeverExpression(member.Receiver) || member.Arguments.Any(NeverExpression),
+                // Arguments of a conditional call run only on the present path.
+                // Even an unconditionally returning argument cannot make the
+                // entire expression non-completing when the receiver is null.
+                ConditionalMemberCallSyntax member => NeverExpression(member.Receiver),
                 RecordConstructionSyntax record => record.Fields.Any(field => NeverExpression(field.Value)),
                 RecordUpdateSyntax update => NeverExpression(update.Receiver) || update.Fields.Any(field => NeverExpression(field.Value)),
                 FieldAccessSyntax access => NeverExpression(access.Receiver),
@@ -2539,6 +2566,27 @@ public static class Binder
                             !functionTypeScopes[source.Name.Text].ContainsKey(call.Name.Text) && !records.ContainsKey(call.Name.Text) && !unions.ContainsKey(call.Name.Text))
                         { /* A checked builder constructor has no function dependency. */ }
                         else indirect = true;
+                        break;
+                    case ConditionalMemberCallSyntax member:
+                        // Receiver and arguments can contain dependencies even
+                        // though the arguments are skipped on the null path.
+                        // Keep omitted-return inference conservative for this
+                        // new dispatch form, while retaining all potentially
+                        // selected extension bodies in the dependency graph.
+                        Expression(member.Receiver, names);
+                        if (includeUnreachable || !NeverExpression(member.Receiver))
+                        {
+                            foreach (var argument in member.Arguments)
+                            {
+                                Expression(argument, names);
+                                if (!includeUnreachable && NeverExpression(argument)) break;
+                            }
+                            foreach (var extension in extensionDeclarations.Where(extension =>
+                                extension.Method.Name.Text == member.Member.Text &&
+                                (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id))))
+                                calls.Add(extension.Id);
+                            indirect = true;
+                        }
                         break;
                     case MemberCallSyntax member:
                         var qualifier = member.Receiver as ValueSyntax;
@@ -2879,6 +2927,7 @@ public static class Binder
             var functionTypeScope = functionTypeScopes[function.Name.Text];
             var activeTypeParameters = Parameters(function.TypeParameters);
             var locals = new Dictionary<string, (int Value, string Type)>(StringComparer.Ordinal);
+            var conditionalReceiverCounter = 0;
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             bool IsDefaultMethodName(string name) => defaultReceivers.TryGetValue(function.Name.Text, out var receiver) &&
                 interfaceMethods[receiver.Interface].ContainsKey(name);
@@ -3097,6 +3146,7 @@ public static class Binder
                     CallSyntax call => call.Arguments.Any(NeverExpression),
                     InvokeSyntax invocation => NeverExpression(invocation.Receiver) || invocation.Arguments.Any(NeverExpression),
                     MemberCallSyntax member => NeverExpression(member.Receiver) || member.Arguments.Any(NeverExpression),
+                    ConditionalMemberCallSyntax member => NeverExpression(member.Receiver),
                     RecordConstructionSyntax record => record.Fields.Any(field => NeverExpression(field.Value)),
                     RecordUpdateSyntax update => NeverExpression(update.Receiver) || update.Fields.Any(field => NeverExpression(field.Value)),
                     FieldAccessSyntax access => NeverExpression(access.Receiver),
@@ -3455,6 +3505,7 @@ public static class Binder
                 BoundPropagation propagation => propagation.Type,
                 BoundCoalesce coalesce => coalesce.Type,
                 BoundConditionalFieldAccess access => access.Type,
+                BoundConditionalCall call => call.Type,
                 BoundFieldAccess access when records.TryGetValue(Nominal(access.ReceiverType), out var record) =>
                     record.Fields.FirstOrDefault(field => field.Name.Text == access.Field) is { } field &&
                     SubstitutionsFor(access.ReceiverType, record.Name.Text, record.TypeParameters) is { } substitutions
@@ -4321,6 +4372,47 @@ public static class Binder
                         if (!records.TryGetValue(construction.Name.Text, out var record)) Fail("DS2016", construction.Name, "Unknown record type.");
                         var constructed = BindRecordFields(record!, construction.Fields, construction.Name, true, expectedResult);
                         return (new BoundRecordConstruction(constructed.Type, constructed.Fields), constructed.Never ? "<never>" : constructed.Type);
+                    case ConditionalMemberCallSyntax optionalCall:
+                    {
+                        var conditionalReceiver = BindExpression(optionalCall.Receiver);
+                        var conditionalReceiverType = conditionalReceiver.Type == "<never>"
+                            ? KnownType(conditionalReceiver.Expression) : conditionalReceiver.Type;
+                        var presentReceiverType = conditionalReceiverType is not null && IsNullable(conditionalReceiverType)
+                            ? conditionalReceiverType[..^1] : conditionalReceiverType;
+                        if (presentReceiverType is null or "<null>" || !SupportedType(presentReceiverType, activeTypeParameters) || !DataType(presentReceiverType))
+                            Fail("DS2026", optionalCall.Member, "Conditional calls require an immutable value receiver.");
+
+                        // Bind the normal member call against a synthetic present
+                        // value. This keeps overload selection, imports, argument
+                        // checks and generic inference identical to a direct call.
+                        var receiverName = "$conditional_receiver_" + (conditionalReceiverCounter++).ToString(CultureInfo.InvariantCulture);
+                        var receiverToken = new Token(receiverName, optionalCall.Receiver.Token.Span) { OriginPath = optionalCall.Receiver.Token.OriginPath };
+                        var directCall = new MemberCallSyntax(new ValueSyntax(receiverToken), optionalCall.Member, optionalCall.OpenParen, optionalCall.Arguments)
+                        {
+                            TypeArguments = optionalCall.TypeArguments,
+                            ExtensionCandidates = optionalCall.ExtensionCandidates
+                        };
+                        locals.Add(receiverName, (0, presentReceiverType!));
+                        var wasReachable = inferenceReachable;
+                        inferenceReachable = wasReachable && conditionalReceiver.Type != "<never>";
+                        (BoundExpression Expression, string Type) called;
+                        try
+                        {
+                            var hint = expectedResult is not null && IsNullable(expectedResult) ? expectedResult[..^1] : expectedResult;
+                            called = BindExpression(directCall, hint);
+                        }
+                        finally { inferenceReachable = wasReachable; locals.Remove(receiverName); }
+                        var callType = called.Type == "<never>" ? KnownType(called.Expression) : called.Type;
+                        if (callType is null || !SupportedType(callType, activeTypeParameters) || !DataType(callType) ||
+                            called.Expression is BoundPartial or BoundCollectionMethodPartial or BoundListFoldPartial or BoundMapSetPartial or BoundServiceCall or BoundBuilderOperation)
+                            Fail("DS2026", optionalCall.Member, "Conditional calls require a fully supplied synchronous immutable-value method.");
+                        var liftedType = IsNullable(callType!) ? callType! : callType! + "?";
+                        if (!SupportedType(liftedType, activeTypeParameters))
+                            Fail("DS2023", optionalCall.Member, "Unsupported nullable conditional call result.");
+                        var liftedCall = Coerce(called.Expression, liftedType, called.Type);
+                        return (new BoundConditionalCall(Coerce(conditionalReceiver.Expression, presentReceiverType! + "?", conditionalReceiver.Type),
+                            presentReceiverType!, receiverName, liftedCall, liftedType), conditionalReceiver.Type == "<never>" ? "<never>" : liftedType);
+                    }
                     case ConditionalFieldAccessSyntax optionalAccess:
                         var optionalReceiver = BindExpression(optionalAccess.Receiver);
                         var optionalType = optionalReceiver.Type == "<never>" ? KnownType(optionalReceiver.Expression) : optionalReceiver.Type;
@@ -5650,6 +5742,7 @@ public static class Binder
                     CallSyntax call => call.Arguments.Any(Never),
                     InvokeSyntax invoke => Never(invoke.Receiver) || invoke.Arguments.Any(Never),
                     MemberCallSyntax call => Never(call.Receiver) || call.Arguments.Any(Never),
+                    ConditionalMemberCallSyntax call => Never(call.Receiver),
                     PropagateSyntax propagation => Never(propagation.Operand),
                     UnarySyntax unary => Never(unary.Operand),
                     BinarySyntax binary => Never(binary.Left) ||
@@ -7531,6 +7624,26 @@ public static class CSharpEmitter
                         var coalesceFallback = EmitExpression(coalesce.Right);
                         output.Append("            return ").Append(coalesceFallback).Append(";\n            }\n");
                         return HelperCall(coalesceHelper, coalesce);
+                    case BoundConditionalCall conditionalCall:
+                        var conditionalCallId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
+                        var conditionalCallHelper = "__dsharp_nullable_" + conditionalCallId;
+                        var conditionalCallValue = "__dsharp_nullable_value_" + conditionalCallId;
+                        var conditionalCallPresent = "__dsharp_nullable_present_" + conditionalCallId;
+                        output.Append("            ").Append(HelperResult(conditionalCall.Type, conditionalCall)).Append(" ")
+                            .Append(conditionalCallHelper).Append(HelperBody(conditionalCall));
+                        var conditionalCallReceiver = EmitExpression(conditionalCall.Receiver);
+                        output.Append("            ").Append(CType(conditionalCall.ReceiverType + "?")).Append(" ").Append(conditionalCallValue)
+                            .Append(" = ").Append(conditionalCallReceiver).Append(";\n")
+                            .Append("            if (").Append(conditionalCallValue).Append(" is null) return default(")
+                            .Append(CType(conditionalCall.Type)).Append(");\n")
+                            .Append("            ").Append(CType(conditionalCall.ReceiverType)).Append(" ").Append(conditionalCallPresent)
+                            .Append(" = ").Append(PresentValue(conditionalCall.ReceiverType, conditionalCallValue)).Append(";\n");
+                        localNames.Add(conditionalCall.ReceiverName, conditionalCallPresent);
+                        string conditionalCallResult;
+                        try { conditionalCallResult = EmitExpression(conditionalCall.Call); }
+                        finally { localNames.Remove(conditionalCall.ReceiverName); }
+                        output.Append("            return ").Append(conditionalCallResult).Append(";\n            }\n");
+                        return HelperCall(conditionalCallHelper, conditionalCall);
                     case BoundConditionalFieldAccess optionalField:
                         var optionalId = (nullableOperationCount++).ToString(CultureInfo.InvariantCulture);
                         var optionalHelper = "__dsharp_nullable_" + optionalId;
