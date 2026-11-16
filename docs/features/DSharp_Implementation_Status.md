@@ -46,7 +46,7 @@ external interoperability guarantee follows from this lowering. See the
 | Synchronous Result composition | `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary generic functions | Applicable callbacks execute once; typed errors and nullable/Option payloads remain distinct |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
-| Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
+| Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions and provably static partial calls | Pipes evaluate their left value once before the target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Extension partial application | A unique visible extension on immutable data accepts a nonempty positional prefix with arguments remaining | Receiver and prefix are captured once in order; grouped calls, pipes and async calls invoke the body only when saturated |
 | Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
@@ -247,8 +247,9 @@ fully supplied `fold(initial, callback)` calls retain their behavior. Accumulato
 types can be inferred or supplied explicitly or by a compatible expected function
 type, including tested nullable, Option and generic values. Builder, resource
 and service/interface capability captures remain rejected, including through
-generic substitution. An inferred-return function immediately invoking or piping
-into this partial may need an explicit return type. Other collection partials and
+generic substitution. Omitted returns can be inferred for tested immediate calls
+and pipes when the receiver and callback are statically known. Unknown callbacks
+and unproven targets remain conservative. Other collection partials and
 empty-prefix calls remain separate work under #129. See the
 [D# example](../../examples/list_fold_partial.ds) and
 [implementation plan](implementation/issue-183-plan.md).
@@ -268,10 +269,11 @@ nonempty-prefix form `map.set(key)`, producing a function from a value to an
 updated map. It evaluates the immutable receiver and key once in order when the
 function is formed; each completed call independently updates the captured map,
 leaving the original unchanged. Grouped calls and value pipes are supported,
-including nullable and Option data and generic value types. An inferred-return
-function that immediately invokes or pipes into `map.set(key)` may require an
-explicit return type; unconstrained generic map keys remain unsupported. Other
-collection method partials and empty-prefix calls remain separate work under #129. See the
+including nullable and Option data and generic value types. Omitted returns can
+be inferred for tested immediate calls and pipes when the receiver is statically
+known; unproven targets remain conservative. Unconstrained generic map keys
+remain unsupported. Other collection method partials and empty-prefix calls
+remain separate work under #129. See the
 [D# example](../../examples/map_partial.ds) and
 [implementation plan](implementation/issue-181-plan.md).
 [Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and
@@ -393,6 +395,15 @@ tuples. Recursive, indirect or unresolved inference and cyclic checked-type
 dependencies require an annotation. Explicitly typed recursive functions remain
 supported. See [the example](../../examples/pipes-inference.ds) and
 [implementation plan](implementation/issue-35-plan.md).
+[Issue #185](https://github.com/gajo357/dsharplang/issues/185) extends inference
+for checked, acyclic immediate calls and pipes through statically resolved
+`Map.set`, `List.fold` and supported extension partials. For fold, a callback
+must be statically known as a function or lambda; unknown callable values remain
+indirect. Inferred returns also require an annotation for reachable indirect
+scoped-resource method dispatch, even when it resembles a collection method.
+Recursive, ambiguous and unproven dependencies continue to be rejected. See the
+[D# example](../../examples/partial_inference.ds) and
+[implementation plan](implementation/issue-185-plan.md).
 [Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
 partial application of ordinary functions and function values. Supplied values
 and dynamic receivers are evaluated once when a partial is formed; calls run
@@ -440,9 +451,10 @@ overloads, direct-import visibility and applicable real-member precedence are
 preserved, and async calls return tasks without starting the body early.
 Capabilities, resources and builders cannot be captured. Bare method values,
 empty-prefix extension calls and service/interface method partials remain
-separate work. A function piping into an extension partial whose name overlaps
-a built-in member (such as `add`, `get` or `fold`) may require an explicit
-return type. See the [D# example](../../examples/extension_partials.ds) and
+separate work. Tested pipes into statically resolved extension partials can
+infer their enclosing return type, including names overlapping built-in members;
+unproven targets still require an annotation. See the
+[D# example](../../examples/extension_partials.ds) and
 [implementation plan](implementation/issue-179-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function

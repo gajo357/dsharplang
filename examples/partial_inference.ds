@@ -1,0 +1,9 @@
+module Demo
+
+fn add(total: int, item: int): int { total + item }
+
+fn answer() {
+    let values: List<int> = [10, 20]
+    let start = 12
+    add |> values.fold(start)
+}

@@ -2196,6 +2196,10 @@ public static class Binder
             var calls = new HashSet<string>(StringComparer.Ordinal);
             var indirect = false;
             var visible = source.Parameters.Select(parameter => parameter.Name.Text).ToHashSet(StringComparer.Ordinal);
+            // Keep only facts proved from declarations or syntax. These facts
+            // follow lexical blocks, never guessed from a bare identifier.
+            var knownTypes = source.Parameters.ToDictionary(parameter => parameter.Name.Text,
+                parameter => parameter.Type.Text, StringComparer.Ordinal);
             string DependencyName(string name, HashSet<string> names) =>
                 resultHelpers.ContainsKey(source.Name.Text) && !names.Contains(name) && preludeNames.TryGetValue(name, out var resolved) ? resolved : name;
             void PatternNames(PatternSyntax pattern, HashSet<string> names)
@@ -2285,37 +2289,128 @@ public static class Binder
             void Block(BlockSyntax block, HashSet<string> outer)
             {
                 var names = new HashSet<string>(outer, StringComparer.Ordinal);
+                var previousTypes = new Dictionary<string, string>(knownTypes, StringComparer.Ordinal);
                 var statements = block.Statements.Count > 0 ? block.Statements :
                     block.Bindings.Select(binding => (StatementSyntax)new LetStatementSyntax(binding)).ToArray();
-                foreach (var statement in statements)
+                try
                 {
-                    switch (statement)
+                    foreach (var statement in statements)
                     {
-                        case LetStatementSyntax declaration:
-                            Expression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer), names);
-                            names.Add(declaration.Binding.Name.Text);
-                            if (!includeUnreachable && NeverExpression(declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer))) return;
-                            break;
-                        case TupleLetStatementSyntax tupleDeclaration:
-                            Expression(tupleDeclaration.Value, names);
-                            foreach (var name in tupleDeclaration.Pattern.Names) names.Add(name.Text);
-                            if (!includeUnreachable && NeverExpression(tupleDeclaration.Value)) return;
-                            break;
-                        case ReturnStatementSyntax returned: Expression(returned.Value, names); if (!includeUnreachable) return; break;
-                        case ExpressionStatementSyntax evaluated:
-                            Expression(evaluated.Expression, names);
-                            if (!includeUnreachable && NeverExpression(evaluated.Expression)) return;
-                            break;
+                        switch (statement)
+                        {
+                            case LetStatementSyntax declaration:
+                                var initializer = declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer);
+                                Expression(initializer, names);
+                                var fact = declaration.Binding.Annotation is { } annotation
+                                    ? ScopedType(annotation, functionTypeScopes[source.Name.Text]).Text
+                                    : StaticType(initializer, names);
+                                if (fact is not null) knownTypes[declaration.Binding.Name.Text] = fact;
+                                else knownTypes.Remove(declaration.Binding.Name.Text);
+                                names.Add(declaration.Binding.Name.Text);
+                                if (!includeUnreachable && NeverExpression(initializer)) return;
+                                break;
+                            case TupleLetStatementSyntax tupleDeclaration:
+                                Expression(tupleDeclaration.Value, names);
+                                foreach (var name in tupleDeclaration.Pattern.Names) { names.Add(name.Text); knownTypes.Remove(name.Text); }
+                                if (!includeUnreachable && NeverExpression(tupleDeclaration.Value)) return;
+                                break;
+                            case ReturnStatementSyntax returned: Expression(returned.Value, names); if (!includeUnreachable) return; break;
+                            case ExpressionStatementSyntax evaluated:
+                                Expression(evaluated.Expression, names);
+                                if (!includeUnreachable && NeverExpression(evaluated.Expression)) return;
+                                break;
+                        }
                     }
+                    Expression(block.Result, names);
                 }
-                Expression(block.Result, names);
+                finally { knownTypes = previousTypes; }
             }
-            bool StaticallyPartialExtension(MemberCallSyntax member)
+            const string unknownListType = "<known-list>";
+            const string unknownMapType = "<known-map>";
+            bool IsImplicitDefault(string name) => defaultReceivers.TryGetValue(source.Name.Text, out var receiver) &&
+                interfaceMethods[receiver.Interface].ContainsKey(name);
+            string? StaticType(ExpressionSyntax expression, HashSet<string> names)
             {
-                if (member.Arguments.Count == 0 || member.Member.Text is "length" or "append" or "get" or "map" or "filter" or "fold" or
-                    "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze") return false;
+                while (expression is GroupSyntax group) expression = group.Inner;
+                if (expression is ListSyntax) return unknownListType;
+                if (expression is RecordConstructionSyntax record && records.TryGetValue(record.Name.Text, out var declaration) &&
+                    declaration.TypeParameters.Count == 0 && !names.Contains(record.Name.Text) &&
+                    !functionTypeScopes[source.Name.Text].ContainsKey(record.Name.Text) && !cases.ContainsKey(record.Name.Text)) return record.Name.Text;
+                if (expression is CallSyntax call && !names.Contains(call.Name.Text) &&
+                    !IsImplicitDefault(call.Name.Text) && !cases.ContainsKey(DependencyName(call.Name.Text, names)) &&
+                    !services.ContainsKey(call.Name.Text) && call.TypeArguments.Count == 0 &&
+                    signatures.TryGetValue(DependencyName(call.Name.Text, names), out var target) &&
+                    !target.InferReturnType && target.TypeParameters.Count == 0 && call.Arguments.Count == target.Parameters.Count)
+                    return CallableResult(target);
+                if (expression is MemberCallSyntax { Receiver: ValueSyntax qualifier, Member.Text: "empty", Arguments.Count: 0 } factory &&
+                    qualifier.Value.Text == "Map" && !userMapType && !names.Contains("Map") &&
+                    !functionTypeScopes[source.Name.Text].ContainsKey("Map") && !signatures.ContainsKey("Map") &&
+                    !cases.ContainsKey("Map") && !records.ContainsKey("Map") && !unions.ContainsKey("Map") &&
+                    !interfaces.ContainsKey("Map") && !services.ContainsKey("Map") && factory.TypeArguments.Count == 2)
+                    return mapSymbol + "<" + string.Join(",", factory.TypeArguments.Select(type =>
+                        ScopedType(type, functionTypeScopes[source.Name.Text]).Text)) + ">";
+                if (expression is NullSyntax) return "<null>";
+                if (expression is not ValueSyntax value) return null;
+                if (names.Contains(value.Value.Text)) return knownTypes.TryGetValue(value.Value.Text, out var known) ? known : null;
+                var text = value.Value.Text;
+                if (text is "true" or "false") return "bool";
+                if (text.StartsWith('"')) return "string";
+                if (text.StartsWith('\'')) return "char";
+                if (IntegerLiterals.TryParse(text, out var magnitude, out var longSuffix))
+                {
+                    if (longSuffix) return magnitude <= long.MaxValue ? "long" : null;
+                    return magnitude <= int.MaxValue ? "int" : null;
+                }
+                return null;
+            }
+            bool IsIntrinsic(string? type, string symbol, string unknown, int arity) => type == unknown ||
+                type is not null && GenericTypes.TryParse(type, out var shape) && !shape.IsNullable &&
+                shape.Name == symbol && shape.Arguments.Count == arity;
+            bool HasFullExtension(MemberCallSyntax member, string? receiver)
+            {
+                if (member.TypeArguments.Count != 0) return false;
+                return extensionDeclarations.Any(extension => extension.Method.Name.Text == member.Member.Text &&
+                    (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
+                    signatures[extension.Id].Parameters.Count == member.Arguments.Count + 1 &&
+                    (receiver is null or unknownListType or unknownMapType || signatures[extension.Id].Parameters[0].Type.Text == receiver));
+            }
+            bool ProvenMapKey(MemberCallSyntax member, string? receiver, HashSet<string> names)
+            {
+                if (receiver is null || !GenericTypes.TryParse(receiver, out var shape) || shape.Arguments.Count != 2) return false;
+                var key = shape.Arguments[0].ToString();
+                var supplied = StaticType(member.Arguments[0], names);
+                return supplied == key || supplied == "<null>" && IsNullable(key);
+            }
+            bool ProvenFoldInitial(MemberCallSyntax member, HashSet<string> names)
+            {
+                var initial = StaticType(member.Arguments[0], names);
+                return initial is not (null or "<null>" or unknownListType or unknownMapType) &&
+                    SupportedType(initial, Parameters(source.TypeParameters));
+            }
+            bool StaticCallback(ExpressionSyntax expression, HashSet<string> names)
+            {
+                while (expression is GroupSyntax group) expression = group.Inner;
+                if (expression is LambdaSyntax) return true;
+                if (expression is not ValueSyntax value || names.Contains(value.Value.Text)) return false;
+                var resolved = DependencyName(value.Value.Text, names);
+                return !IsImplicitDefault(value.Value.Text) && !cases.ContainsKey(resolved) &&
+                    !services.ContainsKey(value.Value.Text) && signatures.ContainsKey(resolved);
+            }
+            bool StaticallyPartialExtension(MemberCallSyntax member, HashSet<string> names)
+            {
+                if (member.Arguments.Count == 0) return false;
                 var visible = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
                     (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id))).ToArray();
+                if (member.Member.Text is "length" or "append" or "get" or "map" or "filter" or "fold" or
+                    "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze")
+                {
+                    var receiver = StaticType(member.Receiver, names);
+                    // A real collection member may win. Other immutable
+                    // receiver types have no intrinsic or capability dispatch.
+                    if (receiver is null || !DataType(receiver) || !GenericTypes.TryParse(receiver, out var shape) ||
+                        shape.Name == listSymbol || shape.Name == mapSymbol || shape.Name == setSymbol) return false;
+                    visible = visible.Where(extension => signatures[extension.Id].Parameters[0].Type.Text == receiver).ToArray();
+                }
                 return visible.Length > 0 && visible.All(extension =>
                     signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1);
             }
@@ -2323,16 +2418,41 @@ public static class Binder
             // not the callback. Only suppress indirect-call classification when
             // the receiver is provably the built-in List; service and resource
             // methods named fold must retain the conservative inference rule.
-            bool StaticallyListFoldPrefix(MemberCallSyntax member)
+            bool StaticallyListFoldPrefix(MemberCallSyntax member, HashSet<string> names)
             {
                 if (member.Member.Text != "fold" || member.Arguments.Count != 1) return false;
-                var receiver = member.Receiver;
-                while (receiver is GroupSyntax group) receiver = group.Inner;
-                if (receiver is ListSyntax) return true;
-                if (receiver is not ValueSyntax name) return false;
-                var parameter = source.Parameters.FirstOrDefault(item => item.Name.Text == name.Value.Text);
-                return parameter is not null && GenericTypes.TryParse(parameter.Type.Text, out var shape) &&
-                    !shape.IsNullable && shape.Name == listSymbol && shape.Arguments.Count == 1;
+                var receiver = StaticType(member.Receiver, names);
+                if (!IsIntrinsic(receiver, listSymbol, unknownListType, 1)) return false;
+                if (!HasFullExtension(member, receiver)) return true;
+                // When the intrinsic cannot infer an accumulator, normal
+                // lookup may choose a fully supplied extension returning an
+                // arbitrary function. Only classify it as intrinsic if its
+                // first argument has a known supported type.
+                return ProvenFoldInitial(member, names);
+            }
+            bool StaticallyMapSetPrefix(MemberCallSyntax member, HashSet<string> names)
+            {
+                if (member.Member.Text != "set" || member.Arguments.Count != 1 || member.TypeArguments.Count != 0) return false;
+                var receiver = StaticType(member.Receiver, names);
+                if (!IsIntrinsic(receiver, mapSymbol, unknownMapType, 2)) return false;
+                if (!HasFullExtension(member, receiver)) return true;
+                return ProvenMapKey(member, receiver, names);
+            }
+            bool StaticallyCompletedPartial(ExpressionSyntax target, IReadOnlyList<ExpressionSyntax> supplied, HashSet<string> names)
+            {
+                while (target is GroupSyntax group) target = group.Inner;
+                if (target is not MemberCallSyntax member || supplied.Count > 1) return false;
+                if (StaticallyMapSetPrefix(member, names)) return true;
+                if (StaticallyListFoldPrefix(member, names)) return supplied.Count == 0 || StaticCallback(supplied[0], names);
+                return StaticallyPartialExtension(member, names);
+            }
+            void WithUnknownNames(IEnumerable<string> hidden, Action action)
+            {
+                var previousTypes = knownTypes;
+                knownTypes = new Dictionary<string, string>(knownTypes, StringComparer.Ordinal);
+                foreach (var name in hidden) knownTypes.Remove(name);
+                try { action(); }
+                finally { knownTypes = previousTypes; }
             }
             void Expression(ExpressionSyntax expression, HashSet<string> names)
             {
@@ -2364,12 +2484,31 @@ public static class Binder
                             qualifier?.Value.Text == "Option" && !userOptionType ? optionSymbol : qualifier?.Value.Text;
                         if (qualifier is null || names.Contains(qualifier.Value.Text) || unionName is null || !unions.ContainsKey(unionName))
                         {
+                            var provenReceiver = StaticType(member.Receiver, names);
                             var namedExtensions = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
                                 (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id))).ToArray();
+                            if (provenReceiver is not null)
+                                namedExtensions = namedExtensions.Where(extension =>
+                                {
+                                    var target = signatures[extension.Id].Parameters[0].Type.Text;
+                                    if (provenReceiver == unknownListType) return IsIntrinsic(target, listSymbol, unknownListType, 1);
+                                    if (provenReceiver == unknownMapType) return IsIntrinsic(target, mapSymbol, unknownMapType, 2);
+                                    return target == provenReceiver;
+                                }).ToArray();
+                            // The intrinsic wins over extensions only when its
+                            // prefix is actually applicable. Retain every
+                            // plausible fallback edge if that cannot be proved.
+                            var provenRealPartial = member.Arguments.Count == 1 &&
+                                (member.Member.Text == "set" && member.TypeArguments.Count == 0 &&
+                                 IsIntrinsic(provenReceiver, mapSymbol, unknownMapType, 2) && ProvenMapKey(member, provenReceiver, names) ||
+                                 member.Member.Text == "fold" && IsIntrinsic(provenReceiver, listSymbol, unknownListType, 1) &&
+                                 ProvenFoldInitial(member, names));
+                            if (provenRealPartial) namedExtensions = Array.Empty<(string Id, ExtensionDeclarationSyntax Declaration, ExtensionMethodSyntax Method)>();
                             foreach (var extension in namedExtensions) calls.Add(extension.Id);
                             if (namedExtensions.Length == 0 && member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
                                 "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze")) indirect = true;
-                            if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0 && !StaticallyListFoldPrefix(member))
+                            if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0 &&
+                                !StaticallyListFoldPrefix(member, names) && !StaticallyPartialExtension(member, names))
                             {
                                 var callback = member.Arguments[^1];
                                 while (callback is GroupSyntax group) callback = group.Inner;
@@ -2392,7 +2531,7 @@ public static class Binder
                                 Expression(argument, names);
                                 if (!includeUnreachable && NeverExpression(argument)) { invokeCompletes = false; break; }
                             }
-                        if (invokeCompletes) indirect = true;
+                        if (invokeCompletes && !StaticallyCompletedPartial(invocation.Receiver, invocation.Arguments, names)) indirect = true;
                         break;
                     case PipeSyntax pipe:
                         Expression(pipe.Left, names);
@@ -2413,7 +2552,7 @@ public static class Binder
                         else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
                             signatures.TryGetValue(DependencyName(partialCall.Name.Text, names), out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
                             Expression(pipeTarget, names);
-                        else if (pipeTarget is MemberCallSyntax extensionPartial && StaticallyPartialExtension(extensionPartial))
+                        else if (StaticallyCompletedPartial(pipeTarget, new[] { pipe.Left }, names))
                             Expression(pipeTarget, names);
                         else
                         {
@@ -2424,14 +2563,20 @@ public static class Binder
                     case LambdaSyntax lambda:
                         var lambdaNames = new HashSet<string>(names, StringComparer.Ordinal);
                         foreach (var parameter in lambda.Parameters) lambdaNames.Add(parameter.Name.Text);
-                        Block(lambda.Body, lambdaNames);
+                        WithUnknownNames(lambda.Parameters.Select(parameter => parameter.Name.Text), () =>
+                        {
+                            foreach (var parameter in lambda.Parameters)
+                                if (parameter.Type is { } annotation)
+                                    knownTypes[parameter.Name.Text] = ScopedType(annotation, functionTypeScopes[source.Name.Text]).Text;
+                            Block(lambda.Body, lambdaNames);
+                        });
                         break;
                     case ForSyntax loop:
                         Expression(loop.Source, names);
                         if (includeUnreachable || !NeverExpression(loop.Source))
                         {
                             var loopNames = new HashSet<string>(names, StringComparer.Ordinal) { loop.Name.Text };
-                            Block(loop.Body, loopNames);
+                            WithUnknownNames(new[] { loop.Name.Text }, () => Block(loop.Body, loopNames));
                         }
                         break;
                     case UsingSyntax owned:
@@ -2439,7 +2584,7 @@ public static class Binder
                         if (includeUnreachable || !NeverExpression(owned.Acquisition))
                         {
                             var scopedNames = new HashSet<string>(names, StringComparer.Ordinal) { owned.Name.Text };
-                            Block(owned.Body, scopedNames);
+                            WithUnknownNames(new[] { owned.Name.Text }, () => Block(owned.Body, scopedNames));
                         }
                         break;
                     case IfSyntax conditional:
@@ -2498,9 +2643,12 @@ public static class Binder
                                 (!includeDeadBranches || !hasCompletingReachableArm || NeverExpression(arm.Value))) continue;
                             var armNames = new HashSet<string>(names, StringComparer.Ordinal);
                             PatternNames(arm.Pattern, armNames);
-                            if (arm.Guard is not null) Expression(arm.Guard, armNames);
-                            if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard) &&
-                                (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames);
+                            WithUnknownNames(armNames.Except(names), () =>
+                            {
+                                if (arm.Guard is not null) Expression(arm.Guard, armNames);
+                                if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard) &&
+                                    (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames);
+                            });
                             if (arm.Guard is null) earlierPatterns.Add(arm.Pattern);
                             if (!includeUnreachable && !includeDeadBranches && arm.Guard is null && arm.Pattern is WildcardPatternSyntax) break;
                         }
@@ -4317,6 +4465,12 @@ public static class Binder
                                 Fail("DS2041", member.Member, "Incorrect resource operation arguments.");
                             if (operation!.IsAsync && !directResourceAwait)
                                 Fail("DS2041", member.Member, "An async resource operation must be immediately awaited.");
+                            // Resource operations are dynamically dispatched like
+                            // service methods. A collection-like name or callback
+                            // argument cannot make that dispatch a static dependency
+                            // for omitted-return inference.
+                            if (inferencePass && inferenceReachable && inferredReturns is not null)
+                                Fail("DS2027", member.Member, "An explicit return type is required for indirect resource calls.");
                             var previousDirectAwait = directResourceAwait;
                             directResourceAwait = false;
                             (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) args;
