@@ -286,10 +286,10 @@ remaining arguments. Grouped calls and pipes retain immutable updates and
 nullable/Option lookup distinctions. Zero-argument `length()` and `count()`
 remain full calls. Existing applicable full zero-argument extension calls keep
 their behavior; a compatible expected callable or pipe can select the intrinsic
-partial when that full result is incompatible. An omitted-return function that
-immediately invokes or pipes into an empty collection partial may still require
-a return annotation. Bare method values,
-extension empty calls, and service or interface method partials remain separate
+partial when that full result is incompatible. Omitted returns can be inferred
+through the statically proven immediate and staged calls described in #191;
+unproven targets still require an annotation. Bare method values, extension
+empty calls, and service or interface method partials remain separate
 work under #129. See the
 [D# example](../../examples/collection_empty_partials.ds) and
 [implementation plan](implementation/issue-187-plan.md).
@@ -303,9 +303,10 @@ substitution. A call without sufficient type evidence is rejected unless an
 existing applicable full extension supplies the call. Previously valid full
 extension calls retain their behavior; compatible callable or pipe context can
 select the intrinsic when the extension result is incompatible, and ambiguous
-applicable extensions remain errors. An omitted-return function immediately
-invoking or piping into these partials may still need a return annotation. Bare
-method values, extension empty prefixes and service/interface method partials
+applicable extensions remain errors. Omitted returns can be inferred through
+the statically proven immediate and staged calls described in #191; unproven
+targets still require an annotation. Bare method values, extension empty
+prefixes and service/interface method partials
 remain separate work under #129. See the
 [D# example](../../examples/generic_list_empty_partials.ds) and
 [implementation plan](implementation/issue-189-plan.md).
@@ -438,6 +439,18 @@ scoped-resource method dispatch, even when it resembles a collection method.
 Recursive, ambiguous and unproven dependencies continue to be rejected. See the
 [D# example](../../examples/partial_inference.ds) and
 [implementation plan](implementation/issue-185-plan.md).
+[Issue #191](https://github.com/gajo357/dsharplang/issues/191) extends omitted
+return inference to checked, acyclic grouped calls and pipes through provably
+intrinsic empty-prefix immutable List, Map and Set partials, including supported
+generic `List.map` and `List.fold` and staged application. A callback supplied
+to a completed operation must be a statically known function or lambda; unknown
+callbacks, recursive or unresolved dependencies, and indirect service, interface
+or resource dispatch still require an annotation. A possible full zero-argument
+extension can also prevent inference, preserving normal extension precedence.
+This does not make insufficiently typed generic empty prefixes valid or expand
+other partial-application families. See the
+[D# example](../../examples/empty_collection_inference.ds) and
+[implementation plan](implementation/issue-191-plan.md).
 [Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
 partial application of ordinary functions and function values. Supplied values
 and dynamic receivers are evaluated once when a partial is formed; calls run

@@ -1,0 +1,7 @@
+module Demo
+
+fn sum(total: int, value: int): int { total + value }
+
+// The empty-prefix fold is a function; supplying both arguments completes it.
+// The result type of answer is inferred as int.
+fn answer() { ([19, 23].fold<int>())(0, sum) }
