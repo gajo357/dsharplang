@@ -2331,6 +2331,7 @@ public static class Binder
             }
             const string unknownListType = "<known-list>";
             const string unknownMapType = "<known-map>";
+            const string unknownSetType = "<known-set>";
             bool IsImplicitDefault(string name) => defaultReceivers.TryGetValue(source.Name.Text, out var receiver) &&
                 interfaceMethods[receiver.Interface].ContainsKey(name);
             string? StaticType(ExpressionSyntax expression, HashSet<string> names)
@@ -2353,6 +2354,16 @@ public static class Binder
                     !interfaces.ContainsKey("Map") && !services.ContainsKey("Map") && factory.TypeArguments.Count == 2)
                     return mapSymbol + "<" + string.Join(",", factory.TypeArguments.Select(type =>
                         ScopedType(type, functionTypeScopes[source.Name.Text]).Text)) + ">";
+                if (expression is MemberCallSyntax { Receiver: ValueSyntax setQualifier } setFactory &&
+                    setQualifier.Value.Text == "Set" && !userSetType && !names.Contains("Set") &&
+                    !functionTypeScopes[source.Name.Text].ContainsKey("Set") && !signatures.ContainsKey("Set") &&
+                    !cases.ContainsKey("Set") && !records.ContainsKey("Set") && !unions.ContainsKey("Set") &&
+                    !interfaces.ContainsKey("Set") && !services.ContainsKey("Set") &&
+                    (setFactory.Member.Text == "empty" && setFactory.Arguments.Count == 0 && setFactory.TypeArguments.Count == 1 ||
+                     setFactory.Member.Text == "from" && setFactory.Arguments.Count == 1 && setFactory.TypeArguments.Count <= 1))
+                    return setFactory.TypeArguments.Count == 1
+                        ? setSymbol + "<" + ScopedType(setFactory.TypeArguments[0], functionTypeScopes[source.Name.Text]).Text + ">"
+                        : unknownSetType;
                 if (expression is NullSyntax) return "<null>";
                 if (expression is not ValueSyntax value) return null;
                 if (names.Contains(value.Value.Text)) return knownTypes.TryGetValue(value.Value.Text, out var known) ? known : null;
@@ -2376,7 +2387,7 @@ public static class Binder
                 return extensionDeclarations.Any(extension => extension.Method.Name.Text == member.Member.Text &&
                     (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
                     signatures[extension.Id].Parameters.Count == member.Arguments.Count + 1 &&
-                    (receiver is null or unknownListType or unknownMapType || signatures[extension.Id].Parameters[0].Type.Text == receiver));
+                    (receiver is null or unknownListType or unknownMapType or unknownSetType || signatures[extension.Id].Parameters[0].Type.Text == receiver));
             }
             bool ProvenMapKey(MemberCallSyntax member, string? receiver, HashSet<string> names)
             {
@@ -2388,7 +2399,7 @@ public static class Binder
             bool ProvenFoldInitial(MemberCallSyntax member, HashSet<string> names)
             {
                 var initial = StaticType(member.Arguments[0], names);
-                return initial is not (null or "<null>" or unknownListType or unknownMapType) &&
+                return initial is not (null or "<null>" or unknownListType or unknownMapType or unknownSetType) &&
                     SupportedType(initial, Parameters(source.TypeParameters));
             }
             bool StaticCallback(ExpressionSyntax expression, HashSet<string> names)
@@ -2442,12 +2453,59 @@ public static class Binder
                 if (!HasFullExtension(member, receiver)) return true;
                 return ProvenMapKey(member, receiver, names);
             }
+            // Only recognize the built-in empty prefixes when ordinary lookup
+            // cannot select a fully supplied extension instead. In particular,
+            // a zero-argument extension may return an arbitrary function.
+            (int Arity, int Callback)? StaticallyEmptyCollectionPrefix(MemberCallSyntax member, HashSet<string> names)
+            {
+                if (member.Arguments.Count != 0) return null;
+                var receiver = StaticType(member.Receiver, names);
+                if (HasFullExtension(member, receiver)) return null;
+                if (IsIntrinsic(receiver, listSymbol, unknownListType, 1))
+                {
+                    if (member.TypeArguments.Count == 0 && member.Member.Text is "append" or "get") return (1, -1);
+                    if (member.TypeArguments.Count == 0 && member.Member.Text == "filter") return (1, 0);
+                    if (member.TypeArguments.Count <= 1 && member.Member.Text == "map") return (1, 0);
+                    if (member.TypeArguments.Count <= 1 && member.Member.Text == "fold") return (2, 1);
+                }
+                if (member.TypeArguments.Count != 0) return null;
+                if (IsIntrinsic(receiver, mapSymbol, unknownMapType, 2))
+                {
+                    if (member.Member.Text is "get" or "contains") return (1, -1);
+                    if (member.Member.Text == "set") return (2, -1);
+                }
+                if (IsIntrinsic(receiver, setSymbol, unknownSetType, 1) && member.Member.Text is "contains" or "add") return (1, -1);
+                return null;
+            }
             bool StaticallyCompletedPartial(ExpressionSyntax target, IReadOnlyList<ExpressionSyntax> supplied, HashSet<string> names)
             {
-                while (target is GroupSyntax group) target = group.Inner;
-                if (target is not MemberCallSyntax member || supplied.Count > 1) return false;
+                // Follow grouped invocations and pipes back to their original
+                // partial, retaining argument order across every stage.
+                var arguments = new List<ExpressionSyntax>(supplied);
+                while (true)
+                {
+                    if (target is GroupSyntax group) { target = group.Inner; continue; }
+                    if (target is InvokeSyntax invocation)
+                    {
+                        arguments.InsertRange(0, invocation.Arguments);
+                        target = invocation.Receiver;
+                        continue;
+                    }
+                    if (target is PipeSyntax pipe)
+                    {
+                        arguments.Insert(0, pipe.Left);
+                        target = pipe.Right;
+                        continue;
+                    }
+                    break;
+                }
+                if (target is not MemberCallSyntax member) return false;
+                if (StaticallyEmptyCollectionPrefix(member, names) is { } empty)
+                    return arguments.Count <= empty.Arity &&
+                        (empty.Callback < 0 || arguments.Count <= empty.Callback || StaticCallback(arguments[empty.Callback], names));
+                if (arguments.Count > 1) return false;
                 if (StaticallyMapSetPrefix(member, names)) return true;
-                if (StaticallyListFoldPrefix(member, names)) return supplied.Count == 0 || StaticCallback(supplied[0], names);
+                if (StaticallyListFoldPrefix(member, names)) return arguments.Count == 0 || StaticCallback(arguments[0], names);
                 return StaticallyPartialExtension(member, names);
             }
             void WithUnknownNames(IEnumerable<string> hidden, Action action)
@@ -2497,12 +2555,13 @@ public static class Binder
                                     var target = signatures[extension.Id].Parameters[0].Type.Text;
                                     if (provenReceiver == unknownListType) return IsIntrinsic(target, listSymbol, unknownListType, 1);
                                     if (provenReceiver == unknownMapType) return IsIntrinsic(target, mapSymbol, unknownMapType, 2);
+                                    if (provenReceiver == unknownSetType) return IsIntrinsic(target, setSymbol, unknownSetType, 1);
                                     return target == provenReceiver;
                                 }).ToArray();
                             // The intrinsic wins over extensions only when its
                             // prefix is actually applicable. Retain every
                             // plausible fallback edge if that cannot be proved.
-                            var provenRealPartial = member.Arguments.Count == 1 &&
+                            var provenRealPartial = StaticallyEmptyCollectionPrefix(member, names) is not null || member.Arguments.Count == 1 &&
                                 (member.Member.Text == "set" && member.TypeArguments.Count == 0 &&
                                  IsIntrinsic(provenReceiver, mapSymbol, unknownMapType, 2) && ProvenMapKey(member, provenReceiver, names) ||
                                  member.Member.Text == "fold" && IsIntrinsic(provenReceiver, listSymbol, unknownListType, 1) &&
