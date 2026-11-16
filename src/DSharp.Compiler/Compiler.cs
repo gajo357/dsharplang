@@ -146,6 +146,7 @@ public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string T
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundMapSetPartial(BoundExpression Receiver, string ReceiverType, BoundExpression Key, string KeyType, string ValueType, string Type) : BoundExpression;
 public sealed record BoundBuilderFactory(string Type, string CollectionType) : BoundExpression;
 public sealed record BoundBuilderOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundServiceConstruction(string Type, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
@@ -3206,6 +3207,7 @@ public static class Binder
                 BoundListOperation list => list.Type,
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
+                BoundMapSetPartial collection => collection.Type,
                 BoundBuilderFactory builder => builder.Type,
                 BoundBuilderOperation builder => builder.Type,
                 BoundServiceConstruction service => service.Type,
@@ -4491,7 +4493,9 @@ public static class Binder
                                 {
                                     "count" => ExactArguments(Array.Empty<string>()),
                                     "contains" or "get" => ExactArguments(new[] { key }),
-                                    "set" => ExactArguments(new[] { key, shape.Arguments[1].ToString() }),
+                                    "set" => member.Arguments.Count == 1
+                                        ? ExactArguments(new[] { key })
+                                        : ExactArguments(new[] { key, shape.Arguments[1].ToString() }),
                                     _ => false
                                 };
                             }
@@ -4709,7 +4713,8 @@ public static class Binder
                             };
                             if (arity < 0) Fail("DS2018", member.Member, "Unknown immutable collection operation.");
                             if (member.TypeArguments.Count != 0) Fail("DS2023", member.Member, "Collection operations do not accept type arguments.");
-                            if (member.Arguments.Count != arity) Fail("DS2012", member.Member, "Incorrect number of collection operation arguments.");
+                            var partialSet = isMap && operation == "set" && member.Arguments.Count == 1;
+                            if (member.Arguments.Count != arity && !partialSet) Fail("DS2012", member.Member, "Incorrect number of collection operation arguments.");
                             var keyType = collectionShape.Arguments[0].ToString();
                             var valueType = isMap ? collectionShape.Arguments[1].ToString() : null;
                             var arguments = new List<BoundExpression>();
@@ -4728,6 +4733,12 @@ public static class Binder
                                 }
                             }
                             finally { inferenceReachable = savedReachable; }
+                            if (partialSet)
+                            {
+                                var partialType = TypeShape.FunctionName + "<" + valueType + "," + listReceiverType + ">";
+                                return (new BoundMapSetPartial(listReceiver.Expression, listReceiverType, arguments[0], keyType, valueType!, partialType),
+                                    never ? "<never>" : partialType);
+                            }
                             var returnType = operation switch
                             {
                                 "count" => "int",
@@ -6649,6 +6660,28 @@ public static class CSharpEmitter
                             .Append(" ").Append(factoryArg).Append(" = ").Append(factoryValue).Append(";\n")
                             .Append("            return ").Append(CType(factory.Type)).Append(".__dsharp_from(").Append(factoryArg).Append(");\n            }\n");
                         return HelperCall(factoryHelper, factory);
+                    case BoundMapSetPartial mapPartial:
+                        // Construct the function only after capturing the map and
+                        // key in source order. Each completed call then performs
+                        // the ordinary immutable update on that captured map.
+                        var mapPartialId = (listCount++).ToString(CultureInfo.InvariantCulture);
+                        var mapPartialHelper = "__dsharp_map_partial_" + mapPartialId;
+                        var mapPartialReceiver = "__dsharp_map_partial_receiver_" + mapPartialId;
+                        var mapPartialKey = "__dsharp_map_partial_key_" + mapPartialId;
+                        var mapPartialValue = "__dsharp_map_partial_value_" + mapPartialId;
+                        output.Append("            ").Append(HelperResult(mapPartial.Type, mapPartial)).Append(" ")
+                            .Append(mapPartialHelper).Append(HelperBody(mapPartial));
+                        var mapPartialSource = EmitExpression(mapPartial.Receiver);
+                        output.Append("            ").Append(CType(mapPartial.ReceiverType)).Append(" ")
+                            .Append(mapPartialReceiver).Append(" = ").Append(mapPartialSource).Append(";\n");
+                        var mapPartialKeyValue = EmitExpression(mapPartial.Key);
+                        output.Append("            ").Append(CType(mapPartial.KeyType)).Append(" ")
+                            .Append(mapPartialKey).Append(" = ").Append(mapPartialKeyValue).Append(";\n")
+                            .Append("            return ((").Append(CType(mapPartial.Type)).Append(")((")
+                            .Append(mapPartialValue).Append(") => ").Append(mapPartialReceiver)
+                            .Append(".__dsharp_set(").Append(mapPartialKey).Append(", ").Append(mapPartialValue)
+                            .Append(")));\n            }\n");
+                        return HelperCall(mapPartialHelper, mapPartial);
                     case BoundMapSetOperation collectionOperation:
                         if (!GenericTypes.TryParse(collectionOperation.ReceiverType, out var collectionShape) ||
                             (collectionShape.Name != module.MapSymbol && collectionShape.Name != module.SetSymbol))
