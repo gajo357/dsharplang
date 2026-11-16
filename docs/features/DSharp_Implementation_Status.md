@@ -50,6 +50,7 @@ external interoperability guarantee follows from this lowering. See the
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Extension partial application | A unique visible extension on immutable data accepts a nonempty positional prefix with arguments remaining | Receiver and prefix are captured once in order; grouped calls, pipes and async calls invoke the body only when saturated |
 | Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
+| Immutable List.fold partial application | `items.fold(initial)` produces a function taking the fold callback | Receiver and initial are captured once in order; each completed call folds the captured list left to right |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
@@ -237,6 +238,20 @@ equality. `get` returns `Option<T>`, distinguishing an absent index from a
 stored null. The [D# example](../../examples/list.ds) and
 [implementation plan](implementation/issue-37-plan.md) show the supported
 operations and test coverage.
+[Issue #183](https://github.com/gajo357/dsharplang/issues/183) adds the
+nonempty-prefix form `items.fold(initial)`, which returns a function taking the
+fold callback. The receiver and initial accumulator are evaluated once in order
+when the function is formed; each completed invocation folds the captured list
+from left to right, and an empty list returns the captured initial. Existing
+fully supplied `fold(initial, callback)` calls retain their behavior. Accumulator
+types can be inferred or supplied explicitly or by a compatible expected function
+type, including tested nullable, Option and generic values. Builder, resource
+and service/interface capability captures remain rejected, including through
+generic substitution. An inferred-return function immediately invoking or piping
+into this partial may need an explicit return type. Other collection partials and
+empty-prefix calls remain separate work under #129. See the
+[D# example](../../examples/list_fold_partial.ds) and
+[implementation plan](implementation/issue-183-plan.md).
 `Map` and `Set` are implemented separately in
 [#38](https://github.com/gajo357/dsharplang/issues/38); builders and
 serialization remain separate work.
@@ -255,8 +270,8 @@ function is formed; each completed call independently updates the captured map,
 leaving the original unchanged. Grouped calls and value pipes are supported,
 including nullable and Option data and generic value types. An inferred-return
 function that immediately invokes or pipes into `map.set(key)` may require an
-explicit return type; unconstrained generic map keys remain unsupported. Other collection
-method partials and empty-prefix calls remain separate work under #129. See the
+explicit return type; unconstrained generic map keys remain unsupported. Other
+collection method partials and empty-prefix calls remain separate work under #129. See the
 [D# example](../../examples/map_partial.ds) and
 [implementation plan](implementation/issue-181-plan.md).
 [Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and

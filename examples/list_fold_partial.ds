@@ -1,0 +1,7 @@
+module Demo
+
+fn answer(): int {
+    let numbers = [1, 2, 3]
+    let addToTen = numbers.fold(10)
+    addToTen((sum, value) => sum + value)
+}

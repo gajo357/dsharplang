@@ -144,6 +144,7 @@ public sealed record BoundTuple(IReadOnlyList<BoundExpression> Elements, string 
 public sealed record BoundTupleItem(BoundExpression Tuple, int Index) : BoundExpression;
 public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string Type) : BoundExpression;
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundListFoldPartial(BoundExpression Receiver, string ReceiverType, BoundExpression Initial, string AccumulatorType, string ElementType, string Type) : BoundExpression;
 public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
 public sealed record BoundMapSetPartial(BoundExpression Receiver, string ReceiverType, BoundExpression Key, string KeyType, string ValueType, string Type) : BoundExpression;
@@ -2318,6 +2319,21 @@ public static class Binder
                 return visible.Length > 0 && visible.All(extension =>
                     signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1);
             }
+            // In a one-argument fold call, the argument is the initial value,
+            // not the callback. Only suppress indirect-call classification when
+            // the receiver is provably the built-in List; service and resource
+            // methods named fold must retain the conservative inference rule.
+            bool StaticallyListFoldPrefix(MemberCallSyntax member)
+            {
+                if (member.Member.Text != "fold" || member.Arguments.Count != 1) return false;
+                var receiver = member.Receiver;
+                while (receiver is GroupSyntax group) receiver = group.Inner;
+                if (receiver is ListSyntax) return true;
+                if (receiver is not ValueSyntax name) return false;
+                var parameter = source.Parameters.FirstOrDefault(item => item.Name.Text == name.Value.Text);
+                return parameter is not null && GenericTypes.TryParse(parameter.Type.Text, out var shape) &&
+                    !shape.IsNullable && shape.Name == listSymbol && shape.Arguments.Count == 1;
+            }
             void Expression(ExpressionSyntax expression, HashSet<string> names)
             {
                 switch (expression)
@@ -2353,7 +2369,7 @@ public static class Binder
                             foreach (var extension in namedExtensions) calls.Add(extension.Id);
                             if (namedExtensions.Length == 0 && member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
                                 "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze")) indirect = true;
-                            if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0)
+                            if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0 && !StaticallyListFoldPrefix(member))
                             {
                                 var callback = member.Arguments[^1];
                                 while (callback is GroupSyntax group) callback = group.Inner;
@@ -3208,6 +3224,7 @@ public static class Binder
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
                 BoundMapSetPartial collection => collection.Type,
+                BoundListFoldPartial fold => fold.Type,
                 BoundBuilderFactory builder => builder.Type,
                 BoundBuilderOperation builder => builder.Type,
                 BoundServiceConstruction service => service.Type,
@@ -4466,6 +4483,58 @@ public static class Binder
                             catch (SourceError) { return false; }
                             finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
                         }
+                        // A fold prefix leaves one callback argument. Infer its
+                        // accumulator from an expected partial function or from
+                        // the callback supplied by the left side of a pipe.
+                        string? FoldPartialHint(string element)
+                        {
+                            string? FromCallback(TypeShape shape)
+                            {
+                                if (!shape.IsFunction || shape.IsNullable || shape.Arguments.Count != 3 ||
+                                    shape.Arguments[1].ToString() != element ||
+                                    shape.Arguments[0].ToString() != shape.Arguments[2].ToString()) return null;
+                                var accumulator = shape.Arguments[0].ToString();
+                                return SupportedType(accumulator, activeTypeParameters) ? accumulator : null;
+                            }
+                            if (expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expected) &&
+                                expected.IsFunction && !expected.IsNullable && expected.Arguments.Count == 2)
+                            {
+                                var accumulator = FromCallback(expected.Arguments[0]);
+                                if (accumulator is not null && expected.Arguments[1].ToString() == accumulator) return accumulator;
+                            }
+                            if (pipeInputType is not null && GenericTypes.TryParse(pipeInputType, out var callback))
+                            {
+                                var accumulator = FromCallback(callback);
+                                if (accumulator is not null) return accumulator;
+                            }
+                            return pipeOutputType is not null && SupportedType(pipeOutputType, activeTypeParameters)
+                                ? pipeOutputType : null;
+                        }
+                        bool InferredFoldPartialApplicable(string element)
+                        {
+                            if (member.Arguments.Count != 1) return false;
+                            var savedReturns = inferredReturns;
+                            if (savedReturns is not null) inferredReturns = new List<string>();
+                            var savedReachability = inferenceReachable;
+                            var savedHasReturn = hasReturn;
+                            var savedTupleCount = tupleBindingCount;
+                            try
+                            {
+                                var hint = FoldPartialHint(element);
+                                var initial = BindExpression(member.Arguments[0], hint);
+                                var accumulator = initial.Type == "<never>" ? KnownType(initial.Expression) : initial.Type;
+                                if (accumulator == "<null>") accumulator = hint is not null && IsNullable(hint) ? hint : null;
+                                return accumulator is not (null or "<null>" or "<never>") && SupportedType(accumulator, activeTypeParameters);
+                            }
+                            catch (SourceError error)
+                            {
+                                if (error.Diagnostic.Code == "DS2041" || error.Diagnostic.Code == "DS2026" &&
+                                    (error.Diagnostic.Message.Contains("capture", StringComparison.OrdinalIgnoreCase) || error.Diagnostic.Message.Contains("builder", StringComparison.OrdinalIgnoreCase)))
+                                    extensionSafetyError ??= error;
+                                return false;
+                            }
+                            finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
+                        }
                         bool RealMemberApplicable()
                         {
                             if (listReceiverType is null || member.TypeArguments.Count != 0) return false;
@@ -4482,7 +4551,9 @@ public static class Binder
                                     "append" => ExactArguments(new[] { element }),
                                     "filter" => ExactArguments(new[] { TypeShape.FunctionName + "<" + element + ",bool>" }),
                                     "map" => InferredListMemberApplicable(element, false),
-                                    "fold" => InferredListMemberApplicable(element, true),
+                                    "fold" => member.Arguments.Count == 1
+                                        ? InferredFoldPartialApplicable(element)
+                                        : InferredListMemberApplicable(element, true),
                                     _ => false
                                 };
                             }
@@ -4757,7 +4828,8 @@ public static class Binder
                             var listOperation = member.Member.Text;
                             var expectedCount = listOperation switch { "length" => 0, "append" or "get" or "map" or "filter" => 1, "fold" => 2, _ => -1 };
                             if (expectedCount < 0) Fail("DS2018", member.Member, "Unknown immutable List operation.");
-                            if (member.Arguments.Count != expectedCount) Fail("DS2012", member.Member, "Incorrect number of List operation arguments.");
+                            var partialFold = listOperation == "fold" && member.Arguments.Count == 1;
+                            if (member.Arguments.Count != expectedCount && !partialFold) Fail("DS2012", member.Member, "Incorrect number of List operation arguments.");
                             if (member.TypeArguments.Count > (listOperation is "map" or "fold" ? 1 : 0))
                                 Fail("DS2023", member.Member, "Incorrect number of List operation type arguments.");
                             var elementType = listShape.Arguments[0].ToString();
@@ -4823,13 +4895,24 @@ public static class Binder
                                 }
                                 else // fold
                                 {
-                                    var initial = Argument(0, specified ?? expectedResult);
+                                    var accumulatorHint = specified ?? (partialFold ? FoldPartialHint(elementType) : expectedResult);
+                                    var initial = Argument(0, accumulatorHint);
                                     var accumulator = specified ?? (initial.Type == "<never>" ? KnownType(initial.Expression) : initial.Type);
+                                    if (partialFold && specified is null && accumulatorHint is not null && Convertible(initial.Type, accumulatorHint))
+                                        accumulator = accumulatorHint;
                                     if (accumulator is null or "<null>" or "<never>" || !SupportedType(accumulator, activeTypeParameters))
                                         Fail("DS2023", member.Arguments[0].Token, "Cannot infer the List.fold accumulator type.");
                                     Require(member.Arguments[0], initial.Type, accumulator!);
                                     boundArguments.Add(Coerce(initial.Expression, accumulator!, initial.Type));
                                     var formal = FunctionType(accumulator!, elementType, accumulator!);
+                                    if (partialFold)
+                                    {
+                                        if (CapabilityType(accumulator!) || CapabilityType(initial.Type))
+                                            Fail("DS2026", member.Member, "A partial application cannot capture a service or interface reference.");
+                                        var partialType = FunctionType(formal, accumulator!);
+                                        return (new BoundListFoldPartial(listReceiver.Expression, listReceiverType!, boundArguments[0], accumulator!, elementType, partialType),
+                                            never ? "<never>" : partialType);
+                                    }
                                     var callback = Argument(1, formal);
                                     Require(member.Arguments[1], callback.Type, formal);
                                     boundArguments.Add(Coerce(callback.Expression, formal, callback.Type));
@@ -5598,6 +5681,11 @@ public static class Binder
                                 if (RetainsCapability(captured)) Fail("DS2026", new Token(owner.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
                                 NeedCapabilitySafe(captured);
                             }
+                    if (node is BoundListFoldPartial fold && GenericTypes.TryParse(fold.AccumulatorType, out var foldCaptured))
+                    {
+                        if (RetainsCapability(foldCaptured)) Fail("DS2026", new Token(owner.Name, syntheticSpan), "A partial application cannot capture a service or interface reference.");
+                        NeedCapabilitySafe(foldCaptured);
+                    }
                     if (node is BoundPipe pipe && GenericTypes.TryParse(pipe.ReceiverType, out var pipeReceiver) &&
                         pipeReceiver.IsFunction && pipeReceiver.Arguments.Count > 2 && GenericTypes.TryParse(pipe.ValueType, out var pipeValue))
                     {
@@ -6602,6 +6690,28 @@ public static class CSharpEmitter
                         var builderReceiver = EmitExpression(builder.Receiver);
                         var builderArguments = builder.Arguments.Select(EmitExpression).ToArray();
                         return "(" + builderReceiver + ").__dsharp_" + builder.Operation + "(" + string.Join(", ", builderArguments) + ")";
+                    case BoundListFoldPartial foldPartial:
+                        // Capture in source order. The callback and iteration run
+                        // only when the returned function is invoked.
+                        var foldPartialId = (listCount++).ToString(CultureInfo.InvariantCulture);
+                        var foldPartialHelper = "__dsharp_fold_partial_" + foldPartialId;
+                        var foldPartialReceiver = "__dsharp_fold_partial_receiver_" + foldPartialId;
+                        var foldPartialInitial = "__dsharp_fold_partial_initial_" + foldPartialId;
+                        var foldPartialCallback = "__dsharp_fold_partial_callback_" + foldPartialId;
+                        output.Append("            ").Append(HelperResult(foldPartial.Type, foldPartial)).Append(" ")
+                            .Append(foldPartialHelper).Append(HelperBody(foldPartial));
+                        var foldPartialSource = EmitExpression(foldPartial.Receiver);
+                        output.Append("            ").Append(CType(foldPartial.ReceiverType)).Append(" ")
+                            .Append(foldPartialReceiver).Append(" = ").Append(foldPartialSource).Append(";\n");
+                        var foldPartialValue = EmitExpression(foldPartial.Initial);
+                        output.Append("            ").Append(CType(foldPartial.AccumulatorType)).Append(" ")
+                            .Append(foldPartialInitial).Append(" = ").Append(foldPartialValue).Append(";\n")
+                            .Append("            return ((").Append(CType(foldPartial.Type)).Append(")((")
+                            .Append(foldPartialCallback).Append(") => ").Append(foldPartialReceiver)
+                            .Append(".__dsharp_fold<").Append(CType(foldPartial.AccumulatorType)).Append(">(")
+                            .Append(foldPartialInitial).Append(", ").Append(foldPartialCallback)
+                            .Append(")));\n            }\n");
+                        return HelperCall(foldPartialHelper, foldPartial);
                     case BoundListOperation listOperation:
                         if (!GenericTypes.TryParse(listOperation.ReceiverType, out var receiverShape) || receiverShape.Arguments.Count != 1)
                             throw new InvalidOperationException("Invalid bound list operation receiver type.");
