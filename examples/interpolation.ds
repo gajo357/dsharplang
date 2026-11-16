@@ -1,0 +1,9 @@
+module Demo
+
+fn greet(name: string, items: int): string {
+    $"Hello, {name}! You have {items} items."
+}
+
+fn answer(): string {
+    greet("Ada", 42)
+}
