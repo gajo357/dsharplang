@@ -144,6 +144,7 @@ public sealed record BoundTuple(IReadOnlyList<BoundExpression> Elements, string 
 public sealed record BoundTupleItem(BoundExpression Tuple, int Index) : BoundExpression;
 public sealed record BoundList(IReadOnlyList<BoundExpression> Elements, string Type) : BoundExpression;
 public sealed record BoundListOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
+public sealed record BoundCollectionMethodPartial(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<string> ParameterTypes, string ReturnType, string Type) : BoundExpression;
 public sealed record BoundListFoldPartial(BoundExpression Receiver, string ReceiverType, BoundExpression Initial, string AccumulatorType, string ElementType, string Type) : BoundExpression;
 public sealed record BoundMapSetFactory(string Type, string Operation, IReadOnlyList<BoundExpression> Arguments) : BoundExpression;
 public sealed record BoundMapSetOperation(BoundExpression Receiver, string ReceiverType, string Operation, IReadOnlyList<BoundExpression> Arguments, string Type) : BoundExpression;
@@ -3369,6 +3370,7 @@ public static class Binder
                 BoundFor => "Unit",
                 BoundUsing owned => owned.Type,
                 BoundListOperation list => list.Type,
+                BoundCollectionMethodPartial collection => collection.Type,
                 BoundMapSetFactory collection => collection.Type,
                 BoundMapSetOperation collection => collection.Type,
                 BoundMapSetPartial collection => collection.Type,
@@ -3577,7 +3579,7 @@ public static class Binder
                     argumentsBound.Add(BindPattern(arguments[i], Substitute(unionCase.PayloadTypes[i].Text, substitutions!, unionCase.PayloadTypes[i]), introduced));
                 return new BoundCasePattern(expected, unionCase.Name.Text, argumentsBound);
             }
-            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null, string? pipeOutputType = null)
+            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null, string? pipeOutputType = null, bool pipeNullInput = false)
             {
                 switch (expression)
                 {
@@ -4210,7 +4212,7 @@ public static class Binder
                             literalCondition == false && elseBlock.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
-                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType, pipeOutputType);
+                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType, pipeOutputType, pipeNullInput);
                     case CoalesceSyntax coalesce:
                         var nullableLeft = BindExpression(coalesce.Left);
                         var savedCoalesceReachable = inferenceReachable;
@@ -4735,6 +4737,59 @@ public static class Binder
                         }
                         if (listReceiverType is not null && member.TypeArguments.Count == 0)
                         {
+                            // Monomorphic collection methods with required parameters
+                            // can be captured with an empty positional prefix. Keep
+                            // zero-arity members and polymorphic map/fold out of this
+                            // initial slice.
+                            (string[] Parameters, string Result, string Type)? EmptyCollectionPartial()
+                            {
+                                if (member.Arguments.Count != 0 || !GenericTypes.TryParse(listReceiverType, out var shape) || shape.IsNullable)
+                                    return null;
+                                string[]? parameters = null;
+                                string? result = null;
+                                if (shape.Name == listSymbol && shape.Arguments.Count == 1)
+                                {
+                                    var element = shape.Arguments[0].ToString();
+                                    switch (member.Member.Text)
+                                    {
+                                        case "append": parameters = new[] { element }; result = listReceiverType; break;
+                                        case "get": parameters = new[] { "int" }; result = optionSymbol + "<" + element + ">"; break;
+                                        case "filter": parameters = new[] { TypeShape.FunctionName + "<" + element + ",bool>" }; result = listReceiverType; break;
+                                    }
+                                }
+                                else if (shape.Name == mapSymbol && shape.Arguments.Count == 2)
+                                {
+                                    var key = shape.Arguments[0].ToString();
+                                    var value = shape.Arguments[1].ToString();
+                                    switch (member.Member.Text)
+                                    {
+                                        case "get": parameters = new[] { key }; result = optionSymbol + "<" + value + ">"; break;
+                                        case "contains": parameters = new[] { key }; result = "bool"; break;
+                                        case "set": parameters = new[] { key, value }; result = listReceiverType; break;
+                                    }
+                                }
+                                else if (shape.Name == setSymbol && shape.Arguments.Count == 1)
+                                {
+                                    var element = shape.Arguments[0].ToString();
+                                    switch (member.Member.Text)
+                                    {
+                                        case "contains": parameters = new[] { element }; result = "bool"; break;
+                                        case "add": parameters = new[] { element }; result = listReceiverType; break;
+                                    }
+                                }
+                                if (parameters is null || result is null) return null;
+                                var function = TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(result)) + ">";
+                                return (parameters, result, function);
+                            }
+                            var emptyCollectionPartial = EmptyCollectionPartial();
+                            bool PipeCompatibleCallable(string callable)
+                            {
+                                if (pipeInputType is null && !pipeNullInput || !GenericTypes.TryParse(callable, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2 ||
+                                    !Convertible(pipeInputType ?? "<null>", shape.Arguments[0].ToString())) return false;
+                                var output = shape.Arguments.Count == 2 ? shape.Arguments[1].ToString() :
+                                    TypeShape.FunctionName + "<" + string.Join(",", shape.Arguments.Skip(1)) + ">";
+                                return pipeOutputType is null || !SupportedType(pipeOutputType, activeTypeParameters) || Convertible(output, pipeOutputType);
+                            }
                             string ExtensionPartialType(FunctionSyntax extension) => TypeShape.FunctionName + "<" + string.Join(",",
                                 extension.Parameters.Skip(member.Arguments.Count + 1).Select(p => p.Type.Text).Append(CallableResult(extension))) + ">";
                             var availableExtensions = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
@@ -4744,6 +4799,13 @@ public static class Binder
                             if (availableExtensions.Length > 0 && !RealMemberApplicable())
                             {
                                 var applicable = availableExtensions.Where(extension => ExactArguments(signatures[extension.Id].Parameters.Skip(1).Select(p => p.Type.Text).ToArray())).ToArray();
+                                // Previously accepted saturated extensions keep
+                                // winning unless a callable context uniquely fits
+                                // the new intrinsic partial and not their result.
+                                if (emptyCollectionPartial is { } intrinsic && expectedResult == intrinsic.Type)
+                                    applicable = applicable.Where(extension => CallableResult(signatures[extension.Id]) == expectedResult).ToArray();
+                                if (emptyCollectionPartial is { } pipedIntrinsic && PipeCompatibleCallable(pipedIntrinsic.Type))
+                                    applicable = applicable.Where(extension => PipeCompatibleCallable(CallableResult(signatures[extension.Id]))).ToArray();
                                 // A contextual callable can make a previously
                                 // invalid exact-arity result yield to a longer
                                 // overload. Preserve all already valid full calls.
@@ -4793,6 +4855,13 @@ public static class Binder
                                     return (new BoundCall(extension.Id, new[] { listReceiver.Expression }.Concat(extensionArguments.Values).ToArray()) { Location = member.Member },
                                         listReceiver.Type == "<never>" || extensionArguments.Never ? "<never>" : CallableResult(extensionTarget));
                                 }
+                            }
+                            if (emptyCollectionPartial is { } emptyPartial)
+                            {
+                                if (member.Member.Text == "get") optionUsed = true;
+                                return (new BoundCollectionMethodPartial(listReceiver.Expression, listReceiverType, member.Member.Text,
+                                    emptyPartial.Parameters, emptyPartial.Result, emptyPartial.Type),
+                                    listReceiver.Type == "<never>" ? "<never>" : emptyPartial.Type);
                             }
                             // Fully supplied extension calls above retain their
                             // existing precedence. For a nonempty prefix, keep
@@ -5485,6 +5554,7 @@ public static class Binder
                 var savedReachable = inferenceReachable;
                 string? pipeProbeType = null;
                 string? pipeReceiverHint = null;
+                var pipeNullInput = false;
                 try
                 {
                     inferenceReachable = false;
@@ -5492,6 +5562,7 @@ public static class Binder
                     {
                         var leftProbe = BindExpression(pipe.Left);
                         pipeProbeType = leftProbe.Type == "<never>" ? KnownType(leftProbe.Expression) : leftProbe.Type;
+                        pipeNullInput = pipeProbeType == "<null>";
                         if (pipeProbeType is "<null>" or "<never>") pipeProbeType = null;
                     }
                     catch (SourceError) { /* The target may provide the required context. */ }
@@ -5504,7 +5575,7 @@ public static class Binder
                         else if (remaining > 1 && GenericTypes.TryParse(expectedResult, out var rest) && rest.IsFunction && rest.Arguments.Count == remaining)
                             pipeReceiverHint = TypeShape.FunctionName + "<" + pipeProbeType + "," + string.Join(",", rest.Arguments) + ">";
                     }
-                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType, expectedResult); }
+                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType, expectedResult, pipeNullInput); }
                     catch (SourceError error) when (target is LambdaSyntax && error.Diagnostic.Code == "DS2026") { }
                 }
                 finally { inferenceReachable = savedReachable; }
@@ -5551,7 +5622,7 @@ public static class Binder
                 }
                 inferenceReachable = savedReachable && value.Type != "<never>";
                 (BoundExpression Expression, string Type) receiver;
-                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType, expectedResult); }
+                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType, expectedResult, pipeNullInput); }
                 finally { inferenceReachable = savedReachable; }
                 var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
                 if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2)
@@ -6844,6 +6915,24 @@ public static class CSharpEmitter
                         var builderReceiver = EmitExpression(builder.Receiver);
                         var builderArguments = builder.Arguments.Select(EmitExpression).ToArray();
                         return "(" + builderReceiver + ").__dsharp_" + builder.Operation + "(" + string.Join(", ", builderArguments) + ")";
+                    case BoundCollectionMethodPartial collectionPartial:
+                        // Bind the immutable receiver once. The intrinsic method
+                        // itself must not run until its arguments are supplied.
+                        var collectionPartialId = (listCount++).ToString(CultureInfo.InvariantCulture);
+                        var collectionPartialHelper = "__dsharp_collection_partial_" + collectionPartialId;
+                        var collectionPartialReceiver = "__dsharp_collection_partial_receiver_" + collectionPartialId;
+                        var collectionPartialArguments = collectionPartial.ParameterTypes.Select((_, i) =>
+                            "__dsharp_collection_partial_argument_" + collectionPartialId + "_" + i.ToString(CultureInfo.InvariantCulture)).ToArray();
+                        output.Append("            ").Append(HelperResult(collectionPartial.Type, collectionPartial)).Append(" ")
+                            .Append(collectionPartialHelper).Append(HelperBody(collectionPartial));
+                        var collectionPartialSource = EmitExpression(collectionPartial.Receiver);
+                        output.Append("            ").Append(CType(collectionPartial.ReceiverType)).Append(" ")
+                            .Append(collectionPartialReceiver).Append(" = ").Append(collectionPartialSource).Append(";\n")
+                            .Append("            return ((").Append(CType(collectionPartial.Type)).Append(")((")
+                            .Append(string.Join(", ", collectionPartialArguments)).Append(") => ")
+                            .Append(collectionPartialReceiver).Append(".__dsharp_").Append(collectionPartial.Operation)
+                            .Append("(").Append(string.Join(", ", collectionPartialArguments)).Append(")));\n            }\n");
+                        return HelperCall(collectionPartialHelper, collectionPartial);
                     case BoundListFoldPartial foldPartial:
                         // Capture in source order. The callback and iteration run
                         // only when the returned function is invoked.

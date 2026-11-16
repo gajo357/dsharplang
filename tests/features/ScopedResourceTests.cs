@@ -295,6 +295,7 @@ public sealed class ScopedResourceTests
         await new MapPartialAcceptanceTests().MapPartialsCaptureAndExecute();
         await new ListFoldPartialAcceptanceTests().FoldPartialsCaptureAndExecute();
         await new PartialInferenceAcceptanceTests().StaticPartialCallsInferAndIndirectCallsRemainChecked();
+        await new EmptyCollectionPartialAcceptanceTests().EmptyCollectionPartialsExecuteAndRejectInvalidPrograms();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
