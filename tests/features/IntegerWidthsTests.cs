@@ -6,8 +6,8 @@ using Xunit;
 
 namespace DSharp.Tests;
 
-// A single short-named test keeps the repository's bounded TRX report small.
-public sealed class I
+// Run from the existing resource feature Fact to keep the bounded TRX report stable.
+public sealed class IntegerWidthsTests
 {
     private sealed record Width(string Name, string Max, string MinExpression, object Zero, object One, object Two,
         object Maximum, object Minimum, object? MinusOne);
@@ -24,8 +24,7 @@ public sealed class I
         new("ulong", "18446744073709551615", "0", 0UL, 1UL, 2UL, ulong.MaxValue, ulong.MinValue, null),
     ];
 
-    [Fact(DisplayName = "I")]
-    public async Task T()
+    public async Task IntegerWidthsExecuteAndRejectInvalidPrograms()
     {
         var pieces = new List<string> { "module Demo" };
         for (var i = 0; i < Widths.Length; i++)
