@@ -14,7 +14,7 @@ Support `?.` with fully supplied synchronous immutable-value method calls, using
 1. Extend syntax and module resolution to preserve conditional-call receiver, type arguments, arguments and visible extension candidates.
 2. Reuse checked member-call resolution for the non-null receiver; conservatively analyze dependencies and control flow; enforce immutable receiver/result and full synchronous invocation.
 3. Lower via the existing nullable representation, ensuring receiver is evaluated once and all arguments/calls occur only on the present path. Preserve generic and idempotent nullable substitution and early-exit boundaries.
-4. Add new feature tests and runnable D# example. Update implementation status and this plan; keep trusted verification and existing tests unchanged.
+4. Add new feature tests and runnable D# example. Update implementation status and this plan; keep trusted verification and existing test assertions unchanged.
 
 ## Acceptance-to-test map
 
@@ -26,7 +26,7 @@ Support `?.` with fully supplied synchronous immutable-value method calls, using
 ## Verification
 
 - `bash .github/ai/bootstrap.sh`: passed.
-- `bash scripts/verify-compiler.sh`: passed (18 compiler and 378 feature tests).
+- `bash scripts/verify-compiler.sh`: passed initially (18 compiler and 378 feature tests). The GitHub runner then exceeded the existing test-report size cap despite every test passing. The new suite now runs through the established feature aggregate to keep the report bounded; existing assertions and trusted verification are unchanged. The full rerun passed (18 compiler and 377 feature tests, including the aggregated conditional-call suite).
 - `bash .github/ai/verify.sh`: documentation and all 25 automation tests passed; the isolated compiler stage could not pull the pinned SDK image locally because the registry returned `Forbidden`. GitHub CI runs this stage.
 - Focused execution tests passed with generated C# built as warnings-as-errors, including lazy argument evaluation, early return, Result propagation, await suspension, null and Option distinctions, generics, imports, precedence and rejected calls.
 - The D# example checked and compiled without warnings; its generated `Demo.answer()` returned `Ada`.

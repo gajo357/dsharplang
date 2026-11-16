@@ -298,6 +298,7 @@ public sealed class ScopedResourceTests
         await new EmptyCollectionPartialAcceptanceTests().EmptyCollectionPartialsExecuteAndRejectInvalidPrograms();
         await new GenericListEmptyPartialAcceptanceTests().GenericListEmptyPartialsExecuteAndRejectInvalidPrograms();
         await new EmptyCollectionInferenceAcceptanceTests().EmptyCollectionPartialCallsInferSafely();
+        await new ConditionalCallTests().ConditionalCallsPreserveNullAndEvaluationOrder();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

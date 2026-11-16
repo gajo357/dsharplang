@@ -5,10 +5,11 @@ using System.Runtime.Loader;
 using DSharp.Compiler;
 using Xunit;
 
-public sealed class A
+namespace DSharp.Tests;
+
+public sealed class ConditionalCallTests
 {
-    [Fact(DisplayName = "x")]
-    public async Task B()
+    public async Task ConditionalCallsPreserveNullAndEvaluationOrder()
     {
         const string source = """
             module Demo
