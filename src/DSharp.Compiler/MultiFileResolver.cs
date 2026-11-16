@@ -320,6 +320,8 @@ internal static class MultiFileResolver
                         if (qualifiedRecord is null) Fail(record.Name, "DS2030", "Unknown record type in imported module.");
                         return new RecordConstructionSyntax(Rename(record.Name, qualifiedRecord!.Internal), record.Fields.Select(f => f with { Value = Expression(f.Value, scope, typeParameters) }).ToArray());
                     case GroupSyntax group: return group with { Inner = Expression(group.Inner, scope, typeParameters) };
+                    case InterpolationSyntax interpolation:
+                        return interpolation with { Holes = interpolation.Holes.Select(hole => Expression(hole, scope, typeParameters)).ToArray() };
                     case TupleSyntax tuple: return tuple with { Elements = tuple.Elements.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case ListSyntax list: return list with { Elements = list.Elements.Select(a => Expression(a, scope, typeParameters)).ToArray() };
                     case InvokeSyntax invocation: return invocation with { Receiver = Expression(invocation.Receiver, scope, typeParameters), Arguments = invocation.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray() };

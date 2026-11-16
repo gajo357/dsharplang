@@ -290,6 +290,7 @@ public sealed class ScopedResourceTests
         await new OwnedResultResourceTests().OwnedResultsTransferAndRejectEscapes();
         await new ExtensionAcceptanceTests().ExtensionsResolveAndExecute();
         await new IntegerWidthsTests().IntegerWidthsExecuteAndRejectInvalidPrograms();
+        await new InterpolationAcceptanceTests().InterpolatedStringsExecuteAndRejectInvalidPrograms();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

@@ -33,6 +33,7 @@ external interoperability guarantee follows from this lowering. See the
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
+| Scalar string interpolation | `$"...{expression}..."`, ordinary escapes and `{{` / `}}`; non-nullable string, char, bool, Unit and integer values | Expressions evaluate once from left to right; scalar formatting is invariant, including across async and early-exit paths |
 | Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
 | Immutable records | Named construction, public fields, nested records, copy updates, structural equality and source diagnostics | Copies preserve the original; field expressions evaluate in source order |
 | Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
@@ -139,8 +140,19 @@ See [the example](../../examples/if-scopes.ds) and
 UTF-16 `string` and `char` values, quoted literals and basic escapes. A `char`
 is exactly one UTF-16 code unit; malformed literals and unsupported escapes are
 rejected. String equality is ordinal. See [the example](../../examples/text-literals.ds)
-and [implementation plan](implementation/issue-23-plan.md). Interpolation,
-raw/multiline strings and concatenation remain unsupported.
+and [implementation plan](implementation/issue-23-plan.md). Raw/multiline strings
+and general concatenation remain unsupported.
+[Issue #50](https://github.com/gajo357/dsharplang/issues/50) adds a scalar
+interpolation slice. Embedded expressions in `$"...{expression}..."` are checked
+and evaluated once, left to right; `{{` and `}}` insert literal braces, and
+ordinary string escapes apply. Strings and characters insert their text, booleans
+render as `true` or `false`, Unit as `()`, and `sbyte`, `byte`, `short`, `ushort`,
+`int`, `uint`, `long` and `ulong` use invariant decimal formatting. Nullable and
+composite values and unsupported numeric types such as `float32`, `float` and
+`decimal` cannot yet be interpolated; formatting rules for those values are not
+claimed by this slice, and #50 remains open. See the
+[D# example](../../examples/interpolation.ds) and
+[implementation plan](implementation/issue-50-plan.md).
 [Issue #24](https://github.com/gajo357/dsharplang/issues/24) adds the distinct
 `Unit` value `()`, empty Unit blocks, Unit-valued statements and explicit
 `return`. An `if` without `else` is permitted only when its completing branch

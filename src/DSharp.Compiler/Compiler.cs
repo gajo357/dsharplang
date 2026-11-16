@@ -51,6 +51,7 @@ public sealed record GroupSyntax(Token Open, ExpressionSyntax Inner) : Expressio
 public sealed record TupleSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ListSyntax(Token Open, IReadOnlyList<ExpressionSyntax> Elements) : ExpressionSyntax(Open);
 public sealed record ValueSyntax(Token Value) : ExpressionSyntax(Value);
+public sealed record InterpolationSyntax(Token Start, IReadOnlyList<Token> Texts, IReadOnlyList<ExpressionSyntax> Holes) : ExpressionSyntax(Start);
 public sealed record LambdaParameterSyntax(Token Name, Token? Type);
 public sealed record LambdaSyntax(Token Start, IReadOnlyList<LambdaParameterSyntax> Parameters, BlockSyntax Body) : ExpressionSyntax(Start)
 {
@@ -171,6 +172,10 @@ public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundInteger(ulong Magnitude, string Type) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
+public abstract record BoundInterpolationPart;
+public sealed record BoundInterpolationText(string Value) : BoundInterpolationPart;
+public sealed record BoundInterpolationHole(BoundExpression Value, string Type) : BoundInterpolationPart;
+public sealed record BoundInterpolation(IReadOnlyList<BoundInterpolationPart> Parts) : BoundExpression;
 public sealed record BoundReference(string Name) : BoundExpression;
 public sealed record BoundCapture(string Name, string Type);
 public sealed record BoundLambda(IReadOnlyList<string> Parameters, IReadOnlyList<string> ParameterTypes, string Type, string ReturnType, BoundBlock Body, bool HasReturn) : BoundExpression
@@ -357,6 +362,116 @@ internal static class IntegerLiterals
     }
 }
 
+// Scan an interpolation as one lexical token while still recognizing nested
+// expressions, comments and interpolated strings inside its holes. Offsets are
+// relative to the supplied source; OriginSpan maps them back to the real file.
+internal static class InterpolationScanner
+{
+    internal readonly record struct Part(int TextStart, int TextEnd, int HoleStart, int HoleEnd);
+    internal readonly record struct ScanResult(int End, IReadOnlyList<Part> Parts);
+
+    internal static SourceSpan OriginSpan(string source, int offset, int length, int originStart, int originLine, int originColumn)
+    {
+        var line = originLine; var column = originColumn;
+        for (var i = 0; i < offset; i++)
+        {
+            if (source[i] == '\n' || (source[i] == '\r' && (i + 1 == source.Length || source[i + 1] != '\n'))) { line++; column = 1; }
+            else column++;
+        }
+        return new(originStart + offset, length, line, column);
+    }
+
+    internal static ScanResult Scan(string source, int start, string path, int originStart, int originLine, int originColumn)
+    {
+        SourceError Error(int at, string message) => new(new("DS1001", path,
+            OriginSpan(source, at, at < source.Length ? 1 : 0, originStart, originLine, originColumn), message));
+
+        int Quoted(int cursor)
+        {
+            var quote = source[cursor++];
+            while (cursor < source.Length)
+            {
+                if (source[cursor] == quote) return cursor + 1;
+                if (source[cursor] is '\r' or '\n') throw Error(cursor, "Text literals cannot span lines.");
+                if (source[cursor] == '\\')
+                {
+                    cursor++;
+                    if (cursor >= source.Length || source[cursor] is '\r' or '\n') throw Error(cursor, "Unterminated text escape.");
+                }
+                cursor++;
+            }
+            throw Error(cursor, "Unterminated text literal in interpolation.");
+        }
+
+        ScanResult Interpolated(int begin)
+        {
+            var parts = new List<Part>();
+            var cursor = begin + 2;
+            var textStart = cursor;
+            while (cursor < source.Length)
+            {
+                var c = source[cursor];
+                if (c == '"')
+                {
+                    parts.Add(new(textStart, cursor, -1, -1));
+                    return new(cursor + 1, parts);
+                }
+                if (c is '\r' or '\n') throw Error(cursor, "Text literals cannot span lines.");
+                if (c == '\\')
+                {
+                    cursor++;
+                    if (cursor >= source.Length || source[cursor] is '\r' or '\n') throw Error(cursor, "Unterminated text escape.");
+                    cursor++; continue;
+                }
+                if (c == '}' && cursor + 1 < source.Length && source[cursor + 1] == '}') { cursor += 2; continue; }
+                if (c == '}') throw Error(cursor, "A literal '}' in an interpolated string must be escaped as '}}'.");
+                if (c != '{') { cursor++; continue; }
+                if (cursor + 1 < source.Length && source[cursor + 1] == '{') { cursor += 2; continue; }
+                var textEnd = cursor;
+                var holeStart = ++cursor;
+                var depth = 0;
+                while (cursor < source.Length)
+                {
+                    c = source[cursor];
+                    if (c == '$' && cursor + 1 < source.Length && source[cursor + 1] == '"')
+                    { cursor = Interpolated(cursor).End; continue; }
+                    if (c is '"' or '\'') { cursor = Quoted(cursor); continue; }
+                    if (c == '/' && cursor + 1 < source.Length && source[cursor + 1] == '/')
+                    {
+                        cursor += 2;
+                        while (cursor < source.Length && source[cursor] is not ('\r' or '\n')) cursor++;
+                        continue;
+                    }
+                    if (c == '/' && cursor + 1 < source.Length && source[cursor + 1] == '*')
+                    {
+                        var comment = cursor; cursor += 2;
+                        while (cursor < source.Length && !(source[cursor] == '*' && cursor + 1 < source.Length && source[cursor + 1] == '/'))
+                        {
+                            if (source[cursor] == '/' && cursor + 1 < source.Length && source[cursor + 1] == '*')
+                                throw Error(cursor, "Nested block comments are not supported.");
+                            cursor++;
+                        }
+                        if (cursor == source.Length) throw Error(comment, "Unterminated block comment in interpolation.");
+                        cursor += 2; continue;
+                    }
+                    if (c == '{') { depth++; cursor++; continue; }
+                    if (c == '}')
+                    {
+                        if (depth == 0) break;
+                        depth--; cursor++; continue;
+                    }
+                    cursor++;
+                }
+                if (cursor == source.Length) throw Error(cursor, "Unterminated interpolation expression.");
+                parts.Add(new(textStart, textEnd, holeStart, cursor));
+                textStart = ++cursor;
+            }
+            throw Error(cursor, "Unterminated interpolated string.");
+        }
+        return Interpolated(start);
+    }
+}
+
 public static class Lexer
 {
     public static IReadOnlyList<Token> Lex(string source, string path = "<source>")
@@ -409,7 +524,13 @@ public static class Lexer
             }
             int start = i, startLine = line, startColumn = column;
             char c = source[i];
-            if (c is '\"' or '\'')
+            if (c == '$' && i + 1 < source.Length && source[i + 1] == '\"')
+            {
+                var scanned = InterpolationScanner.Scan(source, start, path, 0, 1, 1);
+                var end = scanned.End;
+                while (i < end) Advance();
+            }
+            else if (c is '\"' or '\'')
             {
                 var quote = c; Advance();
                 while (i < source.Length && source[i] != quote)
@@ -470,6 +591,43 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong")
             throw new SourceError(new("DS1002", path, name.Span, "A built-in integer type name cannot be declared as a type or type parameter."));
         return name;
+    }
+    private InterpolationSyntax Interpolation()
+    {
+        var start = Take();
+        var source = start.Text;
+        var originPath = start.OriginPath ?? path;
+        var scan = InterpolationScanner.Scan(source, 0, originPath, start.Span.Start, start.Span.Line, start.Span.Column);
+        var texts = new List<Token>();
+        var holes = new List<ExpressionSyntax>();
+        foreach (var part in scan.Parts)
+        {
+            var literal = source[part.TextStart..part.TextEnd].Replace("{{", "{", StringComparison.Ordinal).Replace("}}", "}", StringComparison.Ordinal);
+            var span = InterpolationScanner.OriginSpan(source, part.TextStart, part.TextEnd - part.TextStart,
+                start.Span.Start, start.Span.Line, start.Span.Column);
+            texts.Add(new Token("\"" + literal + "\"", span) { OriginPath = originPath });
+            if (part.HoleStart < 0) continue;
+            var holeSource = source[part.HoleStart..part.HoleEnd];
+            IReadOnlyList<Token> holeTokens;
+            try { holeTokens = Lexer.Lex(holeSource, originPath); }
+            catch (SourceError error)
+            {
+                var diagnostic = error.Diagnostic;
+                throw new SourceError(diagnostic with { Span = InterpolationScanner.OriginSpan(source,
+                    part.HoleStart + diagnostic.Span.Start, diagnostic.Span.Length,
+                    start.Span.Start, start.Span.Line, start.Span.Column) });
+            }
+            var mapped = holeTokens.Select(token => token with
+            {
+                Span = InterpolationScanner.OriginSpan(source, part.HoleStart + token.Span.Start,
+                    token.Span.Length, start.Span.Start, start.Span.Line, start.Span.Column), OriginPath = originPath
+            }).ToArray();
+            var parser = new Parser(mapped, originPath);
+            var expression = parser.Expression();
+            if (parser.Current.Text != "") throw parser.Error("Expected the end of the interpolation expression.");
+            holes.Add(expression);
+        }
+        return new InterpolationSyntax(start, texts, holes);
     }
     private static bool TypeName(string text) => text.Length > 0 &&
         (char.IsAsciiLetter(text[0]) || text[0] == '_') &&
@@ -769,6 +927,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             var keyword = Take();
             left = new AwaitSyntax(keyword, Expression(line is null ? null : Current.Span.Line, 8, stopAtBlock, stopAtMatchArrow));
         }
+        else if (Current.Text.StartsWith("$\"", StringComparison.Ordinal))
+            left = Interpolation();
         else if (Current.Text == "[")
         {
             var open = Take();
@@ -2086,6 +2246,7 @@ public static class Binder
                 GroupSyntax group => NeverExpression(group.Inner),
                 TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                 ListSyntax list => list.Elements.Any(NeverExpression),
+                InterpolationSyntax interpolation => interpolation.Holes.Any(NeverExpression),
                 ForSyntax loop => NeverExpression(loop.Source),
                 UsingSyntax owned => NeverExpression(owned.Acquisition) || NeverBlock(owned.Body),
                 AwaitSyntax awaited => NeverExpression(awaited.Operand),
@@ -2329,6 +2490,13 @@ public static class Binder
                         {
                             Expression(element, names);
                             if (!includeUnreachable && NeverExpression(element)) break;
+                        }
+                        break;
+                    case InterpolationSyntax interpolation:
+                        foreach (var hole in interpolation.Holes)
+                        {
+                            Expression(hole, names);
+                            if (!includeUnreachable && NeverExpression(hole)) break;
                         }
                         break;
                     case UnarySyntax unary: Expression(unary.Operand, names); break;
@@ -2676,6 +2844,7 @@ public static class Binder
                     GroupSyntax group => NeverExpression(group.Inner),
                     TupleSyntax tuple => tuple.Elements.Any(NeverExpression),
                     ListSyntax list => list.Elements.Any(NeverExpression),
+                    InterpolationSyntax interpolation => interpolation.Holes.Any(NeverExpression),
                     ForSyntax loop => NeverExpression(loop.Source),
                     UsingSyntax owned => NeverExpression(owned.Acquisition) || NeverBlock(owned.Body),
                     AwaitSyntax awaited => NeverExpression(awaited.Operand),
@@ -3020,6 +3189,7 @@ public static class Binder
             {
                 BoundTuple tuple => tuple.Type,
                 BoundList list => list.Type,
+                BoundInterpolation => "string",
                 BoundFor => "Unit",
                 BoundUsing owned => owned.Type,
                 BoundListOperation list => list.Type,
@@ -3235,6 +3405,38 @@ public static class Binder
                 {
                     case UnitSyntax: return (new BoundUnit(), "Unit");
                     case NullSyntax: return (new BoundNull("<null>"), "<null>");
+                    case InterpolationSyntax interpolation:
+                    {
+                        var parts = new List<BoundInterpolationPart>();
+                        var entryReachable = inferenceReachable;
+                        var never = false;
+                        try
+                        {
+                            for (var i = 0; i < interpolation.Holes.Count; i++)
+                            {
+                                var text = interpolation.Texts[i];
+                                parts.Add(new BoundInterpolationText(DecodeText(text, text.OriginPath ?? path)));
+                                inferenceReachable = entryReachable && !never;
+                                var hole = interpolation.Holes[i];
+                                var bound = BindExpression(hole);
+                                if (bound.Type == "<never>")
+                                {
+                                    parts.Add(new BoundInterpolationHole(Coerce(bound.Expression, "string", bound.Type), "string"));
+                                    never = true;
+                                }
+                                else
+                                {
+                                    if (!(IntegerType(bound.Type) || bound.Type is "string" or "char" or "bool" or "Unit"))
+                                        Fail("DS2026", hole.Token, "Interpolation requires a supported non-nullable scalar value.");
+                                    parts.Add(new BoundInterpolationHole(bound.Expression, bound.Type));
+                                }
+                            }
+                            var final = interpolation.Texts[^1];
+                            parts.Add(new BoundInterpolationText(DecodeText(final, final.OriginPath ?? path)));
+                        }
+                        finally { inferenceReachable = entryReachable; }
+                        return (new BoundInterpolation(parts), never ? "<never>" : "string");
+                    }
                     case ListSyntax list:
                     {
                         listUsed = true;
@@ -4847,6 +5049,7 @@ public static class Binder
                     GroupSyntax group => Never(group.Inner),
                     TupleSyntax tuple => tuple.Elements.Any(Never),
                     ListSyntax list => list.Elements.Any(Never),
+                    InterpolationSyntax interpolation => interpolation.Holes.Any(Never),
                     ForSyntax loop => Never(loop.Source),
                     UsingSyntax owned => Never(owned.Acquisition) || NeverBlock(owned.Body),
                     AwaitSyntax awaited => Never(awaited.Operand),
@@ -6113,6 +6316,7 @@ public static class CSharpEmitter
             var forCount = 0;
             var usingCount = 0;
             var integerHelperCount = 0;
+            var interpolationCount = 0;
             var emitterReturnType = function.ReturnType;
             string PatternItem(BoundCasePattern pattern, int item, string value)
             {
@@ -6179,6 +6383,47 @@ public static class CSharpEmitter
                 {
                     case BoundUnit: return "default(" + unitType + ")";
                     case BoundAwait awaited: return "(await (" + EmitExpression(awaited.Operand) + "))";
+                    case BoundInterpolation interpolation:
+                        // Emit each hole into a typed local and format it before
+                        // lowering the next hole. EmitExpression may itself add
+                        // statements, so merely concatenating returned strings
+                        // would allow later setup to run before earlier calls.
+                        var interpolationId = (interpolationCount++).ToString(CultureInfo.InvariantCulture);
+                        var interpolationHelper = "__dsharp_interpolation_" + interpolationId;
+                        output.Append("            ").Append(HelperResult("string", interpolation)).Append(" ")
+                            .Append(interpolationHelper).Append(HelperBody(interpolation));
+                        var interpolationParts = new List<string>();
+                        foreach (var part in interpolation.Parts)
+                        {
+                            if (part is BoundInterpolationText interpolationText)
+                            {
+                                interpolationParts.Add("new string(new char[] { " + string.Join(", ", interpolationText.Value.Select(c => "(char)0x" + ((int)c).ToString("X4", CultureInfo.InvariantCulture))) + " })");
+                                continue;
+                            }
+                            var hole = (BoundInterpolationHole)part;
+                            var holeId = interpolationParts.Count.ToString(CultureInfo.InvariantCulture);
+                            var holeValue = "__dsharp_interpolation_value_" + interpolationId + "_" + holeId;
+                            var holeText = "__dsharp_interpolation_text_" + interpolationId + "_" + holeId;
+                            var holeExpression = EmitExpression(hole.Value);
+                            output.Append("            ").Append(CType(hole.Type)).Append(" ").Append(holeValue)
+                                .Append(" = ").Append(holeExpression).Append(";\n");
+                            var formatted = hole.Type switch
+                            {
+                                "string" => holeValue,
+                                "char" => "new string(" + holeValue + ", 1)",
+                                "bool" => "(" + holeValue + " ? \"true\" : \"false\")",
+                                "Unit" => "\"()\"",
+                                "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" =>
+                                    holeValue + ".ToString(global::System.Globalization.CultureInfo.InvariantCulture)",
+                                _ => throw new InvalidOperationException("Unsupported bound interpolation type.")
+                            };
+                            if (hole.Type == "Unit") output.Append("            _ = ").Append(holeValue).Append(";\n");
+                            output.Append("            string ").Append(holeText).Append(" = ").Append(formatted).Append(";\n");
+                            interpolationParts.Add(holeText);
+                        }
+                        output.Append("            return global::System.String.Concat(new string[] { ")
+                            .Append(string.Join(", ", interpolationParts)).Append(" });\n            }\n");
+                        return HelperCall(interpolationHelper, interpolation);
                     case BoundTuple tuple: return "(" + string.Join(", ", tuple.Elements.Select(EmitExpression)) + ")";
                     case BoundTupleItem item: return "(" + EmitExpression(item.Tuple) + ").Item" + (item.Index + 1).ToString(CultureInfo.InvariantCulture);
                     case BoundList list:
