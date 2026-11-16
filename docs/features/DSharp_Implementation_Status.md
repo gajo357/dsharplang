@@ -48,6 +48,7 @@ external interoperability guarantee follows from this lowering. See the
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
+| Extension partial application | A unique visible extension on immutable data accepts a nonempty positional prefix with arguments remaining | Receiver and prefix are captured once in order; grouped calls, pipes and async calls invoke the body only when saturated |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
@@ -368,8 +369,8 @@ supported. See [the example](../../examples/pipes-inference.ds) and
 [Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
 partial application of ordinary functions and function values. Supplied values
 and dynamic receivers are evaluated once when a partial is formed; calls run
-only when saturated. Pipes can supply the first remaining parameter. Async and
-service/interface/extension integrations remain tracked by #129. See the
+only when saturated. Pipes can supply the first remaining parameter. Further async
+and service/interface/extension integrations remain tracked by #129. See the
 [implementation plan](implementation/issue-135-plan.md).
 [Issue #136](https://github.com/gajo357/dsharplang/issues/136) adds synchronous
 callback-first Result helpers through the standard prelude. They use ordinary
@@ -399,10 +400,23 @@ real member wins; otherwise a unique extension with an exact receiver and
 argument match is required, and ambiguity reports the candidate origins. The
 receiver is evaluated once before the arguments. Extension targets cannot be
 builders or resources, and existing capability and ownership restrictions apply.
-Extensions cannot introduce fields or inheritance, and generic extension methods,
-extension method values and partial application remain separate work. See the
+Extensions cannot introduce fields or inheritance; generic extension methods
+and bare extension method values remain separate work. See the
 [D# example](../../examples/extensions.ds) and
 [implementation plan](implementation/issue-47-plan.md).
+[Issue #179](https://github.com/gajo357/dsharplang/issues/179) adds partial
+application of a unique visible extension on an immutable-data receiver when at
+least one positional argument is supplied and others remain. The receiver and
+prefix are evaluated once, in order, at construction; the body runs on each
+completed call. Expected callable types and pipes can resolve supported
+overloads, direct-import visibility and applicable real-member precedence are
+preserved, and async calls return tasks without starting the body early.
+Capabilities, resources and builders cannot be captured. Bare method values,
+empty-prefix extension calls and service/interface method partials remain
+separate work. A function piping into an extension partial whose name overlaps
+a built-in member (such as `add`, `get` or `fold`) may require an explicit
+return type. See the [D# example](../../examples/extension_partials.ds) and
+[implementation plan](implementation/issue-179-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
