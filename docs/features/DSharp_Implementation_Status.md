@@ -49,6 +49,7 @@ external interoperability guarantee follows from this lowering. See the
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions with a uniquely checked result | Pipes evaluate their left value once before a dynamic target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
 | Extension partial application | A unique visible extension on immutable data accepts a nonempty positional prefix with arguments remaining | Receiver and prefix are captured once in order; grouped calls, pipes and async calls invoke the body only when saturated |
+| Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
@@ -247,6 +248,17 @@ Key eligibility is checked recursively. Because generic key constraints are not
 yet supported, an unconstrained key type parameter is rejected; generic value
 types remain supported. See the [D# example](../../examples/map_set.ds) and
 [implementation plan](implementation/issue-38-plan.md).
+[Issue #181](https://github.com/gajo357/dsharplang/issues/181) adds the
+nonempty-prefix form `map.set(key)`, producing a function from a value to an
+updated map. It evaluates the immutable receiver and key once in order when the
+function is formed; each completed call independently updates the captured map,
+leaving the original unchanged. Grouped calls and value pipes are supported,
+including nullable and Option data and generic value types. An inferred-return
+function that immediately invokes or pipes into `map.set(key)` may require an
+explicit return type; unconstrained generic map keys remain unsupported. Other collection
+method partials and empty-prefix calls remain separate work under #129. See the
+[D# example](../../examples/map_partial.ds) and
+[implementation plan](implementation/issue-181-plan.md).
 [Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and
 explicitly constructed services, including multiple implemented interfaces,
 signature conformance and direct polymorphic dispatch. Dependencies are supplied

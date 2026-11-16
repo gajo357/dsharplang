@@ -1,0 +1,9 @@
+module Demo
+
+fn answer(): bool {
+    let original = Map.empty<string, int>()
+    let setScore = original.set("score")
+    let first = setScore(42)
+    let second = 7 |> setScore
+    original.count() == 0 && first.get("score") == Some(42) && second.get("score") == Some(7)
+}
