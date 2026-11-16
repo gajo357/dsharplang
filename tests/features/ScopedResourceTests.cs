@@ -293,6 +293,7 @@ public sealed class ScopedResourceTests
         await new InterpolationAcceptanceTests().InterpolatedStringsExecuteAndRejectInvalidPrograms();
         await new ExtensionPartialAcceptanceTests().ExtensionPartialsCaptureAndExecute();
         await new MapPartialAcceptanceTests().MapPartialsCaptureAndExecute();
+        await new ListFoldPartialAcceptanceTests().FoldPartialsCaptureAndExecute();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
