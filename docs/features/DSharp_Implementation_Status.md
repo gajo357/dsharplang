@@ -56,6 +56,7 @@ external interoperability guarantee follows from this lowering. See the
 | Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
 | Interfaces and services | Explicit interfaces, services implementing one or more interfaces, checked methods and constructor dependencies | Interface-typed calls dispatch to the supplied service instance; async methods and explicit dependencies retain their usual behavior |
 | Default interface methods | Checked method bodies alongside required signatures; explicit service methods resolve conflicts and take precedence | Default bodies call methods on the selected service instance, including async dispatch |
+| Statically resolved extensions | `extend Target` methods require `self` first and an explicit result type; exact static receiver and argument types select visible candidates | Calls evaluate the receiver once before arguments; applicable real members take precedence, with async and directly imported extension calls supported |
 | Directly constructed scoped resources | Fresh `resource` declarations, enclosing-block and braced `using`, receiver-only scoped handles | Sync/async release runs on tested exits with C#-style cleanup failure behavior |
 | Owned resource function factories | Explicit non-generic functions return a fresh resource directly to `using`; async factories must be immediately awaited | Factory forwarding, async acquisition and cleanup execute without exposing an owned value as ordinary data |
 | Owned resource service factories | Interface and service methods, including supported defaults, return fresh resources directly to `using` | Checked polymorphic dispatch, forwarding and immediate async acquisition preserve scoped ownership |
@@ -366,6 +367,18 @@ CLI accept multiple sources while retaining single-file use. The
 qualified names. Generated C# module-wrapper names are not a .NET interop
 contract. General-purpose D# standard-library packaging remains separate work;
 the five synchronous Result helpers use the embedded D# prelude.
+[Issue #47](https://github.com/gajo357/dsharplang/issues/47) adds synchronous
+and async extensions as statically resolved methods. The compiler searches the
+current module and each file's direct imports; duplicate imports do not create
+extra candidates, and transitive imports do not expose extensions. An applicable
+real member wins; otherwise a unique extension with an exact receiver and
+argument match is required, and ambiguity reports the candidate origins. The
+receiver is evaluated once before the arguments. Extension targets cannot be
+builders or resources, and existing capability and ownership restrictions apply.
+Extensions cannot introduce fields or inheritance, and generic extension methods,
+extension method values and partial application remain separate work. See the
+[D# example](../../examples/extensions.ds) and
+[implementation plan](implementation/issue-47-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

@@ -66,6 +66,15 @@ internal static class MultiFileResolver
                 var declared = symbols.Single(s => s.Module == file.Name.Text && s.Kind == "union" && s.Name == union.Name.Text);
                 foreach (var item in union.Cases) Add(file.Name.Text, item.Name.Text, "case", item.Name, declared.Internal);
             }
+        // Extension methods are not ordinary module symbols and do not
+        // participate in unqualified function lookup. Give each declaration a
+        // stable private identity so same-name extensions can coexist and be
+        // selected by the binder using exact applicability.
+        var extensionSymbols = new List<(string Module, ExtensionMethodSyntax Method, string Internal)>();
+        foreach (var file in files.OrderBy(f => f.Name.Text, StringComparer.Ordinal).ThenBy(f => Path(f.Name), StringComparer.Ordinal))
+            foreach (var extension in file.Extensions)
+                foreach (var method in extension.Methods)
+                    extensionSymbols.Add((file.Name.Text, method, Fresh()));
         var exports = symbols.Where(s => s.Kind == "function").Select(s => new ModuleExport(s.Module, s.Name, s.Internal)).ToArray();
         var functions = new List<FunctionSyntax>();
         var records = new List<RecordDeclarationSyntax>();
@@ -73,6 +82,7 @@ internal static class MultiFileResolver
         var interfaces = new List<InterfaceDeclarationSyntax>();
         var services = new List<ServiceDeclarationSyntax>();
         var resources = new List<ResourceDeclarationSyntax>();
+        var extensions = new List<ExtensionDeclarationSyntax>();
         foreach (var file in files)
         {
             var current = file.Name.Text;
@@ -80,6 +90,9 @@ internal static class MultiFileResolver
             foreach (var import in file.Imports)
                 if (!modules.Contains(import.Text)) Fail(import, "DS2030", $"Unknown imported module '{import.Text}'.");
             bool Visible(string module) => module == current || imports.Contains(module, StringComparer.Ordinal);
+            IReadOnlyList<string> VisibleExtensions(string methodName) => extensionSymbols
+                .Where(symbol => Visible(symbol.Module) && symbol.Method.Name.Text == methodName)
+                .Select(symbol => symbol.Internal).Distinct(StringComparer.Ordinal).ToArray();
             Symbol? Select(Token location, IEnumerable<Symbol> choices)
             {
                 var candidates = choices.Distinct().ToArray();
@@ -232,6 +245,10 @@ internal static class MultiFileResolver
                     case MemberCallSyntax member:
                         var memberArgs = member.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray();
                         var memberTypes = Types(member.TypeArguments, typeParameters);
+                        // Extension lookup is file-scoped, unlike the unified
+                        // binder's global declaration table. Attach only the
+                        // current module and this file's direct imports.
+                        member = member with { ExtensionCandidates = VisibleExtensions(member.Member.Text) };
                         if (PathParts(member.Receiver, out var prefix))
                         {
                             var path = prefix.Append(member.Member).ToArray();
@@ -417,6 +434,29 @@ internal static class MultiFileResolver
                     }).ToArray()
                 });
             }
+            foreach (var extension in file.Extensions)
+            {
+                var typeParameters = new HashSet<string>(StringComparer.Ordinal);
+                extensions.Add(extension with
+                {
+                    Target = ResolveType(extension.Target, typeParameters),
+                    Methods = extension.Methods.Select(method =>
+                    {
+                        var identity = extensionSymbols.Single(symbol => ReferenceEquals(symbol.Method, method));
+                        var scope = method.Parameters.Select(parameter => parameter.Name.Text).ToHashSet(StringComparer.Ordinal);
+                        return method with
+                        {
+                            InternalName = identity.Internal,
+                            OriginModule = current,
+                            SelfAnnotation = method.SelfAnnotation is null ? null : ResolveType(method.SelfAnnotation, typeParameters),
+                            Parameters = method.Parameters.Select(parameter => parameter with
+                                { Type = ResolveType(parameter.Type, typeParameters) }).ToArray(),
+                            ReturnType = ResolveType(method.ReturnType, typeParameters),
+                            Body = Block(method.Body, scope, typeParameters)
+                        };
+                    }).ToArray()
+                });
+            }
             foreach (var function in file.Functions)
             {
                 var symbol = symbols.Single(s => s.Module == current && s.Kind == "function" && s.Name == function.Name.Text);
@@ -429,6 +469,6 @@ internal static class MultiFileResolver
         var typeDisplayNames = symbols.Where(symbol => symbol.Kind is "interface" or "service" or "resource")
             .ToDictionary(symbol => symbol.Internal, symbol => symbol.Module + "." + symbol.Name, StringComparer.Ordinal);
         return new ModuleResolution(new ModuleSyntax(files[0].Name, functions)
-            { Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, TypeDisplayNames = typeDisplayNames }, exports);
+            { Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Extensions = extensions, TypeDisplayNames = typeDisplayNames }, exports);
     }
 }

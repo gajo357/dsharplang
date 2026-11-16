@@ -64,6 +64,7 @@ public sealed record CallSyntax(Token Name, Token OpenParen, IReadOnlyList<Expre
 public sealed record MemberCallSyntax(ExpressionSyntax Receiver, Token Member, Token OpenParen, IReadOnlyList<ExpressionSyntax> Arguments) : ExpressionSyntax(Member)
 {
     public IReadOnlyList<Token> TypeArguments { get; init; } = Array.Empty<Token>();
+    public IReadOnlyList<string>? ExtensionCandidates { get; init; }
 }
 public sealed record RecordFieldSyntax(Token Name, Token Type);
 public sealed record RecordDeclarationSyntax(Token Name, IReadOnlyList<RecordFieldSyntax> Fields)
@@ -102,6 +103,17 @@ public sealed record ServiceDeclarationSyntax(Token Name, IReadOnlyList<Paramete
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
 public sealed record ResourceDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ServiceMethodSyntax> Methods)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record ExtensionMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync, BlockSyntax Body)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+    public Token? SelfAnnotation { get; init; }
+    public string? InternalName { get; init; }
+    public string? OriginModule { get; init; }
+}
+public sealed record ExtensionDeclarationSyntax(Token Target, IReadOnlyList<ExtensionMethodSyntax> Methods)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
@@ -245,6 +257,7 @@ public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Func
     public IReadOnlyList<InterfaceDeclarationSyntax> Interfaces { get; init; } = Array.Empty<InterfaceDeclarationSyntax>();
     public IReadOnlyList<ServiceDeclarationSyntax> Services { get; init; } = Array.Empty<ServiceDeclarationSyntax>();
     public IReadOnlyList<ResourceDeclarationSyntax> Resources { get; init; } = Array.Empty<ResourceDeclarationSyntax>();
+    public IReadOnlyList<ExtensionDeclarationSyntax> Extensions { get; init; } = Array.Empty<ExtensionDeclarationSyntax>();
     // Resolver-only metadata for source-facing diagnostics. Bound nominal
     // identities stay opaque and distinct even when source names overlap. A
     // shared empty map preserves existing equality for directly parsed modules.
@@ -1050,6 +1063,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var interfaces = new List<InterfaceDeclarationSyntax>();
         var services = new List<ServiceDeclarationSyntax>();
         var resources = new List<ResourceDeclarationSyntax>();
+        var extensions = new List<ExtensionDeclarationSyntax>();
         IReadOnlyList<ParameterSyntax> TypedParameters()
         {
             Expect("(");
@@ -1089,7 +1103,44 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (Current.Text != "")
         {
-            var declarationDocs = Documentation("fn", "async", "type", "interface", "service", "resource");
+            var declarationDocs = Documentation("fn", "async", "type", "interface", "service", "resource", "extend");
+            if (Current.Text == "extend")
+            {
+                Take();
+                var target = TypeToken();
+                Expect("{");
+                var methods = new List<ExtensionMethodSyntax>();
+                while (Current.Text is not ("}" or ""))
+                {
+                    var methodDocs = Documentation("fn", "async");
+                    var extensionAsync = Current.Text == "async";
+                    if (extensionAsync) Take();
+                    Expect("fn");
+                    var methodName = Identifier();
+                    if (Current.Text == "<") throw Error("Generic extension methods are not supported.");
+                    Expect("(");
+                    if (Current.Text != "self") throw Error("An extension method requires self as its first parameter.");
+                    var self = Identifier();
+                    Token? selfAnnotation = null;
+                    if (Current.Text == ":") { Take(); selfAnnotation = TypeToken(); }
+                    var extensionParameters = new List<ParameterSyntax> { new(self, target) };
+                    while (Current.Text == ",")
+                    {
+                        Take();
+                        var parameter = Identifier();
+                        if (parameter.Text == "self") throw new SourceError(new("DS1002", path, parameter.Span, "self may appear only as the receiver."));
+                        Expect(":");
+                        extensionParameters.Add(new(parameter, TypeToken()));
+                    }
+                    Expect(")");
+                    Expect(":");
+                    var returnType = TypeToken();
+                    methods.Add(new(methodName, extensionParameters, returnType, extensionAsync, Block()) { DocumentationComments = methodDocs, SelfAnnotation = selfAnnotation });
+                }
+                Expect("}");
+                extensions.Add(new(target, methods) { DocumentationComments = declarationDocs });
+                continue;
+            }
             if (Current.Text == "resource")
             {
                 Take();
@@ -1239,8 +1290,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType, IsAsync = isAsync });
         }
-        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0 && resources.Count == 0) throw Error("Expected at least one declaration.");
-        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Imports = imports };
+        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0 && resources.Count == 0 && extensions.Count == 0) throw Error("Expected at least one declaration.");
+        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Extensions = extensions, Imports = imports };
     }
 }
 
@@ -1381,6 +1432,44 @@ public static class Binder
             return token with { Text = Rebind(shape).ToString() };
         }
         Token ScopedParameter(Token token, IReadOnlyDictionary<string, string> scope) => token with { Text = scope[token.Text] };
+        // Extensions are ordinary private functions after resolution. Their
+        // receiver is the first parameter, so calls preserve evaluation order.
+        var extensionDeclarations = new List<(string Id, ExtensionDeclarationSyntax Declaration, ExtensionMethodSyntax Method)>();
+        var occupiedFunctions = new HashSet<string>(StringComparer.Ordinal);
+        void CollectExtensionNames(object? node)
+        {
+            if (node is null or string) return;
+            if (node is Token token) { occupiedFunctions.Add(token.Text); return; }
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) CollectExtensionNames(item);
+                return;
+            }
+            var type = node.GetType();
+            if (!type.Name.EndsWith("Syntax", StringComparison.Ordinal)) return;
+            foreach (var property in type.GetProperties().Where(property => property.GetIndexParameters().Length == 0))
+                CollectExtensionNames(property.GetValue(node));
+        }
+        CollectExtensionNames(syntax);
+        var extensionOrdinal = 0;
+        foreach (var declaration in syntax.Extensions)
+        foreach (var method in declaration.Methods)
+        {
+            var id = method.InternalName;
+            if (id is null)
+            {
+                do { id = "__dsharp_extension_" + (extensionOrdinal++).ToString(CultureInfo.InvariantCulture); }
+                while (occupiedFunctions.Contains(id));
+            }
+            occupiedFunctions.Add(id);
+            extensionDeclarations.Add((id, declaration, method));
+        }
+        syntax = syntax with { Functions = syntax.Functions.Concat(extensionDeclarations.Select(extension =>
+            new FunctionSyntax(extension.Method.Name with { Text = extension.Id }, extension.Method.ReturnType, extension.Method.Body.Result.Token)
+            {
+                Parameters = extension.Method.Parameters, Body = extension.Method.Body, Expression = extension.Method.Body.Result,
+                IsAsync = extension.Method.IsAsync, DocumentationComments = extension.Method.DocumentationComments
+            })).ToArray() };
         var scopedRecords = syntax.Records.Select(record =>
         {
             var scope = TypeScope(record.TypeParameters);
@@ -1569,6 +1658,17 @@ public static class Binder
             !shape.Arguments[0].IsNullable && resourceNames.Contains(shape.Arguments[0].ToString()) &&
             SupportedType(shape.Arguments[1].ToString()) && DataType(shape.Arguments[1].ToString());
         bool OwnedTransfer(string type) => resourceNames.Contains(type) || OwnedResult(type);
+        foreach (var extension in extensionDeclarations)
+        {
+            var scoped = syntax.Functions.First(item => item.Name.Text == extension.Id);
+            var target = scoped.Parameters[0].Type;
+            if (extension.Method.SelfAnnotation is { } annotation && ScopedType(annotation, noTypeScope).Text != target.Text)
+                Fail("DS2011", annotation, "The self annotation must match the extension target.");
+            if (!SupportedType(target.Text) || GenericTypes.TryParse(target.Text, out var targetShape) && ContainsBuilder(targetShape))
+                Fail("DS2011", target, "Extension targets must be supported non-resource, non-builder types.");
+            if (OwnedTransfer(scoped.ReturnType.Text))
+                Fail("DS2041", scoped.ReturnType, "Extensions cannot transfer owned resources.");
+        }
         // A callable's signature can mention an interface without holding an
         // interface value. Its own captures/partials are checked separately.
         bool RetainsCapability(TypeShape shape) => !shape.IsFunction &&
@@ -2005,7 +2105,10 @@ public static class Binder
                             qualifier?.Value.Text == "Option" && !userOptionType ? optionSymbol : qualifier?.Value.Text;
                         if (qualifier is null || names.Contains(qualifier.Value.Text) || unionName is null || !unions.ContainsKey(unionName))
                         {
-                            if (member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
+                            var namedExtensions = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
+                                (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id))).ToArray();
+                            foreach (var extension in namedExtensions) calls.Add(extension.Id);
+                            if (namedExtensions.Length == 0 && member.Member.Text is not ("length" or "append" or "get" or "map" or "filter" or "fold" or
                                 "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze")) indirect = true;
                             if (member.Member.Text is "map" or "filter" or "fold" && member.Arguments.Count > 0)
                             {
@@ -3816,7 +3919,7 @@ public static class Binder
                             interfaceMethods[callDefault.Interface].ContainsKey(call.Name.Text))
                         {
                             var implicitMember = new MemberCallSyntax(new ValueSyntax(callDefault.Receiver), call.Name, call.OpenParen, call.Arguments)
-                                { TypeArguments = call.TypeArguments };
+                                { TypeArguments = call.TypeArguments, ExtensionCandidates = Array.Empty<string>() };
                             if (ownedCalls.Contains(call)) ownedMemberCalls.Add(implicitMember);
                             if (awaitedOwnedCalls.Contains(call)) awaitedOwnedMembers.Add(implicitMember);
                             return BindExpression(implicitMember, expectedResult);
@@ -4011,6 +4114,139 @@ public static class Binder
                                 ownedResultCases.Contains(member));
                         var listReceiver = BindExpression(member.Receiver);
                         var listReceiverType = listReceiver.Type == "<never>" ? KnownType(listReceiver.Expression) : listReceiver.Type;
+                        SourceError? extensionSafetyError = null;
+                        // Probe without contributing return exits to inference. The selected
+                        // argument expressions are bound again for the actual call.
+                        bool ExactArguments(IReadOnlyList<string> formals)
+                        {
+                            if (member.Arguments.Count != formals.Count) return false;
+                            var savedReturns = inferredReturns;
+                            if (savedReturns is not null) inferredReturns = new List<string>();
+                            var savedReachability = inferenceReachable;
+                            var savedHasReturn = hasReturn;
+                            var savedTupleCount = tupleBindingCount;
+                            try
+                            {
+                                for (var i = 0; i < formals.Count; i++)
+                                {
+                                    var value = BindExpression(member.Arguments[i], formals[i]);
+                                    if (value.Type != formals[i] && value.Type != "<never>" &&
+                                        !(value.Type == "<null>" && IsNullable(formals[i]))) return false;
+                                    inferenceReachable &= value.Type != "<never>";
+                                }
+                                return true;
+                            }
+                            catch (SourceError error)
+                            {
+                                if (error.Diagnostic.Code == "DS2041" || error.Diagnostic.Code == "DS2026" &&
+                                    (error.Diagnostic.Message.Contains("capture", StringComparison.OrdinalIgnoreCase) || error.Diagnostic.Message.Contains("builder", StringComparison.OrdinalIgnoreCase)))
+                                    extensionSafetyError ??= error;
+                                return false;
+                            }
+                            finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
+                        }
+                        bool InferredListMemberApplicable(string element, bool fold)
+                        {
+                            if (member.Arguments.Count != (fold ? 2 : 1)) return false;
+                            var savedReturns = inferredReturns;
+                            if (savedReturns is not null) inferredReturns = new List<string>();
+                            var savedReachability = inferenceReachable;
+                            var savedHasReturn = hasReturn;
+                            var savedTupleCount = tupleBindingCount;
+                            try
+                            {
+                                var marker = int.MaxValue;
+                                while (activeTypeParameters.Contains("$" + marker.ToString(CultureInfo.InvariantCulture)) || arities.ContainsKey("$" + marker.ToString(CultureInfo.InvariantCulture))) marker--;
+                                if (!fold)
+                                {
+                                    var mapCallback = BindExpression(member.Arguments[0], TypeShape.FunctionName + "<" + element + ",$" + marker.ToString(CultureInfo.InvariantCulture) + ">");
+                                    var callbackType = mapCallback.Type == "<never>" ? KnownType(mapCallback.Expression) : mapCallback.Type;
+                                    return callbackType is not null && GenericTypes.TryParse(callbackType, out var callbackShape) &&
+                                        callbackShape.IsFunction && !callbackShape.IsNullable && callbackShape.Arguments.Count == 2 &&
+                                        callbackShape.Arguments[0].ToString() == element &&
+                                        SupportedType(callbackShape.Arguments[1].ToString(), activeTypeParameters) && DataType(callbackShape.Arguments[1].ToString());
+                                }
+                                var initial = BindExpression(member.Arguments[0]);
+                                var accumulator = initial.Type == "<never>" ? KnownType(initial.Expression) : initial.Type;
+                                if (accumulator is null or "<null>" or "<never>" || !SupportedType(accumulator, activeTypeParameters)) return false;
+                                var callbackFormal = TypeShape.FunctionName + "<" + accumulator + "," + element + "," + accumulator + ">";
+                                var callback = BindExpression(member.Arguments[1], callbackFormal);
+                                return callback.Type == callbackFormal || callback.Type == "<never>";
+                            }
+                            catch (SourceError) { return false; }
+                            finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
+                        }
+                        bool RealMemberApplicable()
+                        {
+                            if (listReceiverType is null || member.TypeArguments.Count != 0) return false;
+                            if (interfaceMethods.TryGetValue(listReceiverType, out var methods) || serviceMethods.TryGetValue(listReceiverType, out methods))
+                                return methods!.TryGetValue(member.Member.Text, out var method) && ExactArguments(method.Parameters.Select(p => p.Type.Text).ToArray());
+                            if (!GenericTypes.TryParse(listReceiverType, out var shape) || shape.IsNullable) return false;
+                            if (shape.Name == listSymbol && shape.Arguments.Count == 1)
+                            {
+                                var element = shape.Arguments[0].ToString();
+                                return member.Member.Text switch
+                                {
+                                    "length" => ExactArguments(Array.Empty<string>()),
+                                    "get" => ExactArguments(new[] { "int" }),
+                                    "append" => ExactArguments(new[] { element }),
+                                    "filter" => ExactArguments(new[] { TypeShape.FunctionName + "<" + element + ",bool>" }),
+                                    "map" => InferredListMemberApplicable(element, false),
+                                    "fold" => InferredListMemberApplicable(element, true),
+                                    _ => false
+                                };
+                            }
+                            if (shape.Name == mapSymbol && shape.Arguments.Count == 2)
+                            {
+                                var key = shape.Arguments[0].ToString();
+                                return member.Member.Text switch
+                                {
+                                    "count" => ExactArguments(Array.Empty<string>()),
+                                    "contains" or "get" => ExactArguments(new[] { key }),
+                                    "set" => ExactArguments(new[] { key, shape.Arguments[1].ToString() }),
+                                    _ => false
+                                };
+                            }
+                            if (shape.Name == setSymbol && shape.Arguments.Count == 1)
+                                return member.Member.Text switch
+                                {
+                                    "count" => ExactArguments(Array.Empty<string>()),
+                                    "contains" or "add" => ExactArguments(new[] { shape.Arguments[0].ToString() }),
+                                    _ => false
+                                };
+                            return false;
+                        }
+                        if (listReceiverType is not null && member.TypeArguments.Count == 0)
+                        {
+                            var availableExtensions = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
+                                (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
+                                signatures[extension.Id].Parameters[0].Type.Text == listReceiverType &&
+                                signatures[extension.Id].Parameters.Count == member.Arguments.Count + 1).ToArray();
+                            if (availableExtensions.Length > 0 && !RealMemberApplicable())
+                            {
+                                var applicable = availableExtensions.Where(extension => ExactArguments(signatures[extension.Id].Parameters.Skip(1).Select(p => p.Type.Text).ToArray())).ToArray();
+                                if (applicable.Length > 1)
+                                    Fail("DS2018", member.Member, "Ambiguous extension call; candidates: " + string.Join(", ", applicable.Select(extension =>
+                                        (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
+                                        extension.Method.Name.Span.Line.ToString(CultureInfo.InvariantCulture) + ":" + extension.Method.Name.Span.Column.ToString(CultureInfo.InvariantCulture) + ")")
+                                        .OrderBy(name => name, StringComparer.Ordinal)) + ".");
+                                if (applicable.Length == 1)
+                                {
+                                    var extension = applicable[0];
+                                    var extensionTarget = signatures[extension.Id];
+                                    var savedExtensionReachable = inferenceReachable;
+                                    inferenceReachable = savedExtensionReachable && listReceiver.Type != "<never>";
+                                    (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) extensionArguments;
+                                    try { extensionArguments = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                                        extensionTarget.Parameters.Skip(1).Select(parameter => parameter.Type).ToArray(), member.Arguments, member.Member); }
+                                    finally { inferenceReachable = savedExtensionReachable; }
+                                    if (extensionTarget.IsAsync) taskUsed = true;
+                                    return (new BoundCall(extension.Id, new[] { listReceiver.Expression }.Concat(extensionArguments.Values).ToArray()) { Location = member.Member },
+                                        listReceiver.Type == "<never>" || extensionArguments.Never ? "<never>" : CallableResult(extensionTarget));
+                                }
+                                if (extensionSafetyError is not null) throw extensionSafetyError;
+                            }
+                        }
                         if (listReceiverType is not null &&
                             (interfaceMethods.TryGetValue(listReceiverType, out var dispatchMethods) || serviceMethods.TryGetValue(listReceiverType, out dispatchMethods)))
                         {
