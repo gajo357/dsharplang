@@ -1,0 +1,13 @@
+module Demo
+
+// Extensions add ordinary statically resolved functions to a type.
+type Invoice { total: int }
+
+extend Invoice {
+    fn withFee(self, fee: int): int { self.total + fee }
+}
+
+fn answer(): int {
+    let invoice = Invoice { total = 40 }
+    invoice.withFee(2)
+}
