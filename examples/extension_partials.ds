@@ -1,0 +1,15 @@
+module Demo
+
+type Invoice { total: int }
+
+extend Invoice {
+    fn withFees(self, serviceFee: int, tax: int): int {
+        self.total + serviceFee + tax
+    }
+}
+
+fn answer(): int {
+    let invoice = Invoice { total = 35 }
+    let withServiceFee = invoice.withFees(5)
+    2 |> withServiceFee
+}

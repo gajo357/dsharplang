@@ -2308,6 +2308,15 @@ public static class Binder
                 }
                 Expression(block.Result, names);
             }
+            bool StaticallyPartialExtension(MemberCallSyntax member)
+            {
+                if (member.Arguments.Count == 0 || member.Member.Text is "length" or "append" or "get" or "map" or "filter" or "fold" or
+                    "empty" or "from" or "count" or "contains" or "set" or "add" or "freeze") return false;
+                var visible = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
+                    (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id))).ToArray();
+                return visible.Length > 0 && visible.All(extension =>
+                    signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1);
+            }
             void Expression(ExpressionSyntax expression, HashSet<string> names)
             {
                 switch (expression)
@@ -2386,6 +2395,8 @@ public static class Binder
                         { /* Qualified union case construction is statically known. */ }
                         else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
                             signatures.TryGetValue(DependencyName(partialCall.Name.Text, names), out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
+                            Expression(pipeTarget, names);
+                        else if (pipeTarget is MemberCallSyntax extensionPartial && StaticallyPartialExtension(extensionPartial))
                             Expression(pipeTarget, names);
                         else
                         {
@@ -3399,7 +3410,7 @@ public static class Binder
                     argumentsBound.Add(BindPattern(arguments[i], Substitute(unionCase.PayloadTypes[i].Text, substitutions!, unionCase.PayloadTypes[i]), introduced));
                 return new BoundCasePattern(expected, unionCase.Name.Text, argumentsBound);
             }
-            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null)
+            (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null, string? pipeOutputType = null)
             {
                 switch (expression)
                 {
@@ -4032,7 +4043,7 @@ public static class Binder
                             literalCondition == false && elseBlock.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
-                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType);
+                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType, pipeOutputType);
                     case CoalesceSyntax coalesce:
                         var nullableLeft = BindExpression(coalesce.Left);
                         var savedCoalesceReachable = inferenceReachable;
@@ -4495,6 +4506,8 @@ public static class Binder
                         }
                         if (listReceiverType is not null && member.TypeArguments.Count == 0)
                         {
+                            string ExtensionPartialType(FunctionSyntax extension) => TypeShape.FunctionName + "<" + string.Join(",",
+                                extension.Parameters.Skip(member.Arguments.Count + 1).Select(p => p.Type.Text).Append(CallableResult(extension))) + ">";
                             var availableExtensions = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
                                 (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
                                 signatures[extension.Id].Parameters[0].Type.Text == listReceiverType &&
@@ -4502,6 +4515,36 @@ public static class Binder
                             if (availableExtensions.Length > 0 && !RealMemberApplicable())
                             {
                                 var applicable = availableExtensions.Where(extension => ExactArguments(signatures[extension.Id].Parameters.Skip(1).Select(p => p.Type.Text).ToArray())).ToArray();
+                                // A contextual callable can make a previously
+                                // invalid exact-arity result yield to a longer
+                                // overload. Preserve all already valid full calls.
+                                if (member.Arguments.Count > 0 && DataType(listReceiverType) && expectedResult is not null &&
+                                    GenericTypes.TryParse(expectedResult, out var expectedCallable) && expectedCallable.IsFunction && !expectedCallable.IsNullable &&
+                                    extensionDeclarations.Any(extension => extension.Method.Name.Text == member.Member.Text &&
+                                        (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
+                                        signatures[extension.Id].Parameters[0].Type.Text == listReceiverType &&
+                                        signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1 &&
+                                        ExtensionPartialType(signatures[extension.Id]) == expectedResult &&
+                                        ExactArguments(signatures[extension.Id].Parameters.Skip(1).Take(member.Arguments.Count).Select(p => p.Type.Text).ToArray())))
+                                    applicable = applicable.Where(extension => CallableResult(signatures[extension.Id]) == expectedResult).ToArray();
+                                if (member.Arguments.Count > 0 && DataType(listReceiverType) && pipeInputType is not null)
+                                {
+                                    bool PipeCompatible(string callable)
+                                    {
+                                        if (!GenericTypes.TryParse(callable, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2 ||
+                                            !Convertible(pipeInputType, shape.Arguments[0].ToString())) return false;
+                                        var output = shape.Arguments.Count == 2 ? shape.Arguments[1].ToString() :
+                                            TypeShape.FunctionName + "<" + string.Join(",", shape.Arguments.Skip(1)) + ">";
+                                        return pipeOutputType is null || !SupportedType(pipeOutputType, activeTypeParameters) || Convertible(output, pipeOutputType);
+                                    }
+                                    if (extensionDeclarations.Any(extension => extension.Method.Name.Text == member.Member.Text &&
+                                        (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
+                                        signatures[extension.Id].Parameters[0].Type.Text == listReceiverType &&
+                                        signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1 &&
+                                        PipeCompatible(ExtensionPartialType(signatures[extension.Id])) &&
+                                        ExactArguments(signatures[extension.Id].Parameters.Skip(1).Take(member.Arguments.Count).Select(p => p.Type.Text).ToArray())))
+                                        applicable = applicable.Where(extension => PipeCompatible(CallableResult(signatures[extension.Id]))).ToArray();
+                                }
                                 if (applicable.Length > 1)
                                     Fail("DS2018", member.Member, "Ambiguous extension call; candidates: " + string.Join(", ", applicable.Select(extension =>
                                         (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
@@ -4521,8 +4564,104 @@ public static class Binder
                                     return (new BoundCall(extension.Id, new[] { listReceiver.Expression }.Concat(extensionArguments.Values).ToArray()) { Location = member.Member },
                                         listReceiver.Type == "<never>" || extensionArguments.Never ? "<never>" : CallableResult(extensionTarget));
                                 }
-                                if (extensionSafetyError is not null) throw extensionSafetyError;
                             }
+                            // Fully supplied extension calls above retain their
+                            // existing precedence. For a nonempty prefix, keep
+                            // only extensions with remaining parameters and
+                            // resolve their callable type before creating a
+                            // closure. Empty prefixes and method values remain
+                            // a separate compatibility migration.
+                            var availablePartials = extensionDeclarations.Where(extension => extension.Method.Name.Text == member.Member.Text &&
+                                (member.ExtensionCandidates is null || member.ExtensionCandidates.Contains(extension.Id)) &&
+                                signatures[extension.Id].Parameters[0].Type.Text == listReceiverType &&
+                                signatures[extension.Id].Parameters.Count > member.Arguments.Count + 1).ToArray();
+                            if (member.Arguments.Count > 0 && availablePartials.Length > 0 && DataType(listReceiverType) && !RealMemberApplicable())
+                            {
+                                bool RealPartialApplicable()
+                                {
+                                    if (interfaceMethods.TryGetValue(listReceiverType, out var partialMethods) ||
+                                        serviceMethods.TryGetValue(listReceiverType, out partialMethods))
+                                        return partialMethods!.TryGetValue(member.Member.Text, out var partialMethod) &&
+                                            partialMethod.Parameters.Count > member.Arguments.Count &&
+                                            ExactArguments(partialMethod.Parameters.Take(member.Arguments.Count).Select(parameter => parameter.Type.Text).ToArray());
+                                    if (!GenericTypes.TryParse(listReceiverType, out var partialShape) || partialShape.IsNullable) return false;
+                                    if (partialShape.Name == mapSymbol && partialShape.Arguments.Count == 2 && member.Member.Text == "set" && member.Arguments.Count == 1)
+                                        return ExactArguments(new[] { partialShape.Arguments[0].ToString() });
+                                    if (partialShape.Name == listSymbol && partialShape.Arguments.Count == 1 && member.Member.Text == "fold" && member.Arguments.Count == 1)
+                                    {
+                                        // The accumulator is generic. Any supported
+                                        // non-null first argument supplies its type.
+                                        var savedReturns = inferredReturns;
+                                        if (savedReturns is not null) inferredReturns = new List<string>();
+                                        var savedReachability = inferenceReachable;
+                                        var savedHasReturn = hasReturn;
+                                        var savedTupleCount = tupleBindingCount;
+                                        try
+                                        {
+                                            var initial = BindExpression(member.Arguments[0]);
+                                            var type = initial.Type == "<never>" ? KnownType(initial.Expression) : initial.Type;
+                                            return type is not (null or "<null>" or "<never>") && SupportedType(type, activeTypeParameters);
+                                        }
+                                        catch (SourceError error)
+                                        {
+                                            if (error.Diagnostic.Code == "DS2041" || error.Diagnostic.Code == "DS2026" &&
+                                                (error.Diagnostic.Message.Contains("capture", StringComparison.OrdinalIgnoreCase) || error.Diagnostic.Message.Contains("builder", StringComparison.OrdinalIgnoreCase)))
+                                                extensionSafetyError ??= error;
+                                            return false;
+                                        }
+                                        finally { inferredReturns = savedReturns; inferenceReachable = savedReachability; hasReturn = savedHasReturn; tupleBindingCount = savedTupleCount; }
+                                    }
+                                    return false;
+                                }
+                                if (!RealPartialApplicable())
+                                {
+                                    var partialCandidates = availablePartials.Where(extension =>
+                                        ExactArguments(signatures[extension.Id].Parameters.Skip(1).Take(member.Arguments.Count).Select(p => p.Type.Text).ToArray())).ToArray();
+                                    if (expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedPartial) && expectedPartial.IsFunction && !expectedPartial.IsNullable)
+                                        partialCandidates = partialCandidates.Where(extension => ExtensionPartialType(signatures[extension.Id]) == expectedResult).ToArray();
+                                    if (pipeInputType is not null)
+                                        partialCandidates = partialCandidates.Where(extension => Convertible(pipeInputType,
+                                            signatures[extension.Id].Parameters[member.Arguments.Count + 1].Type.Text)).ToArray();
+                                    if (pipeOutputType is not null && SupportedType(pipeOutputType, activeTypeParameters))
+                                        partialCandidates = partialCandidates.Where(extension =>
+                                        {
+                                            var candidate = signatures[extension.Id];
+                                            var remaining = candidate.Parameters.Skip(member.Arguments.Count + 1).Select(p => p.Type.Text).ToArray();
+                                            var outputType = remaining.Length == 1 ? CallableResult(candidate) :
+                                                TypeShape.FunctionName + "<" + string.Join(",", remaining.Skip(1).Append(CallableResult(candidate))) + ">";
+                                            return Convertible(outputType, pipeOutputType);
+                                        }).ToArray();
+                                    if (partialCandidates.Length > 1)
+                                        Fail("DS2018", member.Member, "Ambiguous extension call; candidates: " + string.Join(", ", partialCandidates.Select(extension =>
+                                            (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
+                                            extension.Method.Name.Span.Line.ToString(CultureInfo.InvariantCulture) + ":" + extension.Method.Name.Span.Column.ToString(CultureInfo.InvariantCulture) + ")")
+                                            .OrderBy(name => name, StringComparer.Ordinal)) + ".");
+                                    if (partialCandidates.Length == 1)
+                                    {
+                                        var extension = partialCandidates[0];
+                                        var partialTarget = signatures[extension.Id];
+                                        var formalTypes = partialTarget.Parameters.Select(parameter => parameter.Type.Text).ToArray();
+                                        var savedExtensionReachable = inferenceReachable;
+                                        inferenceReachable = savedExtensionReachable && listReceiver.Type != "<never>";
+                                        (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) arguments;
+                                        try { arguments = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(),
+                                            partialTarget.Parameters.Skip(1).Take(member.Arguments.Count).Select(parameter => parameter.Type).ToArray(), member.Arguments, member.Member); }
+                                        finally { inferenceReachable = savedExtensionReachable; }
+                                        var capturedTypes = formalTypes.Take(member.Arguments.Count + 1).ToArray();
+                                        if (capturedTypes.Any(CapabilityType) || arguments.Types.Any(CapabilityType))
+                                            Fail("DS2026", member.Member, "A partial application cannot capture a service or interface reference.");
+                                        var partialResultType = CallableResult(partialTarget);
+                                        var fullType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Append(partialResultType)) + ">";
+                                        var partialType = ExtensionPartialType(partialTarget);
+                                        if (partialTarget.IsAsync) taskUsed = true;
+                                        return (new BoundPartial(new BoundFunctionReference(extension.Id, fullType, Array.Empty<string>()) { Location = member.Member }, fullType,
+                                            new[] { listReceiver.Expression }.Concat(arguments.Values).ToArray(), capturedTypes,
+                                            formalTypes.Skip(member.Arguments.Count + 1).ToArray(), partialResultType, partialType),
+                                            listReceiver.Type == "<never>" || arguments.Never ? "<never>" : partialType);
+                                    }
+                                }
+                            }
+                            if (extensionSafetyError is not null) throw extensionSafetyError;
                         }
                         if (listReceiverType is not null &&
                             (interfaceMethods.TryGetValue(listReceiverType, out var dispatchMethods) || serviceMethods.TryGetValue(listReceiverType, out dispatchMethods)))
@@ -5117,7 +5256,7 @@ public static class Binder
                         else if (remaining > 1 && GenericTypes.TryParse(expectedResult, out var rest) && rest.IsFunction && rest.Arguments.Count == remaining)
                             pipeReceiverHint = TypeShape.FunctionName + "<" + pipeProbeType + "," + string.Join(",", rest.Arguments) + ">";
                     }
-                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType); }
+                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType, expectedResult); }
                     catch (SourceError error) when (target is LambdaSyntax && error.Diagnostic.Code == "DS2026") { }
                 }
                 finally { inferenceReachable = savedReachable; }
@@ -5164,7 +5303,7 @@ public static class Binder
                 }
                 inferenceReachable = savedReachable && value.Type != "<never>";
                 (BoundExpression Expression, string Type) receiver;
-                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType); }
+                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType, expectedResult); }
                 finally { inferenceReachable = savedReachable; }
                 var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
                 if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2)
