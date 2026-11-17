@@ -81,7 +81,10 @@ public sealed record RecordDeclarationSyntax(Token Name, IReadOnlyList<RecordFie
 public sealed record RecordInitializerSyntax(Token Name, ExpressionSyntax Value);
 public sealed record RecordConstructionSyntax(Token Name, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(Name);
 public sealed record QualifiedRecordConstructionSyntax(ExpressionSyntax Receiver, Token Name, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(Name);
-public sealed record FieldAccessSyntax(ExpressionSyntax Receiver, Token Field) : ExpressionSyntax(Field);
+public sealed record FieldAccessSyntax(ExpressionSyntax Receiver, Token Field) : ExpressionSyntax(Field)
+{
+    public IReadOnlyList<string>? ExtensionCandidates { get; init; }
+}
 public sealed record ConditionalFieldAccessSyntax(ExpressionSyntax Receiver, Token Operator, Token Field) : ExpressionSyntax(Operator);
 public sealed record RecordUpdateSyntax(ExpressionSyntax Receiver, Token With, IReadOnlyList<RecordInitializerSyntax> Fields) : ExpressionSyntax(With);
 public sealed record UnionCaseSyntax(Token Name, IReadOnlyList<Token> PayloadTypes);
@@ -2326,7 +2329,7 @@ public static class Binder
                 ValueSyntax { Value.Text: "false" } => false,
                 _ => null
             };
-            void Block(BlockSyntax block, HashSet<string> outer)
+            void Block(BlockSyntax block, HashSet<string> outer, string? expectedBlockType = null)
             {
                 var names = new HashSet<string>(outer, StringComparer.Ordinal);
                 var previousTypes = new Dictionary<string, string>(knownTypes, StringComparer.Ordinal);
@@ -2340,7 +2343,7 @@ public static class Binder
                         {
                             case LetStatementSyntax declaration:
                                 var initializer = declaration.Binding.Expression ?? new ValueSyntax(declaration.Binding.Initializer);
-                                Expression(initializer, names);
+                                Expression(initializer, names, declaration.Binding.Annotation?.Text);
                                 var fact = declaration.Binding.Annotation is { } annotation
                                     ? ScopedType(annotation, functionTypeScopes[source.Name.Text]).Text
                                     : StaticType(initializer, names);
@@ -2354,14 +2357,14 @@ public static class Binder
                                 foreach (var name in tupleDeclaration.Pattern.Names) { names.Add(name.Text); knownTypes.Remove(name.Text); }
                                 if (!includeUnreachable && NeverExpression(tupleDeclaration.Value)) return;
                                 break;
-                            case ReturnStatementSyntax returned: Expression(returned.Value, names); if (!includeUnreachable) return; break;
+                            case ReturnStatementSyntax returned: Expression(returned.Value, names, expectedBlockType); if (!includeUnreachable) return; break;
                             case ExpressionStatementSyntax evaluated:
                                 Expression(evaluated.Expression, names);
                                 if (!includeUnreachable && NeverExpression(evaluated.Expression)) return;
                                 break;
                         }
                     }
-                    Expression(block.Result, names);
+                    Expression(block.Result, names, expectedBlockType);
                 }
                 finally { knownTypes = previousTypes; }
             }
@@ -2489,6 +2492,27 @@ public static class Binder
                 var resolved = DependencyName(value.Value.Text, names);
                 return !IsImplicitDefault(value.Value.Text) && !cases.ContainsKey(resolved) &&
                     !services.ContainsKey(value.Value.Text) && signatures.ContainsKey(resolved);
+            }
+            IReadOnlyList<string> MemberArgumentExpected(string name, IReadOnlyList<string>? visible, ExpressionSyntax receiver,
+                int argumentIndex, HashSet<string> names, bool conditional = false)
+            {
+                var receiverType = StaticType(receiver, names);
+                if (conditional && receiverType is not null && IsNullable(receiverType)) receiverType = receiverType[..^1];
+                var functionTypes = extensionDeclarations.Where(extension => extension.Method.Name.Text == name &&
+                    (visible is null || visible.Contains(extension.Id)) &&
+                    signatures[extension.Id].Parameters.Count > argumentIndex + 1 &&
+                    (receiverType is null || signatures[extension.Id].Parameters[0].Type.Text == receiverType))
+                    .Select(extension => signatures[extension.Id].Parameters[argumentIndex + 1].Type.Text)
+                    .Where(type => GenericTypes.TryParse(type, out var shape) && shape.IsFunction)
+                    .Distinct(StringComparer.Ordinal).ToArray();
+                return functionTypes;
+            }
+            void MemberArgument(ExpressionSyntax argument, string name, IReadOnlyList<string>? visible,
+                ExpressionSyntax receiver, int argumentIndex, HashSet<string> names, bool conditional = false)
+            {
+                var expected = MemberArgumentExpected(name, visible, receiver, argumentIndex, names, conditional);
+                if (expected.Count == 0) Expression(argument, names);
+                else foreach (var type in expected) Expression(argument, names, type);
             }
             // Return a proof only when the eventual call is a full immutable
             // intrinsic or one uniquely visible extension. Unknown receiver
@@ -2674,7 +2698,7 @@ public static class Binder
                     foreach (var name in shadowedResources) scopedResources.Add(name);
                 }
             }
-            void Expression(ExpressionSyntax expression, HashSet<string> names)
+            void Expression(ExpressionSyntax expression, HashSet<string> names, string? expectedType = null)
             {
                 switch (expression)
                 {
@@ -2682,9 +2706,21 @@ public static class Binder
                         AddCall(DependencyName(value.Value.Text, names)); break;
                     case CallSyntax call:
                         var callCompletesArguments = true;
-                        foreach (var argument in call.Arguments)
+                        var callSignature = !names.Contains(call.Name.Text) && signatures.TryGetValue(DependencyName(call.Name.Text, names), out var knownCall) ? knownCall : null;
+                        var callTypeSubstitutions = new Dictionary<string, string>(StringComparer.Ordinal);
+                        if (callSignature is not null && call.TypeArguments.Count == callSignature.TypeParameters.Count)
+                            for (var typeIndex = 0; typeIndex < call.TypeArguments.Count; typeIndex++)
+                                callTypeSubstitutions[callSignature.TypeParameters[typeIndex].Text] =
+                                    ScopedType(call.TypeArguments[typeIndex], functionTypeScopes[source.Name.Text]).Text;
+                        for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
                         {
-                            Expression(argument, names);
+                            var argument = call.Arguments[argumentIndex];
+                            var argumentExpected = callSignature is not null && argumentIndex < callSignature.Parameters.Count
+                                ? callSignature.Parameters[argumentIndex].Type.Text : null;
+                            if (argumentExpected is not null && callTypeSubstitutions.Count > 0 &&
+                                GenericTypes.TrySubstitute(argumentExpected, callTypeSubstitutions, out var resolvedExpected))
+                                argumentExpected = resolvedExpected;
+                            Expression(argument, names, argumentExpected);
                             if (!includeUnreachable && NeverExpression(argument)) { callCompletesArguments = false; break; }
                         }
                         if (!callCompletesArguments) break;
@@ -2711,9 +2747,11 @@ public static class Binder
                             Expression(member.Receiver, names);
                             if (includeUnreachable || !NeverExpression(member.Receiver))
                             {
-                                foreach (var argument in member.Arguments)
+                                for (var argumentIndex = 0; argumentIndex < member.Arguments.Count; argumentIndex++)
                                 {
-                                    Expression(argument, names);
+                                    var argument = member.Arguments[argumentIndex];
+                                    MemberArgument(argument, member.Member.Text, member.ExtensionCandidates,
+                                        member.Receiver, argumentIndex, names, conditional: true);
                                     if (!includeUnreachable && NeverExpression(argument)) break;
                                 }
                                 var conditionalTarget = StaticConditionalCall(member, names);
@@ -2790,7 +2828,13 @@ public static class Binder
                             Expression(member.Receiver, names);
                         }
                         if (includeUnreachable || !NeverExpression(member.Receiver))
-                            foreach (var argument in member.Arguments) { Expression(argument, names); if (!includeUnreachable && NeverExpression(argument)) break; }
+                            for (var argumentIndex = 0; argumentIndex < member.Arguments.Count; argumentIndex++)
+                            {
+                                var argument = member.Arguments[argumentIndex];
+                                MemberArgument(argument, member.Member.Text, member.ExtensionCandidates,
+                                    member.Receiver, argumentIndex, names);
+                                if (!includeUnreachable && NeverExpression(argument)) break;
+                            }
                         break;
                     case InvokeSyntax invocation:
                         Expression(invocation.Receiver, names);
@@ -2838,7 +2882,9 @@ public static class Binder
                             foreach (var parameter in lambda.Parameters)
                                 if (parameter.Type is { } annotation)
                                     knownTypes[parameter.Name.Text] = ScopedType(annotation, functionTypeScopes[source.Name.Text]).Text;
-                            Block(lambda.Body, lambdaNames);
+                            var lambdaExpected = expectedType is not null && GenericTypes.TryParse(expectedType, out var lambdaShape) && lambdaShape.IsFunction
+                                ? lambdaShape.Arguments[^1].ToString() : null;
+                            Block(lambda.Body, lambdaNames, lambdaExpected);
                         });
                         break;
                     case ForSyntax loop:
@@ -2870,8 +2916,8 @@ public static class Binder
                             // A dead branch that can complete still contributes to
                             // the checked conditional's common type. A dead branch
                             // that cannot complete contributes only unreachable exits.
-                            if (condition != false || includeDeadBranches && !NeverBlock(conditional.Then) && !NeverBlock(conditional.Else)) Block(conditional.Then, names);
-                            if (condition != true || includeDeadBranches && !NeverBlock(conditional.Else) && !NeverBlock(conditional.Then)) Block(conditional.Else, names);
+                            if (condition != false || includeDeadBranches && !NeverBlock(conditional.Then) && !NeverBlock(conditional.Else)) Block(conditional.Then, names, expectedType);
+                            if (condition != true || includeDeadBranches && !NeverBlock(conditional.Else) && !NeverBlock(conditional.Then)) Block(conditional.Else, names, expectedType);
                         }
                         break;
                     case MatchSyntax match:
@@ -2922,13 +2968,13 @@ public static class Binder
                             {
                                 if (arm.Guard is not null) Expression(arm.Guard, armNames);
                                 if (includeUnreachable || arm.Guard is null || !NeverExpression(arm.Guard) &&
-                                    (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames);
+                                    (LiteralBool(arm.Guard) != false || includeDeadBranches && hasCompletingReachableArm)) Expression(arm.Value, armNames, expectedType);
                             });
                             if (arm.Guard is null) earlierPatterns.Add(arm.Pattern);
                             if (!includeUnreachable && !includeDeadBranches && arm.Guard is null && arm.Pattern is WildcardPatternSyntax) break;
                         }
                         break;
-                    case GroupSyntax group: Expression(group.Inner, names); break;
+                    case GroupSyntax group: Expression(group.Inner, names, expectedType); break;
                     case TupleSyntax tuple:
                         foreach (var element in tuple.Elements)
                         {
@@ -2963,7 +3009,41 @@ public static class Binder
                         break;
                     case AwaitSyntax awaited: Expression(awaited.Operand, names); break;
                     case PropagateSyntax propagation: Expression(propagation.Operand, names); break;
-                    case FieldAccessSyntax access: Expression(access.Receiver, names); break;
+                    case FieldAccessSyntax access:
+                        Expression(access.Receiver, names);
+                        // A bare member may be an extension method value when
+                        // later binding supplies an expected function type.
+                        // Such a value must not hide an indirect or recursive
+                        // dependency from omitted-return inference. Preserve
+                        // actual record fields and qualified union cases.
+                        var fieldQualifier = access.Receiver as ValueSyntax;
+                        var fieldUnion = fieldQualifier?.Value.Text == "Result" && !userResultType ? resultSymbol :
+                            fieldQualifier?.Value.Text == "Option" && !userOptionType ? optionSymbol : fieldQualifier?.Value.Text;
+                        var qualifiedCase = fieldQualifier is not null && !names.Contains(fieldQualifier.Value.Text) &&
+                            fieldUnion is not null && unions.ContainsKey(fieldUnion);
+                        if (!qualifiedCase && expectedType is not null && GenericTypes.TryParse(expectedType, out var fieldExpected) &&
+                            (fieldExpected.IsFunction || fieldExpected.Arguments.Count == 0 && signatures.Values.Any(signature =>
+                                signature.TypeParameters.Any(parameter => parameter.Text == fieldExpected.Name))) &&
+                            StaticRecordField(access.Receiver, access.Field.Text, names, false) is null)
+                        {
+                            var fieldReceiver = StaticType(access.Receiver, names);
+                            // Unknown receiver types can still be ordinary
+                            // record fields. Do not let a merely possible
+                            // extension change their established inference.
+                            // Actual method-value binding in an inferred body
+                            // is checked below after lookup resolves the target.
+                            var couldBeField = fieldReceiver is null && records.Values.Any(record =>
+                                record.Fields.Any(field => field.Name.Text == access.Field.Text));
+                            var possibleMethods = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
+                                (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
+                                (fieldReceiver is null || signatures[extension.Id].Parameters[0].Type.Text == fieldReceiver)).ToArray();
+                            if (!couldBeField && possibleMethods.Length > 0)
+                            {
+                                foreach (var extension in possibleMethods) AddCall(extension.Id);
+                                indirect = true;
+                            }
+                        }
+                        break;
                     case ConditionalFieldAccessSyntax access: Expression(access.Receiver, names); break;
                     case RecordConstructionSyntax construction:
                         foreach (var field in construction.Fields)
@@ -2983,7 +3063,8 @@ public static class Binder
                         break;
                 }
             }
-            Block(source.Body ?? new BlockSyntax(source.Bindings, source.Expression ?? new ValueSyntax(source.Literal)), visible);
+            Block(source.Body ?? new BlockSyntax(source.Bindings, source.Expression ?? new ValueSyntax(source.Literal)), visible,
+                source.InferReturnType ? null : source.ReturnType.Text);
             return (calls, indirect, strictCalls, unknownReceiver);
         }
         var dependencyGraph = syntax.Functions.ToDictionary(function => function.Name.Text, function => AnalyzeDependencies(function), StringComparer.Ordinal);
@@ -4607,17 +4688,66 @@ public static class Binder
                             return BindQualifiedCase(qualifiedUnion, access.Field, Array.Empty<ExpressionSyntax>(), expectedResult: expectedResult);
                         var receiver = BindExpression(access.Receiver);
                         var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
-                        if (receiverType is not null && IsNullable(receiverType))
-                            Fail("DS2016", access.Field, "Nullable records require conditional access or matching.");
-                        if (!records.TryGetValue(Nominal(receiverType ?? ""), out var accessedRecord))
-                            Fail("DS2016", access.Field, "Field access requires a record value.");
-                        var accessedField = accessedRecord!.Fields.FirstOrDefault(field => field.Name.Text == access.Field.Text);
-                        if (accessedField is null) Fail("DS2016", access.Field, "Unknown record field.");
-                        var fieldSubstitutions = SubstitutionsFor(receiverType, accessedRecord.Name.Text, accessedRecord.TypeParameters);
-                        if (fieldSubstitutions is null) Fail("DS2023", access.Field, "Invalid generic record type.");
-                        var accessedFieldType = Substitute(accessedField!.Type.Text, fieldSubstitutions!, accessedField.Type);
-                        return (new BoundFieldAccess(Coerce(receiver.Expression, receiverType!, receiver.Type), receiverType!, access.Field.Text),
-                            receiver.Type == "<never>" ? "<never>" : accessedFieldType);
+                        var nullableMethodReceiver = receiverType is not null && IsNullable(receiverType);
+                        // An extension may explicitly target a nullable type.
+                        // Actual fields still require a non-null receiver.
+                        records.TryGetValue(nullableMethodReceiver ? "" : Nominal(receiverType ?? ""), out var accessedRecord);
+                        var accessedField = accessedRecord?.Fields.FirstOrDefault(field => field.Name.Text == access.Field.Text);
+                        // Real fields retain precedence even if their type does
+                        // not match the expected callable context.
+                        if (accessedField is not null)
+                        {
+                            var fieldSubstitutions = SubstitutionsFor(receiverType, accessedRecord!.Name.Text, accessedRecord.TypeParameters);
+                            if (fieldSubstitutions is null) Fail("DS2023", access.Field, "Invalid generic record type.");
+                            var accessedFieldType = Substitute(accessedField.Type.Text, fieldSubstitutions!, accessedField.Type);
+                            return (new BoundFieldAccess(Coerce(receiver.Expression, receiverType!, receiver.Type), receiverType!, access.Field.Text),
+                                receiver.Type == "<never>" ? "<never>" : accessedFieldType);
+                        }
+                        if (receiverType is not null && SupportedType(receiverType, activeTypeParameters) && DataType(receiverType) &&
+                            expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedMethod) &&
+                            expectedMethod.IsFunction && !expectedMethod.IsNullable)
+                        {
+                            // Collection method values are not implemented in
+                            // this slice. Do not select a same-name extension
+                            // in front of a possible real collection method.
+                            var collectionCollision = GenericTypes.TryParse(receiverType, out var methodReceiverShape) && !methodReceiverShape.IsNullable &&
+                                (methodReceiverShape.Name == listSymbol && access.Field.Text is "length" or "append" or "get" or "filter" or "map" or "fold" ||
+                                 methodReceiverShape.Name == mapSymbol && access.Field.Text is "count" or "contains" or "get" or "set" ||
+                                 methodReceiverShape.Name == setSymbol && access.Field.Text is "count" or "contains" or "add");
+                            if (!collectionCollision)
+                            {
+                                var methodCandidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
+                                    (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
+                                    signatures[extension.Id].Parameters[0].Type.Text == receiverType &&
+                                    TypeShape.FunctionName + "<" + string.Join(",", signatures[extension.Id].Parameters.Skip(1)
+                                        .Select(parameter => parameter.Type.Text).Append(CallableResult(signatures[extension.Id]))) + ">" == expectedResult).ToArray();
+                                if (methodCandidates.Length > 1)
+                                    Fail("DS2018", access.Field, "Ambiguous extension method value; candidates: " + string.Join(", ", methodCandidates.Select(extension =>
+                                        (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
+                                        extension.Method.Name.Span.Line.ToString(CultureInfo.InvariantCulture) + ":" + extension.Method.Name.Span.Column.ToString(CultureInfo.InvariantCulture) + ")")
+                                        .OrderBy(name => name, StringComparer.Ordinal)) + ".");
+                                if (methodCandidates.Length == 1)
+                                {
+                                    if (inferencePass && inferenceReachable && inferredReturns is not null)
+                                        Fail("DS2027", access.Field, "An explicit return type is required for extension method values.");
+                                    var extension = methodCandidates[0];
+                                    var methodTarget = signatures[extension.Id];
+                                    var formalTypes = methodTarget.Parameters.Select(parameter => parameter.Type.Text).ToArray();
+                                    if (CapabilityType(formalTypes[0]))
+                                        Fail("DS2026", access.Field, "A method value cannot capture a service or interface reference.");
+                                    var result = CallableResult(methodTarget);
+                                    var fullType = TypeShape.FunctionName + "<" + string.Join(",", formalTypes.Append(result)) + ">";
+                                    if (methodTarget.IsAsync) taskUsed = true;
+                                    return (new BoundPartial(new BoundFunctionReference(extension.Id, fullType, Array.Empty<string>()) { Location = access.Field }, fullType,
+                                        new[] { Coerce(receiver.Expression, formalTypes[0], receiver.Type) }, new[] { formalTypes[0] },
+                                        formalTypes.Skip(1).ToArray(), result, expectedResult), receiver.Type == "<never>" ? "<never>" : expectedResult);
+                                }
+                            }
+                        }
+                        if (nullableMethodReceiver) Fail("DS2016", access.Field, "Nullable records require conditional access or matching.");
+                        if (accessedRecord is null) Fail("DS2016", access.Field, "Field access requires a record value.");
+                        Fail("DS2016", access.Field, "Unknown record field.");
+                        throw new InvalidOperationException("Unreachable field access binding.");
                     case RecordUpdateSyntax update:
                         var original = BindExpression(update.Receiver);
                         var originalType = original.Type == "<never>" ? KnownType(original.Expression) : original.Type;
