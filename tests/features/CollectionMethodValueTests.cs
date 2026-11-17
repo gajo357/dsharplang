@@ -5,10 +5,11 @@ using System.Runtime.Loader;
 using DSharp.Compiler;
 using Xunit;
 
-public sealed class C201
+namespace DSharp.Tests;
+
+public sealed class CollectionMethodValueTests
 {
-    [Fact]
-    public async Task Run()
+    public async Task CollectionMethodValuesExecuteAndRejectInvalidPrograms()
     {
         const string source = """
             module Demo

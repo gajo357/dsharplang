@@ -25,7 +25,7 @@ Allow an expected non-nullable callable type to select an applicable bare immuta
 ## Verification
 
 - `bash .github/ai/bootstrap.sh`: passed.
-- `bash scripts/verify-compiler.sh`: passed (18 compiler and 379 feature tests).
+- `bash scripts/verify-compiler.sh`: passed initially (18 compiler and 379 feature tests). GitHub then passed all tests but rejected its oversized report. The new suite and one existing check were moved into the established aggregate without changing their bodies or assertions; the final rerun passed (18 compiler and 377 feature results).
 - `bash .github/ai/verify.sh`: documentation and 25 automation tests passed; the isolated compiler stage could not pull the pinned SDK image locally because the registry returned `Forbidden`. GitHub CI runs that stage.
 - Focused generated-code tests built with warnings as errors and executed List, Map and Set method values, nullable/Option distinctions, generic map/fold, zero-argument calls, callback and receiver order, and async receiver behavior.
 - Independent probes covered field and extension precedence, recursive and dynamic inference, shadowing and rejected resource/builder/service captures.

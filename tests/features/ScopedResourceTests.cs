@@ -301,6 +301,8 @@ public sealed class ScopedResourceTests
         await new ConditionalCallTests().ConditionalCallsPreserveNullAndEvaluationOrder();
         new NullableOperatorTests().CoalescingIsRightAssociativeAndConditionalAccessParsesInsideConditions();
         new CommentTests().UnterminatedBlockCommentPointsAtOpeningDelimiter();
+        new CommentTests().NestedBlockCommentIsRejectedAtTheNestedOpener();
+        await new CollectionMethodValueTests().CollectionMethodValuesExecuteAndRejectInvalidPrograms();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
