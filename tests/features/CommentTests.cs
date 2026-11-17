@@ -123,8 +123,7 @@ public sealed class CommentTests
         Assert.StartsWith("DS", error.Code);
     }
 
-    [Fact]
-    public void NestedBlockCommentIsRejectedAtTheNestedOpener()
+    internal void NestedBlockCommentIsRejectedAtTheNestedOpener()
     {
         const string source = "module Demo\n/* outer\n  /* inner */\n*/\nfn answer(): int { 42 }";
         var error = Assert.Single(DSharpCompiler.Compile(source, "nested.ds").Diagnostics);

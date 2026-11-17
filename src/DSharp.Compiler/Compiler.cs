@@ -4707,13 +4707,93 @@ public static class Binder
                             expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedMethod) &&
                             expectedMethod.IsFunction && !expectedMethod.IsNullable)
                         {
-                            // Collection method values are not implemented in
-                            // this slice. Do not select a same-name extension
-                            // in front of a possible real collection method.
+                            // Capture only a real immutable collection method
+                            // whose complete callable type is fixed by context.
+                            // As for empty-prefix calls, retain the receiver once
+                            // and defer the operation until invocation.
                             var collectionCollision = GenericTypes.TryParse(receiverType, out var methodReceiverShape) && !methodReceiverShape.IsNullable &&
                                 (methodReceiverShape.Name == listSymbol && access.Field.Text is "length" or "append" or "get" or "filter" or "map" or "fold" ||
                                  methodReceiverShape.Name == mapSymbol && access.Field.Text is "count" or "contains" or "get" or "set" ||
                                  methodReceiverShape.Name == setSymbol && access.Field.Text is "count" or "contains" or "add");
+                            if (collectionCollision)
+                            {
+                                string[]? parameters = null;
+                                string? returnType = null;
+                                string? methodTypeArgument = null;
+                                var methodName = access.Field.Text;
+                                if (methodReceiverShape!.Name == listSymbol && methodReceiverShape.Arguments.Count == 1)
+                                {
+                                    var element = methodReceiverShape.Arguments[0].ToString();
+                                    switch (methodName)
+                                    {
+                                        case "length": parameters = Array.Empty<string>(); returnType = "int"; break;
+                                        case "append": parameters = new[] { element }; returnType = receiverType; break;
+                                        case "get": parameters = new[] { "int" }; returnType = optionSymbol + "<" + element + ">"; break;
+                                        case "filter": parameters = new[] { TypeShape.FunctionName + "<" + element + ",bool>" }; returnType = receiverType; break;
+                                        case "map" when expectedMethod.Arguments.Count == 2:
+                                        {
+                                            var callback = expectedMethod.Arguments[0];
+                                            var result = expectedMethod.Arguments[1];
+                                            if (callback.IsFunction && !callback.IsNullable && callback.Arguments.Count == 2 &&
+                                                callback.Arguments[0].ToString() == element && result.Name == listSymbol && !result.IsNullable &&
+                                                result.Arguments.Count == 1 && callback.Arguments[1].ToString() == result.Arguments[0].ToString())
+                                            {
+                                                methodTypeArgument = callback.Arguments[1].ToString();
+                                                parameters = new[] { callback.ToString() };
+                                                returnType = result.ToString();
+                                            }
+                                            break;
+                                        }
+                                        case "fold" when expectedMethod.Arguments.Count == 3:
+                                        {
+                                            var accumulator = expectedMethod.Arguments[0].ToString();
+                                            var callback = expectedMethod.Arguments[1];
+                                            if (callback.IsFunction && !callback.IsNullable && callback.Arguments.Count == 3 &&
+                                                callback.Arguments[0].ToString() == accumulator && callback.Arguments[1].ToString() == element &&
+                                                callback.Arguments[2].ToString() == accumulator && expectedMethod.Arguments[2].ToString() == accumulator)
+                                            {
+                                                methodTypeArgument = accumulator;
+                                                parameters = new[] { accumulator, callback.ToString() };
+                                                returnType = accumulator;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                else if (methodReceiverShape.Name == mapSymbol && methodReceiverShape.Arguments.Count == 2)
+                                {
+                                    var key = methodReceiverShape.Arguments[0].ToString();
+                                    var value = methodReceiverShape.Arguments[1].ToString();
+                                    switch (methodName)
+                                    {
+                                        case "count": parameters = Array.Empty<string>(); returnType = "int"; break;
+                                        case "get": parameters = new[] { key }; returnType = optionSymbol + "<" + value + ">"; break;
+                                        case "contains": parameters = new[] { key }; returnType = "bool"; break;
+                                        case "set": parameters = new[] { key, value }; returnType = receiverType; break;
+                                    }
+                                }
+                                else if (methodReceiverShape.Name == setSymbol && methodReceiverShape.Arguments.Count == 1)
+                                {
+                                    var element = methodReceiverShape.Arguments[0].ToString();
+                                    switch (methodName)
+                                    {
+                                        case "count": parameters = Array.Empty<string>(); returnType = "int"; break;
+                                        case "contains": parameters = new[] { element }; returnType = "bool"; break;
+                                        case "add": parameters = new[] { element }; returnType = receiverType; break;
+                                    }
+                                }
+                                if (parameters is not null && returnType is not null &&
+                                    TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(returnType)) + ">" == expectedResult &&
+                                    (methodTypeArgument is null || SupportedType(methodTypeArgument, activeTypeParameters) &&
+                                        (methodName != "map" || DataType(methodTypeArgument))))
+                                {
+                                    if (methodName == "get") optionUsed = true;
+                                    var partial = new BoundCollectionMethodPartial(receiver.Expression, receiverType, methodName,
+                                        parameters, returnType, expectedResult);
+                                    if (methodTypeArgument is not null) partial = partial with { TypeArguments = new[] { methodTypeArgument } };
+                                    return (partial, receiver.Type == "<never>" ? "<never>" : expectedResult);
+                                }
+                            }
                             if (!collectionCollision)
                             {
                                 var methodCandidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
