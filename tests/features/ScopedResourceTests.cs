@@ -303,6 +303,7 @@ public sealed class ScopedResourceTests
         new CommentTests().UnterminatedBlockCommentPointsAtOpeningDelimiter();
         new CommentTests().NestedBlockCommentIsRejectedAtTheNestedOpener();
         await new CollectionMethodValueTests().CollectionMethodValuesExecuteAndRejectInvalidPrograms();
+        await new CollectionMethodPipeTests().CollectionMethodPipesExecuteAndRejectInvalidPrograms();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

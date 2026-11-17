@@ -27,7 +27,7 @@ The user also requested one match case per line for future D# examples. Update t
 ## Verification
 
 - `bash .github/ai/bootstrap.sh`: passed.
-- `bash scripts/verify-compiler.sh`: passed (18 compiler and 378 feature tests).
+- `bash scripts/verify-compiler.sh`: passed initially (18 compiler and 378 feature tests). GitHub then passed all tests but rejected its oversized report. The new suite was moved into the established aggregate without changing its assertions; the final rerun passed (18 compiler and 377 feature results).
 - `bash .github/ai/verify.sh`: documentation and 25 automation tests passed; the isolated compiler stage could not pull the pinned SDK image locally because the registry returned `Forbidden`. GitHub CI runs that stage.
 - Focused generated-code tests passed with warnings as errors for List/Map/Set pipes, staged calls, nullable and Option distinctions, generic callbacks, left-before-receiver order, async suspension and capability rejection.
 - Independent probes covered lexical/field/union precedence, dynamic and recursive inference, null keys, nullable generic fold and service/resource/builder capture.

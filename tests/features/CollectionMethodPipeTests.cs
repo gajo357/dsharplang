@@ -5,10 +5,11 @@ using System.Runtime.Loader;
 using DSharp.Compiler;
 using Xunit;
 
-public sealed class P203
+namespace DSharp.Tests;
+
+public sealed class CollectionMethodPipeTests
 {
-    [Fact]
-    public async Task Run()
+    public async Task CollectionMethodPipesExecuteAndRejectInvalidPrograms()
     {
         const string source = """
             module Demo
