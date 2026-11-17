@@ -25,7 +25,7 @@ Infer omitted returns through checked acyclic pipes to statically proven intrins
 ## Verification
 
 - `bash .github/ai/bootstrap.sh`: passed.
-- `bash scripts/verify-compiler.sh`: passed (18 compiler and 379 feature tests).
+- `bash scripts/verify-compiler.sh`: passed initially (18 compiler and 379 feature tests). GitHub then passed every test but rejected its oversized report. The new suite and one existing check now run in the established aggregate without changing their bodies or assertions; the final rerun passed (18 compiler and 377 feature results).
 - `bash .github/ai/verify.sh`: documentation and all 25 automation tests passed; the isolated compiler stage could not pull the pinned SDK image locally because the registry returned `Forbidden`. GitHub CI runs that stage.
 - Focused generated-code tests passed with warnings as errors, covering List/Map/Set pipelines, staged set/fold, generic nullable and Option values, static callbacks, imports, source order, and conservative diagnostics.
 - Independent adversarial probes covered post-saturation invocation, callback cycles, lexical shadowing, same-name extensions and service/resource dispatch including factories and aliases.

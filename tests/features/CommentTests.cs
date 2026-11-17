@@ -102,8 +102,7 @@ public sealed class CommentTests
         });
     }
 
-    [Fact]
-    public void MultilineCommentsAndUnicodePreserveUtf16Location()
+    internal void MultilineCommentsAndUnicodePreserveUtf16Location()
     {
         const string source = "module Demo\r\n/* 🌍\r\ncomment */\r\nfn answer(): int {\r\n  missing\r\n}\r\n";
         var compilation = DSharpCompiler.Compile(source, "unicode.ds");

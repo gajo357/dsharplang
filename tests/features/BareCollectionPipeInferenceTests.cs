@@ -5,10 +5,11 @@ using System.Runtime.Loader;
 using DSharp.Compiler;
 using Xunit;
 
-public sealed class BI207
+namespace DSharp.Tests;
+
+public sealed class BareCollectionPipeInferenceTests
 {
-    [Fact]
-    public async Task Run()
+    public async Task BareCollectionPipesInferAndRejectInvalidPrograms()
     {
         const string source = """
             module Demo
