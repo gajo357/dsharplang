@@ -487,6 +487,15 @@ dispatch, ambiguous targets and recursive dependencies still require annotations
 The conditional-call restrictions in #193 remain unchanged. See the
 [D# example](../../examples/conditional_inference.ds) and
 [implementation plan](implementation/issue-195-plan.md).
+[Issue #207](https://github.com/gajo357/dsharplang/issues/207) extends omitted
+return inference to checked, acyclic pipes through provably intrinsic bare List,
+Map and Set methods, including supported staged calls. Invoked callbacks must be
+statically known where their dependencies are needed. Unknown callbacks or method
+values, ambiguous or unproven targets, service/interface or resource dispatch,
+and recursive dependencies remain conservative. The existing collection method
+and lifetime restrictions remain unchanged. See the
+[D# example](../../examples/bare_collection_pipe_inference.ds) and
+[implementation plan](implementation/issue-207-plan.md).
 [Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
 partial application of ordinary functions and function values. Supplied values
 and dynamic receivers are evaluated once when a partial is formed; calls run
@@ -599,7 +608,8 @@ not pipe targets. Ordinary field and union resolution,
 existing capability, resource and builder restrictions, and conservative checks
 for dynamic callbacks and recursive dependencies continue to apply. Bare
 extension-method pipes and uncontextualized bare methods remain unsupported;
-unproven omitted returns may require an annotation. See the
+checked, acyclic omitted returns can be inferred in the proven cases described
+in #207, while unproven targets still require an annotation. See the
 [D# example](../../examples/collection_method_pipes.ds) and
 [implementation plan](implementation/issue-203-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
