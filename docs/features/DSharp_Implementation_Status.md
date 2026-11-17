@@ -57,7 +57,7 @@ external interoperability guarantee follows from this lowering. See the
 | Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
-| Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit | Source evaluates once, elements are visited in order, iteration captures are independent, and return/Result propagation leave the enclosing function or lambda |
+| Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit and async contexts can await inside it | Source evaluates once, iteration captures are independent, each iteration completes before the next, and return/Result propagation leave the enclosing function or lambda |
 | Method-local mutable builders | `MutableList<T>()` and `MutableMap<K,V>()` with local aliases, Unit-valued `add`/`set`, and `freeze`; escape and lambda capture rejected | Frozen lists and structurally keyed maps remain unchanged by subsequent mutations; builders created inside a lambda belong to its invocation |
 | Async functions and await | Explicit `async fn` with logical return annotation; `Task<T>` calls and `await` in async functions | Tasks suspend and resume without blocking; nested expressions, early return, Result propagation and same-invocation builders preserve their behavior |
 | Async lambdas | Explicit `async` lambdas with typed or contextually inferred parameters, immutable captures and `Task<T>` results | Awaited closures suspend and resume; return and Result propagation remain local to the lambda |
@@ -402,8 +402,17 @@ invocation; borrowing remains separate work. See the [D# example](../../examples
 `for/in` over immutable lists, including generic lists and nested loops. The
 iteration binding follows the existing no-shadowing rule and is scoped to the
 body. Empty lists do not execute it; a return exits the nearest function or
-lambda. Map/Set iteration order and async iteration remain separate work. See the
+lambda. Map/Set iteration order remains separate work. See the
 [D# example](../../examples/for-in.ds) and [plan](implementation/issue-39-plan.md).
+[Issue #205](https://github.com/gajo357/dsharplang/issues/205) verifies `await`
+inside the Unit body of an ordinary List `for` in an async context. Incomplete
+operations suspend the current iteration before the next starts; failures and
+cancellation stop later iterations. Tested paths include early return, Result
+propagation, async lambdas and invocation-local builders across suspension.
+This is sequential List iteration, not an async enumerable, `await foreach`,
+or parallel iteration. See the
+[D# example](../../examples/async_for.ds) and
+[implementation plan](implementation/issue-205-plan.md).
 [Issue #31](https://github.com/gajo357/dsharplang/issues/31) adds the standard
 `Result<T,E>` union, `Success(value)`, `Error(error)` and `Success()` for Unit.
 Nullable success values match directly as `Success(value)` or `Success(null)`;

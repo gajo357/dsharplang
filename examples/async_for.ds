@@ -1,0 +1,15 @@
+module Demo
+
+async fn fetch(value: int): int {
+    value
+}
+
+// Each iteration finishes its await before the next begins.
+async fn answer(): int {
+    let results = MutableList<int>()
+    for value in [19, 23] {
+        let fetched = await fetch(value)
+        results.add(fetched)
+    }
+    results.freeze().fold(0, (total: int, value: int) => total + value)
+}
