@@ -1,0 +1,19 @@
+module Demo
+
+type Customer { name: string? }
+
+extend Customer {
+    fn display(self, fallback: string): string {
+        self.name ?? fallback
+    }
+}
+
+// Missing customers skip the method and its arguments; present ones call it.
+fn label(customer: Customer?): string {
+    customer?.display("Anonymous") ?? "No customer"
+}
+
+fn answer(): string {
+    let customer: Customer? = Customer { name = "Ada" }
+    label(customer)
+}

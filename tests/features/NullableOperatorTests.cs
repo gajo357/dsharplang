@@ -9,8 +9,7 @@ namespace DSharp.Tests;
 
 public sealed class NullableOperatorTests
 {
-    [Fact]
-    public void CoalescingIsRightAssociativeAndConditionalAccessParsesInsideConditions()
+    internal void CoalescingIsRightAssociativeAndConditionalAccessParsesInsideConditions()
     {
         const string source = """
             module Demo

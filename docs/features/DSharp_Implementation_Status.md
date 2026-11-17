@@ -39,7 +39,7 @@ external interoperability guarantee follows from this lowering. See the
 | Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
 | Exhaustive match and guards | Nested union, bool, Unit and primitive patterns, lexical bindings, wildcard and bool guards; checked coverage | Scrutinee evaluates once; first matching arm and its guard execute in source order |
 | Nullable values and direct matching | `T?` and `null` in supported signatures, locals, record fields and union payloads; present-value match narrows to `T` | Present and null values remain distinct for scalar, Unit and reference types |
-| Nullable fallback and field access | Lazy, right-associative `??` and null-preserving `?.` for record fields; nullable fields flatten | Fallback and receiver evaluate only as needed; nested chains preserve absence |
+| Nullable fallback and conditional access | Lazy, right-associative `??` and null-preserving `?.` for record fields and supported immutable-value calls; nullable results flatten | Receiver evaluates once; fallback and conditional call arguments evaluate only as needed |
 | Generic data and functions | Type parameters, explicit calls, structural inference and idempotent nullable substitution | Generic nullable calls, returns, record and union fields, lists and maps preserve null and present values for value and reference types |
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
@@ -204,8 +204,19 @@ and [implementation plan](implementation/issue-28-plan.md).
 [Issue #29](https://github.com/gajo357/dsharplang/issues/29) adds lazy,
 right-associative `??` and conditional record-field access via `?.`. A conditional
 field read returns a nullable value, flattening an already-nullable field; chained
-reads preserve absence. Conditional method calls remain unsupported. See [the example](../../examples/nullable-operators.ds) and
+reads preserve absence. See [the example](../../examples/nullable-operators.ds) and
 [implementation plan](implementation/issue-29-plan.md).
+[Issue #193](https://github.com/gajo357/dsharplang/issues/193) adds conditional
+calls to fully supplied synchronous immutable-value methods, including supported
+collection operations and visible extensions. The receiver evaluates once; when
+it is null, the arguments and method body are skipped. Results are nullable, with
+already-nullable results flattened; `Option` values retain their own cases. The
+normal member and extension resolution and lifetime restrictions apply. Conditional
+partials, Task results, and service, interface, resource or builder dispatch remain
+unsupported. Omitted-return inference remains conservative for conditional calls,
+so the enclosing function needs an explicit return type. See the
+[D# example](../../examples/conditional_calls.ds) and
+[implementation plan](implementation/issue-193-plan.md).
 [Issue #30](https://github.com/gajo357/dsharplang/issues/30) implements generic
 records, unions and functions, including explicit type arguments and
 unambiguous inference through supported argument and result types. Generic call

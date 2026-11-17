@@ -243,6 +243,17 @@ internal static class MultiFileResolver
                                 return call with { Name = Rename(call.Name, builderType.Internal), Arguments = callArguments, TypeArguments = callTypes };
                         }
                         return foundCall?.Kind switch { "function" or "service" or "resource" => call with { Name = Rename(call.Name, foundCall.Internal), Arguments = callArguments, TypeArguments = callTypes }, "case" => CaseCall(foundCall, call.Name, call.OpenParen, callArguments, callTypes), _ => call with { Arguments = callArguments, TypeArguments = callTypes } };
+                    case ConditionalMemberCallSyntax conditionalMember:
+                        // The receiver is a value expression, never a module or
+                        // type qualifier. Apply the same file-scoped extension
+                        // visibility and generic resolution as ordinary calls.
+                        return conditionalMember with
+                        {
+                            Receiver = Expression(conditionalMember.Receiver, scope, typeParameters),
+                            Arguments = conditionalMember.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray(),
+                            TypeArguments = Types(conditionalMember.TypeArguments, typeParameters),
+                            ExtensionCandidates = VisibleExtensions(conditionalMember.Member.Text)
+                        };
                     case MemberCallSyntax member:
                         var memberArgs = member.Arguments.Select(a => Expression(a, scope, typeParameters)).ToArray();
                         var memberTypes = Types(member.TypeArguments, typeParameters);

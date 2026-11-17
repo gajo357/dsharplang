@@ -114,8 +114,7 @@ public sealed class CommentTests
         Assert.Equal(new SourceSpan(source.IndexOf("missing", StringComparison.Ordinal), 7, 5, 3), error.Span);
     }
 
-    [Fact]
-    public void UnterminatedBlockCommentPointsAtOpeningDelimiter()
+    internal void UnterminatedBlockCommentPointsAtOpeningDelimiter()
     {
         const string source = "module Demo\r\nfn answer(): int {\r\n  42\r\n}\r\n/* never closed\r\nmore";
         var error = Assert.Single(DSharpCompiler.Compile(source, "unclosed.ds").Diagnostics);
