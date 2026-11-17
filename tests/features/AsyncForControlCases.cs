@@ -11,12 +11,12 @@ public sealed class AsyncForControlCases
     {
         const string source = """
             module Demo
-            
+
             interface Tracker {
                 mark(value: int): int
                 async released(value: int): int
             }
-            
+
             resource Lease(id: int, tracker: Tracker) {
                 read(): int { id }
                 release(): Unit {
@@ -24,7 +24,7 @@ public sealed class AsyncForControlCases
                     ()
                 }
             }
-            
+
 
             resource AsyncLease(id: int, tracker: Tracker) {
                 async release(): Unit {
@@ -62,7 +62,7 @@ public sealed class AsyncForControlCases
                 }
                 values.freeze().length()
             }
-            
+
             fn makeLambda(): ((int)->Task<int>)->Task<int> {
                 async (tick: (int)->Task<int>) => {
                     for item in [1, 2, 3] {
@@ -72,18 +72,18 @@ public sealed class AsyncForControlCases
                     0
                 }
             }
-            
+
             async fn lambdaOuter(tick: (int)->Task<int>): int {
                 let run = makeLambda()
                 let result = await run(tick)
                 result + 2
             }
-            
+
             async fn check(value: int, gate: Task<int>): Result<int,string> {
                 let ignored = await gate
                 if value == 2 { Error("stop") } else { Success(value) }
             }
-            
+
             async fn propagated(mark: (int)->int, gate: Task<int>): Result<int,string> {
                 for item in [1, 2, 3] {
                     let seen = mark(item)
@@ -92,7 +92,7 @@ public sealed class AsyncForControlCases
                 }
                 Success(42)
             }
-            
+
             async fn propagatedOutput(mark: (int)->int, gate: Task<int>): int {
                 let result = await propagated(mark, gate)
                 match result
@@ -101,7 +101,7 @@ public sealed class AsyncForControlCases
                     Error(_) => -1
                 }
             }
-            
+
             async fn preserve<T>(values: List<T?>, gate: Task<int>): List<T?> {
                 let builder = MutableList<T?>()
                 for item in values {
@@ -110,7 +110,7 @@ public sealed class AsyncForControlCases
                 }
                 builder.freeze()
             }
-            
+
             async fn nullableAnswer(gate: Task<int>): int {
                 let values = await preserve<int?>([null, 42], gate)
                 if values.get(0) == Some(null) {
@@ -122,7 +122,7 @@ public sealed class AsyncForControlCases
                     }
                 } else { 0 }
             }
-            
+
             async fn resourceLoop(tracker: Tracker, gate: Task<int>): int {
                 for item in [1, 2] {
                     using lease = Lease(item, tracker)
