@@ -1,0 +1,13 @@
+module Demo
+
+fn first(values: List<int>) {
+    0 |> values.get
+}
+
+fn answer(): int {
+    match first([42])
+    {
+        Some(value) => value
+        None => 0
+    }
+}

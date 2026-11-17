@@ -2681,6 +2681,67 @@ public static class Binder
                 if (StaticallyListFoldPrefix(member, names)) return arguments.Count == 0 || StaticCallback(arguments[0], names);
                 return StaticallyPartialExtension(member, names);
             }
+            // A bare collection member can be resolved by the first pipe
+            // value. Retain each subsequent application boundary: once the
+            // intrinsic is saturated, another invocation targets its result
+            // and is not a statically known collection call.
+            bool StaticallyBareCollectionPartial(ExpressionSyntax target, IReadOnlyList<ExpressionSyntax> supplied, HashSet<string> names)
+            {
+                var stages = new List<IReadOnlyList<ExpressionSyntax>> { supplied };
+                while (true)
+                {
+                    if (target is GroupSyntax group) { target = group.Inner; continue; }
+                    if (target is InvokeSyntax invocation)
+                    {
+                        stages.Insert(0, invocation.Arguments);
+                        target = invocation.Receiver;
+                        continue;
+                    }
+                    if (target is PipeSyntax pipe)
+                    {
+                        stages.Insert(0, new[] { pipe.Left });
+                        target = pipe.Right;
+                        continue;
+                    }
+                    break;
+                }
+                if (target is not FieldAccessSyntax member) return false;
+                var receiver = StaticType(member.Receiver, names);
+                int arity;
+                int callback = -1;
+                if (IsIntrinsic(receiver, listSymbol, unknownListType, 1))
+                {
+                    switch (member.Field.Text)
+                    {
+                        case "append": case "get": arity = 1; break;
+                        case "filter": case "map": arity = 1; callback = 0; break;
+                        case "fold": arity = 2; callback = 1; break;
+                        default: return false;
+                    }
+                }
+                else if (IsIntrinsic(receiver, mapSymbol, unknownMapType, 2))
+                {
+                    switch (member.Field.Text)
+                    {
+                        case "get": case "contains": arity = 1; break;
+                        case "set": arity = 2; break;
+                        default: return false;
+                    }
+                }
+                else if (IsIntrinsic(receiver, setSymbol, unknownSetType, 1))
+                {
+                    if (member.Field.Text is not ("contains" or "add")) return false;
+                    arity = 1;
+                }
+                else return false;
+                var arguments = new List<ExpressionSyntax>();
+                foreach (var stage in stages)
+                {
+                    if (arguments.Count >= arity || stage.Count > arity - arguments.Count) return false;
+                    arguments.AddRange(stage);
+                }
+                return callback < 0 || arguments.Count <= callback || StaticCallback(arguments[callback], names);
+            }
             void WithUnknownNames(IEnumerable<string> hidden, Action action)
             {
                 var previousTypes = knownTypes;
@@ -2837,17 +2898,32 @@ public static class Binder
                             }
                         break;
                     case InvokeSyntax invocation:
-                        Expression(invocation.Receiver, names);
-                        var invokeCompletes = includeUnreachable || !NeverExpression(invocation.Receiver);
-                        if (invokeCompletes)
-                            foreach (var argument in invocation.Arguments)
-                            {
-                                Expression(argument, names);
-                                if (!includeUnreachable && NeverExpression(argument)) { invokeCompletes = false; break; }
-                            }
-                        if (invokeCompletes && !StaticallyCompletedPartial(invocation.Receiver, invocation.Arguments, names)) indirect = true;
+                    {
+                        var provenBare = StaticallyBareCollectionPartial(invocation.Receiver, invocation.Arguments, names);
+                        var previousStrict = strictContext;
+                        if (provenBare) strictContext = true;
+                        try
+                        {
+                            Expression(invocation.Receiver, names);
+                            var invokeCompletes = includeUnreachable || !NeverExpression(invocation.Receiver);
+                            if (invokeCompletes)
+                                foreach (var argument in invocation.Arguments)
+                                {
+                                    Expression(argument, names);
+                                    if (!includeUnreachable && NeverExpression(argument)) { invokeCompletes = false; break; }
+                                }
+                            if (invokeCompletes && !provenBare && !StaticallyCompletedPartial(invocation.Receiver, invocation.Arguments, names)) indirect = true;
+                        }
+                        finally { strictContext = previousStrict; }
                         break;
+                    }
                     case PipeSyntax pipe:
+                    {
+                        var provenBare = StaticallyBareCollectionPartial(pipe.Right, new[] { pipe.Left }, names);
+                        var previousStrict = strictContext;
+                        if (provenBare) strictContext = true;
+                        try
+                        {
                         Expression(pipe.Left, names);
                         if (!includeUnreachable && NeverExpression(pipe.Left)) break;
                         var pipeTarget = pipe.Right;
@@ -2866,14 +2942,17 @@ public static class Binder
                         else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
                             signatures.TryGetValue(DependencyName(partialCall.Name.Text, names), out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
                             Expression(pipeTarget, names);
-                        else if (StaticallyCompletedPartial(pipeTarget, new[] { pipe.Left }, names))
+                        else if (provenBare || StaticallyCompletedPartial(pipeTarget, new[] { pipe.Left }, names))
                             Expression(pipeTarget, names);
                         else
                         {
                             indirect = true;
                             Expression(pipe.Right, names);
                         }
+                        }
+                        finally { strictContext = previousStrict; }
                         break;
+                    }
                     case LambdaSyntax lambda:
                         var lambdaNames = new HashSet<string>(names, StringComparer.Ordinal);
                         foreach (var parameter in lambda.Parameters) lambdaNames.Add(parameter.Name.Text);
