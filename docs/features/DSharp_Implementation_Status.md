@@ -213,8 +213,9 @@ it is null, the arguments and method body are skipped. Results are nullable, wit
 already-nullable results flattened; `Option` values retain their own cases. The
 normal member and extension resolution and lifetime restrictions apply. Conditional
 partials, Task results, and service, interface, resource or builder dispatch remain
-unsupported. Omitted-return inference remains conservative for conditional calls,
-so the enclosing function needs an explicit return type. See the
+unsupported. Checked, acyclic calls with statically proven targets can infer an
+omitted enclosing return as described in #195; unproven targets still require an
+annotation. See the
 [D# example](../../examples/conditional_calls.ds) and
 [implementation plan](implementation/issue-193-plan.md).
 [Issue #30](https://github.com/gajo357/dsharplang/issues/30) implements generic
@@ -462,6 +463,16 @@ This does not make insufficiently typed generic empty prefixes valid or expand
 other partial-application families. See the
 [D# example](../../examples/empty_collection_inference.ds) and
 [implementation plan](implementation/issue-191-plan.md).
+[Issue #195](https://github.com/gajo357/dsharplang/issues/195) extends omitted
+return inference through checked, acyclic conditional calls to provably intrinsic
+immutable List, Map and Set methods and uniquely resolved visible extensions.
+Supported conditional chains, generic and nullable values, Option results and
+`??` retain their existing behavior. Inference follows possible receiver, argument,
+callback and extension dependencies; unknown callbacks, indirect or unproven
+dispatch, ambiguous targets and recursive dependencies still require annotations.
+The conditional-call restrictions in #193 remain unchanged. See the
+[D# example](../../examples/conditional_inference.ds) and
+[implementation plan](implementation/issue-195-plan.md).
 [Issue #135](https://github.com/gajo357/dsharplang/issues/135) adds positional
 partial application of ordinary functions and function values. Supplied values
 and dynamic receivers are evaluated once when a partial is formed; calls run
