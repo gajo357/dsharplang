@@ -1,0 +1,6 @@
+module Demo
+
+// No return annotation is needed for a checked, acyclic conditional call.
+fn count(items: List<int>?) { items?.length() ?? 0 }
+
+fn answer(): int { count([19, 23]) }
