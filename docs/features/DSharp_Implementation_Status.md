@@ -48,7 +48,7 @@ external interoperability guarantee follows from this lowering. See the
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions and provably static partial calls | Pipes evaluate their left value once before the target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
-| Extension partial application | A unique visible extension on immutable data accepts a positional prefix; empty prefixes need supported callable, pipe or grouped-call context | Receiver and supplied values are captured once in order; the body runs only when all arguments are supplied |
+| Extension partial application and values | Unique visible immutable-data extensions accept positional prefixes; empty prefixes and bare values need supported context | Receiver and supplied values are captured once; the body runs only on invocation |
 | Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
 | Immutable List.fold partial application | `items.fold(initial)` produces a function taking the fold callback | Receiver and initial are captured once in order; each completed call folds the captured list left to right |
 | Empty-prefix immutable collection methods | `List.append/get/filter`, `Map.get/contains/set` and `Set.add/contains` accept `()` as a partial call | Receiver is captured once; the intrinsic operation runs when its arguments are supplied |
@@ -301,8 +301,9 @@ their behavior; a compatible expected callable or pipe can select the intrinsic
 partial when that full result is incompatible. Omitted returns can be inferred
 through the statically proven immediate and staged calls described in #191;
 unproven targets still require an annotation. Contextual empty extension calls
-are described in #197; bare method values and service or interface method
-partials remain separate work under #129. See the
+are described in #197; contextual bare extension values are described in #199.
+Other bare method values and service or interface method partials remain separate
+work under #129. See the
 [D# example](../../examples/collection_empty_partials.ds) and
 [implementation plan](implementation/issue-187-plan.md).
 [Issue #189](https://github.com/gajo357/dsharplang/issues/189) adds empty-prefix
@@ -318,8 +319,9 @@ select the intrinsic when the extension result is incompatible, and ambiguous
 applicable extensions remain errors. Omitted returns can be inferred through
 the statically proven immediate and staged calls described in #191; unproven
 targets still require an annotation. Contextual empty extension calls are
-described in #197; bare method values and service/interface method partials
-remain separate work under #129. See the
+described in #197; contextual bare extension values are described in #199.
+Other bare method values and service/interface method partials remain separate
+work under #129. See the
 [D# example](../../examples/generic_list_empty_partials.ds) and
 [implementation plan](implementation/issue-189-plan.md).
 [Issue #43](https://github.com/gajo357/dsharplang/issues/43) adds interfaces and
@@ -508,7 +510,7 @@ argument match is required, and ambiguity reports the candidate origins. The
 receiver is evaluated once before the arguments. Extension targets cannot be
 builders or resources, and existing capability and ownership restrictions apply.
 Extensions cannot introduce fields or inheritance; generic extension methods
-and bare extension method values remain separate work. See the
+remain separate work. Contextual bare extension values are described in #199. See the
 [D# example](../../examples/extensions.ds) and
 [implementation plan](implementation/issue-47-plan.md).
 [Issue #179](https://github.com/gajo357/dsharplang/issues/179) adds partial
@@ -519,8 +521,9 @@ completed call. Expected callable types and pipes can resolve supported
 overloads, direct-import visibility and applicable real-member precedence are
 preserved, and async calls return tasks without starting the body early.
 Capabilities, resources and builders cannot be captured. Contextual empty-prefix
-extension calls are described in #197. Bare method values and service/interface
-method partials remain separate work. Tested pipes into statically resolved
+extension calls are described in #197, and contextual bare extension values in
+#199. Other method values and service/interface method partials remain separate
+work. Tested pipes into statically resolved
 extension partials can infer their enclosing return type, including names
 overlapping built-in members;
 unproven targets still require an annotation. See the
@@ -534,10 +537,27 @@ when its remaining arguments are supplied. Applicable real members and previousl
 valid full zero-argument extension calls retain their precedence, including full
 calls returning callable values. Direct-import visibility, ambiguity diagnostics,
 and capability, resource and builder restrictions continue to apply. Untyped
-empty extension partials and bare method values remain unsupported; enclosing
-omitted-return functions may still require an annotation. See the
+empty extension partials remain unsupported; contextual bare extension values
+are described in #199. Enclosing omitted-return functions may still require an
+annotation. See the
 [D# example](../../examples/extension_empty_partial.ds) and
 [implementation plan](implementation/issue-197-plan.md).
+[Issue #199](https://github.com/gajo357/dsharplang/issues/199) supports bare
+immutable-value extension method values such as `let add: (int)->int = value.add`
+when a non-nullable expected function type uniquely identifies a visible extension.
+The receiver is captured once; the method body, including async work, runs only
+when the value is invoked. Zero-argument methods are supported as `()->R` values.
+Record fields and qualified union cases keep precedence; a collision with a
+built-in collection method is rejected conservatively. Direct-import visibility,
+ambiguity diagnostics and capability, resource and builder restrictions remain
+in force. An extension explicitly targeting a nullable immutable receiver
+captures that receiver as-is; it does not unwrap null. Nullable field access and
+selecting an extension on the non-nullable type still require explicit matching.
+Uncontextualized bare methods, pipe inference and
+service/interface method values remain unsupported; omitted enclosing returns
+may still require an annotation. See the
+[D# example](../../examples/extension_method_values.ds) and
+[implementation plan](implementation/issue-199-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

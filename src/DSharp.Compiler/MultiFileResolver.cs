@@ -319,7 +319,15 @@ internal static class MultiFileResolver
                                 if (union is not null) return field with { Receiver = new ValueSyntax(Rename(qualifier.Value, union.Internal)), Field = CaseName(union, field.Field) };
                             }
                         }
-                        return field with { Receiver = Expression(field.Receiver, scope, typeParameters) };
+                        // Qualified symbols and union cases above retain their
+                        // ordinary meaning. For a value receiver, keep this
+                        // file's direct-import extension visibility available
+                        // to contextual method-value binding.
+                        return field with
+                        {
+                            Receiver = Expression(field.Receiver, scope, typeParameters),
+                            ExtensionCandidates = VisibleExtensions(field.Field.Text)
+                        };
                     case RecordConstructionSyntax record:
                         var recordType = Lookup(record.Name, record.Name.Text, s => s.Kind == "record");
                         return record with { Name = recordType is null ? record.Name : Rename(record.Name, recordType.Internal), Fields = record.Fields.Select(f => f with { Value = Expression(f.Value, scope, typeParameters) }).ToArray() };
