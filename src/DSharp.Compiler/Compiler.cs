@@ -4703,8 +4703,92 @@ public static class Binder
                             return (new BoundFieldAccess(Coerce(receiver.Expression, receiverType!, receiver.Type), receiverType!, access.Field.Text),
                                 receiver.Type == "<never>" ? "<never>" : accessedFieldType);
                         }
+                        // A bare intrinsic in a pipe receives the same first-
+                        // argument and remaining-result evidence as its empty-
+                        // prefix call. Derive a complete callable type here so
+                        // the normal method-value checks and BoundPipe lowering
+                        // retain left-before-receiver evaluation. Do not use
+                        // this context to select extension method values.
+                        var fieldMethodContext = expectedResult;
+                        var hasFieldPipeContext = pipeInputType is not null || pipeNullInput || pipeOutputType is not null;
+                        if (fieldMethodContext is null && hasFieldPipeContext && receiverType is not null &&
+                            GenericTypes.TryParse(receiverType, out var fieldPipeReceiver) && !fieldPipeReceiver.IsNullable)
+                        {
+                            string[]? fieldPipeParameters = null;
+                            string? fieldPipeResult = null;
+                            if (fieldPipeReceiver.Name == listSymbol && fieldPipeReceiver.Arguments.Count == 1)
+                            {
+                                var element = fieldPipeReceiver.Arguments[0].ToString();
+                                switch (access.Field.Text)
+                                {
+                                    case "append": fieldPipeParameters = new[] { element }; fieldPipeResult = receiverType; break;
+                                    case "get": fieldPipeParameters = new[] { "int" }; fieldPipeResult = optionSymbol + "<" + element + ">"; break;
+                                    case "filter": fieldPipeParameters = new[] { TypeShape.FunctionName + "<" + element + ",bool>" }; fieldPipeResult = receiverType; break;
+                                    case "map":
+                                    {
+                                        string? mapped = null;
+                                        if (pipeOutputType is not null && GenericTypes.TryParse(pipeOutputType, out var expectedList) &&
+                                            !expectedList.IsNullable && expectedList.Name == listSymbol && expectedList.Arguments.Count == 1)
+                                            mapped = expectedList.Arguments[0].ToString();
+                                        if (mapped is null && pipeInputType is not null && GenericTypes.TryParse(pipeInputType, out var callback) &&
+                                            callback.IsFunction && !callback.IsNullable && callback.Arguments.Count == 2 &&
+                                            callback.Arguments[0].ToString() == element)
+                                            mapped = callback.Arguments[1].ToString();
+                                        if (mapped is not null)
+                                        {
+                                            fieldPipeParameters = new[] { TypeShape.FunctionName + "<" + element + "," + mapped + ">" };
+                                            fieldPipeResult = listSymbol + "<" + mapped + ">";
+                                        }
+                                        break;
+                                    }
+                                    case "fold":
+                                    {
+                                        string? accumulator = null;
+                                        if (pipeOutputType is not null && GenericTypes.TryParse(pipeOutputType, out var remaining) &&
+                                            remaining.IsFunction && !remaining.IsNullable && remaining.Arguments.Count == 2)
+                                        {
+                                            var callback = remaining.Arguments[0];
+                                            if (callback.IsFunction && !callback.IsNullable && callback.Arguments.Count == 3 &&
+                                                callback.Arguments[1].ToString() == element &&
+                                                callback.Arguments[0].ToString() == callback.Arguments[2].ToString() &&
+                                                callback.Arguments[0].ToString() == remaining.Arguments[1].ToString())
+                                                accumulator = remaining.Arguments[1].ToString();
+                                        }
+                                        accumulator ??= pipeInputType;
+                                        if (accumulator is not null)
+                                        {
+                                            fieldPipeParameters = new[] { accumulator, TypeShape.FunctionName + "<" + accumulator + "," + element + "," + accumulator + ">" };
+                                            fieldPipeResult = accumulator;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            else if (fieldPipeReceiver.Name == mapSymbol && fieldPipeReceiver.Arguments.Count == 2)
+                            {
+                                var key = fieldPipeReceiver.Arguments[0].ToString();
+                                var value = fieldPipeReceiver.Arguments[1].ToString();
+                                switch (access.Field.Text)
+                                {
+                                    case "get": fieldPipeParameters = new[] { key }; fieldPipeResult = optionSymbol + "<" + value + ">"; break;
+                                    case "contains": fieldPipeParameters = new[] { key }; fieldPipeResult = "bool"; break;
+                                    case "set": fieldPipeParameters = new[] { key, value }; fieldPipeResult = receiverType; break;
+                                }
+                            }
+                            else if (fieldPipeReceiver.Name == setSymbol && fieldPipeReceiver.Arguments.Count == 1)
+                            {
+                                var element = fieldPipeReceiver.Arguments[0].ToString();
+                                switch (access.Field.Text)
+                                {
+                                    case "contains": fieldPipeParameters = new[] { element }; fieldPipeResult = "bool"; break;
+                                    case "add": fieldPipeParameters = new[] { element }; fieldPipeResult = receiverType; break;
+                                }
+                            }
+                            if (fieldPipeParameters is not null && fieldPipeResult is not null)
+                                fieldMethodContext = TypeShape.FunctionName + "<" + string.Join(",", fieldPipeParameters.Append(fieldPipeResult)) + ">";
+                        }
                         if (receiverType is not null && SupportedType(receiverType, activeTypeParameters) && DataType(receiverType) &&
-                            expectedResult is not null && GenericTypes.TryParse(expectedResult, out var expectedMethod) &&
+                            fieldMethodContext is not null && GenericTypes.TryParse(fieldMethodContext, out var expectedMethod) &&
                             expectedMethod.IsFunction && !expectedMethod.IsNullable)
                         {
                             // Capture only a real immutable collection method
@@ -4783,18 +4867,18 @@ public static class Binder
                                     }
                                 }
                                 if (parameters is not null && returnType is not null &&
-                                    TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(returnType)) + ">" == expectedResult &&
+                                    TypeShape.FunctionName + "<" + string.Join(",", parameters.Append(returnType)) + ">" == fieldMethodContext &&
                                     (methodTypeArgument is null || SupportedType(methodTypeArgument, activeTypeParameters) &&
                                         (methodName != "map" || DataType(methodTypeArgument))))
                                 {
                                     if (methodName == "get") optionUsed = true;
                                     var partial = new BoundCollectionMethodPartial(receiver.Expression, receiverType, methodName,
-                                        parameters, returnType, expectedResult);
+                                        parameters, returnType, fieldMethodContext);
                                     if (methodTypeArgument is not null) partial = partial with { TypeArguments = new[] { methodTypeArgument } };
-                                    return (partial, receiver.Type == "<never>" ? "<never>" : expectedResult);
+                                    return (partial, receiver.Type == "<never>" ? "<never>" : fieldMethodContext);
                                 }
                             }
-                            if (!collectionCollision)
+                            if (!collectionCollision && expectedResult is not null)
                             {
                                 var methodCandidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
                                     (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
