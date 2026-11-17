@@ -11,6 +11,7 @@ the pinned .NET SDK are approved; the broader language/runtime is unimplemented.
 Use JavaScript for repository validation; do not introduce Python. Keep the pinned
 .NET 11 managed backend; Native AOT is deferred for package compatibility.
 Do not silently finalize syntax, dependencies, public APIs or runtime protocols.
+In D# match expressions, put each case on its own line, separate from braces.
 
 ## Codex web tasks
 

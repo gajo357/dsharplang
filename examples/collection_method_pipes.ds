@@ -1,0 +1,11 @@
+module Demo
+
+fn answer(): int {
+    let numbers = [40, 42]
+    let found = 1 |> numbers.get
+    match found
+    {
+        Some(value) => value
+        None => 0
+    }
+}

@@ -3,6 +3,9 @@ module Demo
 fn answer(): int {
     let items = [40, 42]
     let get: (int)->Option<int> = items.get
-    match get(1) { Some(value) => value
-                   None => 0 }
+    match get(1)
+    {
+        Some(value) => value
+        None => 0
+    }
 }

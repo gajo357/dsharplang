@@ -573,10 +573,26 @@ formed; the operation and its callbacks run only on invocation. Nullable element
 and nested `Option` results retain their existing distinctions, and immutable
 updates do not change the captured collection. Existing field/union precedence and
 capability, resource and builder restrictions continue to apply. Uncontextualized
-bare methods and bare-method pipes remain unsupported, and an incompatible
-same-name extension does not replace a collection method value. See the
+bare methods remain unsupported; supported collection-method pipes are described
+in #203. An incompatible same-name extension does not replace a collection
+method value. See the
 [D# example](../../examples/collection_method_values.ds) and
 [implementation plan](implementation/issue-201-plan.md).
+[Issue #203](https://github.com/gajo357/dsharplang/issues/203) permits a pipe to
+supply the first argument to bare immutable List `get`, `append`, `filter`, `map`
+and `fold`; Map `get`, `contains` and `set`; and Set `contains` and `add`. The
+left value is evaluated once before the collection receiver; methods with
+remaining arguments produce a partial function, and completed calls preserve the
+existing immutable and nullable/Option behavior. List `map` needs a typed callback
+or an expected result list type, while `fold` needs an accumulator type from the
+input or the expected remaining callable. Zero-argument `length` and `count` are
+not pipe targets. Ordinary field and union resolution,
+existing capability, resource and builder restrictions, and conservative checks
+for dynamic callbacks and recursive dependencies continue to apply. Bare
+extension-method pipes and uncontextualized bare methods remain unsupported;
+unproven omitted returns may require an annotation. See the
+[D# example](../../examples/collection_method_pipes.ds) and
+[implementation plan](implementation/issue-203-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation
