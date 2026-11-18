@@ -1,0 +1,12 @@
+module Demo
+
+type Invoice { amount: int }
+
+extend Invoice {
+    fn add(self, fee: int): int { self.amount + fee }
+}
+
+fn answer(): int {
+    let invoice = Invoice { amount = 40 }
+    (invoice.add)(2)
+}

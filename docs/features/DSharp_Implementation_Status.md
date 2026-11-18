@@ -596,6 +596,19 @@ in #203. An incompatible same-name extension does not replace a collection
 method value. See the
 [D# example](../../examples/collection_method_values.ds) and
 [implementation plan](implementation/issue-201-plan.md).
+[Issue #209](https://github.com/gajo357/dsharplang/issues/209) supports
+immediately invoking a bare immutable collection or visible extension method,
+for example `(items.get)(0)` or `(invoice.add)(2)`, when grouped argument types
+and the expected result select a unique applicable target. Supported zero-argument
+and staged calls use the existing method-value and partial-call rules. The receiver
+is evaluated once before the grouped arguments, and the method body, including
+async work, runs only when its remaining arguments are supplied. Record-field and
+qualified-union precedence, built-in/extension resolution, import visibility,
+ambiguity diagnostics, and capability, resource and builder restrictions remain
+in force. Uncontextualized bare method values and bare extension-method pipes
+remain unsupported; omitted returns may still require an annotation. See the
+[D# example](../../examples/grouped_method_values.ds) and
+[implementation plan](implementation/issue-209-plan.md).
 [Issue #203](https://github.com/gajo357/dsharplang/issues/203) permits a pipe to
 supply the first argument to bare immutable List `get`, `append`, `filter`, `map`
 and `fold`; Map `get`, `contains` and `set`; and Set `contains` and `add`. The
