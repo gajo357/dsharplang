@@ -4019,7 +4019,7 @@ public static class Binder
                 return new BoundCasePattern(expected, unionCase.Name.Text, argumentsBound);
             }
             (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null, string? pipeOutputType = null, bool pipeNullInput = false,
-                IReadOnlyList<string?>? groupedArgumentTypes = null, string? groupedExpectedResult = null)
+                IReadOnlyList<string?>? groupedArgumentTypes = null, string? groupedExpectedResult = null, bool isPipeTarget = false)
             {
                 switch (expression)
                 {
@@ -4652,7 +4652,7 @@ public static class Binder
                             literalCondition == false && elseBlock.Type == "<never>") branchType = "<never>";
                         return (new BoundIf(Coerce(condition.Expression, "bool", condition.Type),
                             CoerceBlock(thenBlock.Block, emittedType!), CoerceBlock(elseBlock.Block, emittedType!), emittedType!), branchType!);
-                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType, pipeOutputType, pipeNullInput, groupedArgumentTypes, groupedExpectedResult);
+                    case GroupSyntax group: return BindExpression(group.Inner, expectedResult, pipeInputType, pipeOutputType, pipeNullInput, groupedArgumentTypes, groupedExpectedResult, isPipeTarget);
                     case CoalesceSyntax coalesce:
                         var nullableLeft = BindExpression(coalesce.Left);
                         var savedCoalesceReachable = inferenceReachable;
@@ -4787,7 +4787,8 @@ public static class Binder
                         // prefix call. Derive a complete callable type here so
                         // the normal method-value checks and BoundPipe lowering
                         // retain left-before-receiver evaluation. Do not use
-                        // this context to select extension method values.
+                        // this context to select extension method values. Bare
+                        // extensions use the separate candidate check below.
                         var fieldMethodContext = expectedResult;
                         var hasFieldPipeContext = pipeInputType is not null || pipeNullInput || pipeOutputType is not null || groupedArgumentTypes is not null;
                         if (fieldMethodContext is null && hasFieldPipeContext && receiverType is not null &&
@@ -4885,7 +4886,7 @@ public static class Binder
                         // An immediate grouped invocation supplies argument and
                         // result evidence even when the bare extension has no
                         // separately annotated function type. This path is not
-                        // used by bare extension pipes or uncontextualized reads.
+                        // used by uncontextualized reads.
                         if (fieldMethodContext is null && groupedArgumentTypes is not null && receiverType is not null &&
                             SupportedType(receiverType, activeTypeParameters) && DataType(receiverType))
                         {
@@ -4921,6 +4922,58 @@ public static class Binder
                                     .Select(parameter => parameter.Type.Text).Append(CallableResult(method))) + ">";
                             }
                         }
+                        // Intrinsic names keep priority even when their method
+                        // type cannot be established from the available context.
+                        var collectionCollision = GenericTypes.TryParse(receiverType ?? "", out var methodReceiverShape) && !methodReceiverShape.IsNullable &&
+                            (methodReceiverShape.Name == listSymbol && access.Field.Text is "length" or "append" or "get" or "filter" or "map" or "fold" ||
+                             methodReceiverShape.Name == mapSymbol && access.Field.Text is "count" or "contains" or "get" or "set" ||
+                             methodReceiverShape.Name == setSymbol && access.Field.Text is "count" or "contains" or "add");
+                        // A bare extension on the right of a pipe can be chosen
+                        // by the incoming argument and the remaining result. If
+                        // the input needs context (for example, a lambda), a
+                        // unique candidate may supply it; ambiguity is never
+                        // resolved by declaration order. A zero-argument method
+                        // is not implicitly invoked to obtain a pipe target.
+                        if (fieldMethodContext is null && isPipeTarget && groupedArgumentTypes is null && !collectionCollision && receiverType is not null &&
+                            SupportedType(receiverType, activeTypeParameters) && DataType(receiverType))
+                        {
+                            var pipeMethods = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
+                                (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
+                                signatures[extension.Id].Parameters[0].Type.Text == receiverType).Where(extension =>
+                            {
+                                var method = signatures[extension.Id];
+                                var formal = method.Parameters.Skip(1).Select(parameter => parameter.Type.Text).ToArray();
+                                if (formal.Length == 0 || (pipeInputType is not null || pipeNullInput) &&
+                                    !Convertible(pipeInputType ?? "<null>", formal[0])) return false;
+                                var result = CallableResult(method);
+                                var after = formal.Length == 1 ? result :
+                                    TypeShape.FunctionName + "<" + string.Join(",", formal.Skip(1).Append(result)) + ">";
+                                return pipeOutputType is null || !SupportedType(pipeOutputType, activeTypeParameters) ||
+                                    Convertible(after, pipeOutputType);
+                            }).ToArray();
+                            // Match ordinary grouped calls: a fully supplied
+                            // applicable overload takes precedence over a
+                            // partial overload, but ties remain ambiguous. Do
+                            // not apply that preference when the input needs
+                            // context: applicability has not been established.
+                            if (pipeInputType is not null || pipeNullInput)
+                            {
+                                var completePipeMethods = pipeMethods.Where(extension =>
+                                    signatures[extension.Id].Parameters.Count == 2).ToArray();
+                                if (completePipeMethods.Length > 0) pipeMethods = completePipeMethods;
+                            }
+                            if (pipeMethods.Length > 1)
+                                Fail("DS2018", access.Field, "Ambiguous extension method value; candidates: " + string.Join(", ", pipeMethods.Select(extension =>
+                                    (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
+                                    extension.Method.Name.Span.Line.ToString(CultureInfo.InvariantCulture) + ":" + extension.Method.Name.Span.Column.ToString(CultureInfo.InvariantCulture) + ")")
+                                    .OrderBy(name => name, StringComparer.Ordinal)) + ".");
+                            if (pipeMethods.Length == 1)
+                            {
+                                var method = signatures[pipeMethods[0].Id];
+                                fieldMethodContext = TypeShape.FunctionName + "<" + string.Join(",", method.Parameters.Skip(1)
+                                    .Select(parameter => parameter.Type.Text).Append(CallableResult(method))) + ">";
+                            }
+                        }
                         if (receiverType is not null && SupportedType(receiverType, activeTypeParameters) && DataType(receiverType) &&
                             fieldMethodContext is not null && GenericTypes.TryParse(fieldMethodContext, out var expectedMethod) &&
                             expectedMethod.IsFunction && !expectedMethod.IsNullable)
@@ -4929,10 +4982,6 @@ public static class Binder
                             // whose complete callable type is fixed by context.
                             // As for empty-prefix calls, retain the receiver once
                             // and defer the operation until invocation.
-                            var collectionCollision = GenericTypes.TryParse(receiverType, out var methodReceiverShape) && !methodReceiverShape.IsNullable &&
-                                (methodReceiverShape.Name == listSymbol && access.Field.Text is "length" or "append" or "get" or "filter" or "map" or "fold" ||
-                                 methodReceiverShape.Name == mapSymbol && access.Field.Text is "count" or "contains" or "get" or "set" ||
-                                 methodReceiverShape.Name == setSymbol && access.Field.Text is "count" or "contains" or "add");
                             if (collectionCollision)
                             {
                                 string[]? parameters = null;
@@ -5012,7 +5061,7 @@ public static class Binder
                                     return (partial, receiver.Type == "<never>" ? "<never>" : fieldMethodContext);
                                 }
                             }
-                            if (!collectionCollision && (expectedResult is not null || groupedArgumentTypes is not null))
+                            if (!collectionCollision && (expectedResult is not null || groupedArgumentTypes is not null || isPipeTarget))
                             {
                                 var methodCandidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
                                     (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
@@ -6422,7 +6471,7 @@ public static class Binder
                         else if (remaining > 1 && GenericTypes.TryParse(expectedResult, out var rest) && rest.IsFunction && rest.Arguments.Count == remaining)
                             pipeReceiverHint = TypeShape.FunctionName + "<" + pipeProbeType + "," + string.Join(",", rest.Arguments) + ">";
                     }
-                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType, expectedResult, pipeNullInput); }
+                    try { receiverProbe = BindExpression(pipe.Right, pipeReceiverHint, pipeProbeType, expectedResult, pipeNullInput, isPipeTarget: true); }
                     catch (SourceError error) when (target is LambdaSyntax && error.Diagnostic.Code == "DS2026") { }
                 }
                 finally { inferenceReachable = savedReachable; }
@@ -6469,7 +6518,7 @@ public static class Binder
                 }
                 inferenceReachable = savedReachable && value.Type != "<never>";
                 (BoundExpression Expression, string Type) receiver;
-                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType, expectedResult, pipeNullInput); }
+                try { receiver = BindExpression(pipe.Right, lambdaHint ?? pipeReceiverHint, inputType, expectedResult, pipeNullInput, isPipeTarget: true); }
                 finally { inferenceReachable = savedReachable; }
                 var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
                 if (receiverType is null || !GenericTypes.TryParse(receiverType, out var shape) || !shape.IsFunction || shape.IsNullable || shape.Arguments.Count < 2)

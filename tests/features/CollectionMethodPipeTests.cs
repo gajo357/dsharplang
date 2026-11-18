@@ -136,7 +136,7 @@ public sealed class CollectionMethodPipeTests
             "fn bad(values: List<int>?): Unit { let n = 0 |> values.get\n () }",
             "fn bad(values: List<int>): Unit { let n = \"wrong\" |> values.get\n () }",
             "fn bad(values: List<int>): Unit { let f = values.get\n () }",
-            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { 2 |> 40.add }",
+            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { true |> 40.add }",
             "fn bad(): Unit { let builder = MutableList<int>()\n let f = 1 |> builder.add\n () }",
             "interface A { get(value: int): int }\nservice S: A { get(value) { value } }\nfn bad(s:A): int { 1 |> s.get }",
             "resource Cursor { get(value:int): int { value }\n release(): Unit { () } }\nfn bad(): Unit { using c = Cursor() { let f = 1 |> c.get\n () } }",

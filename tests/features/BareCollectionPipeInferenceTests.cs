@@ -145,7 +145,7 @@ public sealed class BareCollectionPipeInferenceTests
             "type List { value:int }\nfn bad(xs:List) { 1 |> xs.get }",
             "interface A { get(): int }\nfn bad(value:A): Unit { let pending = value |> [1].fold\n () }",
             "interface A { get(): int }\nfn make<T>(value:T): ((T,int)->T)->T { value |> [1].fold }\nfn bad(value:A): Unit { let pending = make<A>(value)\n () }",
-            "extend int { fn add(self, value:int):int { self + value } }\nfn bad():int { 2 |> 40.add }"
+            "extend int { fn add(self, value:int):int { self + value } }\nfn bad():int { true |> 40.add }"
         ];
         foreach (var body in invalid)
         {
