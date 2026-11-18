@@ -1234,7 +1234,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             }
             if (Current.Text == "let")
             {
-                var keyword = Take();
+                var headerStart = position;
+                Take();
                 TupleBindingSyntax? tuplePattern = null; Token? local = null;
                 if (Current.Text == "(")
                 {
@@ -1253,11 +1254,22 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 Token? annotation = null;
                 if (Current.Text == ":") { Take(); annotation = TypeToken(); }
                 var equals = Expect("=");
-                if (equals.Span.Line != keyword.Span.Line)
-                    throw new SourceError(new("DS1002", path, equals.Span, "A binding header must be on one line."));
+                // Header tokens may cross lines inside a tuple pattern or a
+                // parenthesized type, but the surrounding binding still ends
+                // at a newline. Inspect the original tokens: TypeToken may
+                // combine a multiline type into a single synthetic token.
+                var headerDepth = 0;
+                for (var index = headerStart; index < position; index++)
+                {
+                    var token = tokens[index];
+                    if (index > headerStart && token.Span.Line != tokens[index - 1].Span.Line && headerDepth == 0)
+                        throw new SourceError(new("DS1002", path, token.Span, "A binding header may span lines only inside parentheses."));
+                    if (token.Text == "(") headerDepth++;
+                    else if (token.Text == ")") headerDepth--;
+                }
                 var first = Current; var value = Expression(first.Span.Line);
                 var end = tokens[position - 1];
-                if (end.Span.Line != keyword.Span.Line && first.Span.Line == keyword.Span.Line && !AllowsContinuation(value)) throw new SourceError(new("DS1002", path, end.Span, "Write each let binding on one line."));
+                if (end.Span.Line != equals.Span.Line && first.Span.Line == equals.Span.Line && !AllowsContinuation(value)) throw new SourceError(new("DS1002", path, end.Span, "Write each let binding on one line."));
                 if (Current.Span.Line == end.Span.Line) throw Error("A let binding must be followed by a newline and a final expression or another binding.");
                 if (tuplePattern is not null) statements.Add(new TupleLetStatementSyntax(tuplePattern, annotation, value));
                 else

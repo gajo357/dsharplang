@@ -1,0 +1,15 @@
+module Demo
+
+fn answer(): int {
+    let (
+        (first, second),
+        third
+    ) = ((19, 20), 3)
+
+    let add: (
+        int,
+        int
+    ) -> int = (left, right) => left + right
+
+    add(first, second) + third
+}

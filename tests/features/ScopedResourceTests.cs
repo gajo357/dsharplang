@@ -307,6 +307,7 @@ public sealed class ScopedResourceTests
         new CommentTests().MultilineCommentsAndUnicodePreserveUtf16Location();
         await new BareCollectionPipeInferenceTests().BareCollectionPipesInferAndRejectInvalidPrograms();
         await new BareExtensionPipeTests().PipesExecuteWithOrderAndDeferredWork();
+        await new MultilineBindingHeaderTests().ParenthesizedHeadersContinueAcrossLinesOnlyInsideTheirDelimiters();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
