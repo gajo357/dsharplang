@@ -71,6 +71,7 @@ external interoperability guarantee follows from this lowering. See the
 | Typed if/else and lexical scopes | Bool conditions, matching int/bool branches and block-local bindings | Both branches and nested conditionals execute lazily |
 | Bool values and logic | Bool literals, types, int comparisons, int/bool equality, !, &&, || with type checks | Checked calls, precedence and short-circuit evaluation tested |
 | Checked integer arithmetic | Eight integer widths, context-typed literals, decimal/hex/binary forms, separators and `L`; matching operand types required | Checked arithmetic, unsigned negation and zero/overflow faults execute at invocation |
+| Decimal arithmetic | `decimal` values and exact `m`-suffixed literals; same-type unary, arithmetic and comparison operations | Decimal operations follow pinned .NET behavior; equality and collection keys ignore trailing scale |
 | Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function, record and union declarations | Comments preserve source locations and do not change execution |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
@@ -123,6 +124,19 @@ conversion entry-point names remain a later library API decision. Existing value
 identifiers such as `short` remain accepted for compatibility, despite DEC-02
 reserving numeric names globally; that conflict is unresolved. #48 remains open. See the [D# example](../../examples/integer_widths.ds) and
 [implementation plan](implementation/issue-48-plan.md).
+[Issue #215](https://github.com/gajo357/dsharplang/issues/215) implements the
+`decimal` type and exact `m`-suffixed literals, including the adopted exponent
+and digit-separator syntax. Unrepresentable or overprecision literals are
+rejected rather than silently rounded. Same-type unary, arithmetic and comparison
+operations use the pinned .NET decimal semantics; overflow and division by zero
+fault at runtime, and equality ignores trailing scale. Decimal values work in
+supported nullable, generic and immutable data contexts, including map and set
+keys. `decimal` remains allowed as a value or field identifier for backward
+compatibility; DEC-02’s numeric name reservation remains unresolved, as in #48.
+Conversions, text and interpolation formatting, currency semantics and binary
+floating point remain separate work; #49 remains open. See the
+[D# example](../../examples/decimal_arithmetic.ds) and
+[implementation plan](implementation/issue-215-plan.md).
 [Issue #20](https://github.com/gajo357/dsharplang/issues/20) adds explicit int
 parameters and positional calls in the same module, resolved regardless of
 declaration order. Parameter names cannot be duplicated, reassigned or redeclared
@@ -154,8 +168,8 @@ and evaluated once, left to right; `{{` and `}}` insert literal braces, and
 ordinary string escapes apply. Strings and characters insert their text, booleans
 render as `true` or `false`, Unit as `()`, and `sbyte`, `byte`, `short`, `ushort`,
 `int`, `uint`, `long` and `ulong` use invariant decimal formatting. Nullable and
-composite values and unsupported numeric types such as `float32`, `float` and
-`decimal` cannot yet be interpolated; formatting rules for those values are not
+composite values and numeric types such as `float32`, `float` and `decimal`
+cannot yet be interpolated; formatting rules for those values are not
 claimed by this slice, and #50 remains open. See the
 [D# example](../../examples/interpolation.ds) and
 [implementation plan](implementation/issue-50-plan.md).

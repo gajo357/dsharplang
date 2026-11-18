@@ -1,0 +1,13 @@
+module Demo
+
+type Invoice { amount: decimal }
+
+fn addTax(invoice: Invoice, tax: decimal): decimal {
+    invoice.amount + tax
+}
+
+fn answer(): bool {
+    let invoice = Invoice { amount = 19.95m }
+    let total = addTax(invoice, 2.05m)
+    total == 22.00m
+}
