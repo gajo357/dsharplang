@@ -26,3 +26,4 @@ No unresolved syntax decision: the maintainer adopted the DEC-02 rule. This task
 - `scripts/verify-compiler.sh` passed: 18 compiler tests and 379 feature tests, with zero build warnings or errors. The focused test executed generated C# with warnings as errors under LF, CRLF and CR line endings, including single-evaluation and diagnostic-span checks.
 - The D# CLI accepted `examples/multiline_binding_headers.ds`.
 - `.github/ai/verify.sh` passed documentation and all 25 automation tests. Its isolated compiler stage could not run locally because downloading the pinned .NET SDK Docker image returned `Forbidden`; GitHub CI must provide that stage's result.
+- GitHub's first compiler run passed all 379 tests but rejected the TRX as oversized. The new feature test is registered through the existing feature aggregate to reduce report entries; all assertions and the trusted report-size verifier remain intact.

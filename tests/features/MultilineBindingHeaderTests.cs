@@ -7,7 +7,6 @@ using Xunit;
 
 public sealed class MultilineBindingHeaderTests
 {
-    [Fact]
     public async Task ParenthesizedHeadersContinueAcrossLinesOnlyInsideTheirDelimiters()
     {
         const string source = """
