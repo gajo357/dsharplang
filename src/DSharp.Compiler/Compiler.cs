@@ -4789,10 +4789,19 @@ public static class Binder
                         // retain left-before-receiver evaluation. Do not use
                         // this context to select extension method values.
                         var fieldMethodContext = expectedResult;
-                        var hasFieldPipeContext = pipeInputType is not null || pipeNullInput || pipeOutputType is not null;
+                        var hasFieldPipeContext = pipeInputType is not null || pipeNullInput || pipeOutputType is not null || groupedArgumentTypes is not null;
                         if (fieldMethodContext is null && hasFieldPipeContext && receiverType is not null &&
                             GenericTypes.TryParse(receiverType, out var fieldPipeReceiver) && !fieldPipeReceiver.IsNullable)
                         {
+                            // Applying an empty group to a nonzero-arity
+                            // collection method keeps its whole callable type.
+                            // That expected type can establish map/fold's type
+                            // parameter just as an explicitly typed value can.
+                            if (groupedArgumentTypes is { Count: 0 } && groupedExpectedResult is not null &&
+                                GenericTypes.TryParse(groupedExpectedResult, out var groupedCallable) &&
+                                groupedCallable.IsFunction && !groupedCallable.IsNullable &&
+                                (fieldPipeReceiver.Name == listSymbol || fieldPipeReceiver.Name == mapSymbol || fieldPipeReceiver.Name == setSymbol))
+                                fieldMethodContext = groupedExpectedResult;
                             string[]? fieldPipeParameters = null;
                             string? fieldPipeResult = null;
                             if (fieldPipeReceiver.Name == listSymbol && fieldPipeReceiver.Arguments.Count == 1)
@@ -4800,13 +4809,15 @@ public static class Binder
                                 var element = fieldPipeReceiver.Arguments[0].ToString();
                                 switch (access.Field.Text)
                                 {
+                                    case "length" when groupedArgumentTypes is { Count: 0 }: fieldPipeParameters = Array.Empty<string>(); fieldPipeResult = "int"; break;
                                     case "append": fieldPipeParameters = new[] { element }; fieldPipeResult = receiverType; break;
                                     case "get": fieldPipeParameters = new[] { "int" }; fieldPipeResult = optionSymbol + "<" + element + ">"; break;
                                     case "filter": fieldPipeParameters = new[] { TypeShape.FunctionName + "<" + element + ",bool>" }; fieldPipeResult = receiverType; break;
                                     case "map":
                                     {
                                         string? mapped = null;
-                                        if (pipeOutputType is not null && GenericTypes.TryParse(pipeOutputType, out var expectedList) &&
+                                        var mappedOutput = groupedArgumentTypes is { Count: > 0 } ? groupedExpectedResult : pipeOutputType;
+                                        if (mappedOutput is not null && GenericTypes.TryParse(mappedOutput, out var expectedList) &&
                                             !expectedList.IsNullable && expectedList.Name == listSymbol && expectedList.Arguments.Count == 1)
                                             mapped = expectedList.Arguments[0].ToString();
                                         if (mapped is null && pipeInputType is not null && GenericTypes.TryParse(pipeInputType, out var callback) &&
@@ -4833,6 +4844,9 @@ public static class Binder
                                                 callback.Arguments[0].ToString() == remaining.Arguments[1].ToString())
                                                 accumulator = remaining.Arguments[1].ToString();
                                         }
+                                        if (accumulator is null && groupedArgumentTypes is { Count: > 1 } &&
+                                            groupedExpectedResult is not null && SupportedType(groupedExpectedResult, activeTypeParameters))
+                                            accumulator = groupedExpectedResult;
                                         accumulator ??= pipeInputType;
                                         if (accumulator is not null)
                                         {
@@ -4849,6 +4863,7 @@ public static class Binder
                                 var value = fieldPipeReceiver.Arguments[1].ToString();
                                 switch (access.Field.Text)
                                 {
+                                    case "count" when groupedArgumentTypes is { Count: 0 }: fieldPipeParameters = Array.Empty<string>(); fieldPipeResult = "int"; break;
                                     case "get": fieldPipeParameters = new[] { key }; fieldPipeResult = optionSymbol + "<" + value + ">"; break;
                                     case "contains": fieldPipeParameters = new[] { key }; fieldPipeResult = "bool"; break;
                                     case "set": fieldPipeParameters = new[] { key, value }; fieldPipeResult = receiverType; break;
@@ -4859,12 +4874,52 @@ public static class Binder
                                 var element = fieldPipeReceiver.Arguments[0].ToString();
                                 switch (access.Field.Text)
                                 {
+                                    case "count" when groupedArgumentTypes is { Count: 0 }: fieldPipeParameters = Array.Empty<string>(); fieldPipeResult = "int"; break;
                                     case "contains": fieldPipeParameters = new[] { element }; fieldPipeResult = "bool"; break;
                                     case "add": fieldPipeParameters = new[] { element }; fieldPipeResult = receiverType; break;
                                 }
                             }
                             if (fieldPipeParameters is not null && fieldPipeResult is not null)
                                 fieldMethodContext = TypeShape.FunctionName + "<" + string.Join(",", fieldPipeParameters.Append(fieldPipeResult)) + ">";
+                        }
+                        // An immediate grouped invocation supplies argument and
+                        // result evidence even when the bare extension has no
+                        // separately annotated function type. This path is not
+                        // used by bare extension pipes or uncontextualized reads.
+                        if (fieldMethodContext is null && groupedArgumentTypes is not null && receiverType is not null &&
+                            SupportedType(receiverType, activeTypeParameters) && DataType(receiverType))
+                        {
+                            var groupedMethods = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
+                                (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
+                                signatures[extension.Id].Parameters[0].Type.Text == receiverType).Where(extension =>
+                            {
+                                var target = signatures[extension.Id];
+                                var formal = target.Parameters.Skip(1).Select(parameter => parameter.Type.Text).ToArray();
+                                if (groupedArgumentTypes.Count > formal.Length) return false;
+                                for (var i = 0; i < groupedArgumentTypes.Count; i++)
+                                    if (groupedArgumentTypes[i] is { } actual && !Convertible(actual, formal[i])) return false;
+                                var result = CallableResult(target);
+                                var after = groupedArgumentTypes.Count == formal.Length ? result :
+                                    TypeShape.FunctionName + "<" + string.Join(",", formal.Skip(groupedArgumentTypes.Count).Append(result)) + ">";
+                                return groupedExpectedResult is null || !SupportedType(groupedExpectedResult, activeTypeParameters) ||
+                                    Convertible(after, groupedExpectedResult);
+                            }).ToArray();
+                            // A fully supplied overload retains the existing
+                            // precedence over a partial one when both fit.
+                            var completeMethods = groupedMethods.Where(extension =>
+                                signatures[extension.Id].Parameters.Count == groupedArgumentTypes.Count + 1).ToArray();
+                            if (completeMethods.Length > 0) groupedMethods = completeMethods;
+                            if (groupedMethods.Length > 1)
+                                Fail("DS2018", access.Field, "Ambiguous extension method value; candidates: " + string.Join(", ", groupedMethods.Select(extension =>
+                                    (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
+                                    extension.Method.Name.Span.Line.ToString(CultureInfo.InvariantCulture) + ":" + extension.Method.Name.Span.Column.ToString(CultureInfo.InvariantCulture) + ")")
+                                    .OrderBy(name => name, StringComparer.Ordinal)) + ".");
+                            if (groupedMethods.Length == 1)
+                            {
+                                var method = signatures[groupedMethods[0].Id];
+                                fieldMethodContext = TypeShape.FunctionName + "<" + string.Join(",", method.Parameters.Skip(1)
+                                    .Select(parameter => parameter.Type.Text).Append(CallableResult(method))) + ">";
+                            }
                         }
                         if (receiverType is not null && SupportedType(receiverType, activeTypeParameters) && DataType(receiverType) &&
                             fieldMethodContext is not null && GenericTypes.TryParse(fieldMethodContext, out var expectedMethod) &&
@@ -4957,13 +5012,13 @@ public static class Binder
                                     return (partial, receiver.Type == "<never>" ? "<never>" : fieldMethodContext);
                                 }
                             }
-                            if (!collectionCollision && expectedResult is not null)
+                            if (!collectionCollision && (expectedResult is not null || groupedArgumentTypes is not null))
                             {
                                 var methodCandidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
                                     (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
                                     signatures[extension.Id].Parameters[0].Type.Text == receiverType &&
                                     TypeShape.FunctionName + "<" + string.Join(",", signatures[extension.Id].Parameters.Skip(1)
-                                        .Select(parameter => parameter.Type.Text).Append(CallableResult(signatures[extension.Id]))) + ">" == expectedResult).ToArray();
+                                        .Select(parameter => parameter.Type.Text).Append(CallableResult(signatures[extension.Id]))) + ">" == fieldMethodContext).ToArray();
                                 if (methodCandidates.Length > 1)
                                     Fail("DS2018", access.Field, "Ambiguous extension method value; candidates: " + string.Join(", ", methodCandidates.Select(extension =>
                                         (extension.Method.OriginModule ?? syntax.Name.Text) + " (" + (extension.Method.Name.OriginPath ?? path) + ":" +
@@ -4983,7 +5038,7 @@ public static class Binder
                                     if (methodTarget.IsAsync) taskUsed = true;
                                     return (new BoundPartial(new BoundFunctionReference(extension.Id, fullType, Array.Empty<string>()) { Location = access.Field }, fullType,
                                         new[] { Coerce(receiver.Expression, formalTypes[0], receiver.Type) }, new[] { formalTypes[0] },
-                                        formalTypes.Skip(1).ToArray(), result, expectedResult), receiver.Type == "<never>" ? "<never>" : expectedResult);
+                                        formalTypes.Skip(1).ToArray(), result, fieldMethodContext), receiver.Type == "<never>" ? "<never>" : fieldMethodContext);
                                 }
                             }
                         }
@@ -6562,6 +6617,43 @@ public static class Binder
                         receiver = BindExpression(receiverSyntax, null, firstType == "<null>" ? null : firstType,
                             arguments.Count == 1 ? expectedResult : null, firstType == "<null>", groupedTypes, expectedResult);
                     }
+                }
+                else if (unwrappedReceiver is FieldAccessSyntax)
+                {
+                    // A grouped bare method value receives evidence from its
+                    // invocation without executing or committing any probe.
+                    // Normal field and qualified-case lookup still happens
+                    // first when the receiver is bound below.
+                    var savedReturns = inferredReturns;
+                    var savedReachability = inferenceReachable;
+                    var savedHasReturn = hasReturn;
+                    var savedTupleCount = tupleBindingCount;
+                    if (savedReturns is not null) inferredReturns = new List<string>();
+                    var groupedTypes = new List<string?>();
+                    try
+                    {
+                        inferenceReachable = false;
+                        foreach (var argument in arguments)
+                        {
+                            try
+                            {
+                                var probe = BindExpression(argument);
+                                var argumentType = probe.Type == "<never>" ? KnownType(probe.Expression) : probe.Type;
+                                groupedTypes.Add(argumentType == "<never>" ? null : argumentType);
+                            }
+                            catch (SourceError) { groupedTypes.Add(null); }
+                        }
+                    }
+                    finally
+                    {
+                        inferredReturns = savedReturns;
+                        inferenceReachable = savedReachability;
+                        hasReturn = savedHasReturn;
+                        tupleBindingCount = savedTupleCount;
+                    }
+                    var firstType = groupedTypes.Count > 0 ? groupedTypes[0] : null;
+                    receiver = BindExpression(receiverSyntax, null, firstType == "<null>" ? null : firstType,
+                        expectedResult, firstType == "<null>", groupedTypes, expectedResult);
                 }
                 else receiver = BindExpression(receiverSyntax);
                 var type = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
