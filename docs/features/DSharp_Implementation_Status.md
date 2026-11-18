@@ -54,7 +54,7 @@ external interoperability guarantee follows from this lowering. See the
 | Empty-prefix immutable collection methods | `List.append/get/filter`, `Map.get/contains/set` and `Set.add/contains` accept `()` as a partial call | Receiver is captured once; the intrinsic operation runs when its arguments are supplied |
 | Generic List empty-prefix methods | `map<U>()` and `fold<A>()` accept explicit or contextually inferred types | Receiver is captured once; callbacks and iteration run only on completed calls |
 | Immutable collection method values | An expected callable type selects supported bare List, Map and Set methods, including `length`, `count`, `map` and `fold` | Receiver is captured once; the operation and any callbacks run only when invoked |
-| Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
+| Tuples and destructuring | Tuple expressions and types with at least two elements; immutable nested `let` destructuring, including multiline parenthesized local binding headers | Checked arity, single evaluation, nested tuple values and the distinction between one tuple argument and multiple arguments |
 | Immutable lists | Typed and inferred literals; `length`, `append`, `get`, `map`, `filter` and `fold` | Ordered transformations, structural equality, immutable updates and `Option` lookup preserve nullable and nested values |
 | Immutable maps and sets | `Map.empty`, `set`, `get`, `contains`, `count`; `Set.empty`, `from`, `add`, `contains`, `count` | Structural keys, immutable updates, nullable/Option distinctions and insertion-order-independent equality |
 | Sequential list iteration | `for item in list { ... }` requires a non-nullable `List<T>` and a Unit body; the loop yields Unit and async contexts can await inside it | Source evaluates once, iteration captures are independent, each iteration completes before the next, and return/Result propagation leave the enclosing function or lambda |
@@ -515,6 +515,16 @@ single tuple parameter stays distinct from multiple parameters; `()` remains
 Unit. Tuple values can contain supported nullable and generic data and retain
 structural equality. Function values remain excluded from stored data. See the
 [example](../../examples/tuples.ds) and [implementation plan](implementation/issue-36-plan.md).
+[Issue #213](https://github.com/gajo357/dsharplang/issues/213) supports local
+`let` binding headers continued across lines inside matching parentheses,
+including nested tuple patterns and tuple or function type annotations. A newline
+after `let`, before `:` or `=`, or immediately after a completed closing
+parenthesis remains invalid when it falls outside parentheses; comments preserve
+these line boundaries. Initializer continuation and the end of a binding are
+checked from the end of its header. The initializer is still evaluated once.
+Other declaration headers are not included in this slice. See the
+[D# example](../../examples/multiline_binding_headers.ds) and
+[implementation plan](implementation/issue-213-plan.md).
 [Issue #46](https://github.com/gajo357/dsharplang/issues/46) adds multi-file
 module contributions and explicit, file-scoped imports. The compiler API and
 CLI accept multiple sources while retaining single-file use. The
