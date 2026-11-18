@@ -48,7 +48,7 @@ external interoperability guarantee follows from this lowering. See the
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions and provably static partial calls | Pipes evaluate their left value once before the target and use normal call semantics |
 | Ordinary partial application | Positional prefixes, grouped and empty-prefix calls, function values, generic inference and pipes | Bound values are captured once; the body executes only for completed calls |
-| Extension partial application and values | Unique visible immutable-data extensions accept positional prefixes; empty prefixes and bare values need supported context | Receiver and supplied values are captured once; the body runs only on invocation |
+| Extension partial application and values | Unique visible immutable-data extensions accept positional prefixes; empty prefixes and bare values need supported context, including a pipe input | Receiver and supplied values are captured once; the body runs only on invocation |
 | Immutable Map.set partial application | `map.set(key)` produces a function taking the remaining value | The receiver and key are captured once in order; each invocation creates an independent updated map |
 | Immutable List.fold partial application | `items.fold(initial)` produces a function taking the fold callback | Receiver and initial are captured once in order; each completed call folds the captured list left to right |
 | Empty-prefix immutable collection methods | `List.append/get/filter`, `Map.get/contains/set` and `Set.add/contains` accept `()` as a partial call | Receiver is captured once; the intrinsic operation runs when its arguments are supplied |
@@ -575,8 +575,8 @@ ambiguity diagnostics and capability, resource and builder restrictions remain
 in force. An extension explicitly targeting a nullable immutable receiver
 captures that receiver as-is; it does not unwrap null. Nullable field access and
 selecting an extension on the non-nullable type still require explicit matching.
-Uncontextualized bare methods, pipe inference and
-service/interface method values remain unsupported; omitted enclosing returns
+Bare extension-method pipes are described in #211. Uncontextualized bare methods
+and service/interface method values remain unsupported; omitted enclosing returns
 may still require an annotation. See the
 [D# example](../../examples/extension_method_values.ds) and
 [implementation plan](implementation/issue-199-plan.md).
@@ -605,8 +605,9 @@ is evaluated once before the grouped arguments, and the method body, including
 async work, runs only when its remaining arguments are supplied. Record-field and
 qualified-union precedence, built-in/extension resolution, import visibility,
 ambiguity diagnostics, and capability, resource and builder restrictions remain
-in force. Uncontextualized bare method values and bare extension-method pipes
-remain unsupported; omitted returns may still require an annotation. See the
+in force. Uncontextualized bare method values remain unsupported; bare
+extension-method pipes are described in #211. Omitted returns may still require
+an annotation. See the
 [D# example](../../examples/grouped_method_values.ds) and
 [implementation plan](implementation/issue-209-plan.md).
 [Issue #203](https://github.com/gajo357/dsharplang/issues/203) permits a pipe to
@@ -620,11 +621,24 @@ input or the expected remaining callable. Zero-argument `length` and `count` are
 not pipe targets. Ordinary field and union resolution,
 existing capability, resource and builder restrictions, and conservative checks
 for dynamic callbacks and recursive dependencies continue to apply. Bare
-extension-method pipes and uncontextualized bare methods remain unsupported;
-checked, acyclic omitted returns can be inferred in the proven cases described
+extension-method pipes are described in #211; uncontextualized bare methods
+remain unsupported. Checked, acyclic omitted returns can be inferred in the proven cases described
 in #207, while unproven targets still require an annotation. See the
 [D# example](../../examples/collection_method_pipes.ds) and
 [implementation plan](implementation/issue-203-plan.md).
+[Issue #211](https://github.com/gajo357/dsharplang/issues/211) permits a pipe to
+supply the first argument to a uniquely selected visible immutable extension
+method, for example `fee |> invoice.add`. The flowing value is evaluated once
+before the receiver; a method with remaining arguments produces a partial
+function, and the body runs only when its arguments are supplied. Resolution
+uses the pipe input and available output context while preserving field and
+built-in precedence, import visibility, ambiguity diagnostics, and existing
+capability, resource and builder restrictions. Async extension calls return tasks
+without implicitly awaiting them. Untyped standalone method values remain
+unsupported, and omitted-return inference for extension-method pipes remains
+conservative. See the
+[D# example](../../examples/bare_extension_pipes.ds) and
+[implementation plan](implementation/issue-211-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

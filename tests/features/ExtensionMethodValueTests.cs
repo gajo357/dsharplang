@@ -167,7 +167,7 @@ public sealed class E199
             "interface A { get(): int }\nservice S: A { get() { 42 } }\nextend A { fn add(self, value:int): int { self.get() + value } }\nfn bad(s:A): Unit { let p: (int)->int = s.add\n () }",
             "resource Cursor { read(): int { 42 }\n release(): Unit { () } }\nextend Cursor { fn add(self, value:int): int { self.read() + value } }\nfn bad(): Unit { using c = Cursor() { let p: (int)->int = c.add\n () } }",
             "extend MutableList<int> { fn addSome(self, value:int): int { value } }\nfn bad(): Unit { let b = MutableList<int>()\n let p: (int)->int = b.addSome\n () }",
-            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { 2 |> 40.add }"
+            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { true |> 40.add }"
         ];
         foreach (var body in invalid)
         {

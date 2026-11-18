@@ -1,0 +1,15 @@
+module Demo
+
+type Invoice { amount: int }
+
+extend Invoice {
+    fn add(self, fee: int): int { self.amount + fee }
+    fn total(self, fee: int, tax: int): int { self.amount + fee + tax }
+}
+
+fn answer(): int {
+    let invoice = Invoice { amount = 40 }
+    let withFee: (int)->int = 1 |> invoice.total
+    let result = 2 |> invoice.add
+    if withFee(1) == result { result } else { 0 }
+}

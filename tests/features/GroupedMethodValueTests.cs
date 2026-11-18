@@ -148,7 +148,7 @@ public sealed class G209
         string[] invalid =
         [
             "fn bad(): Unit { let f = [1].get\n () }",
-            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { 2 |> 40.add }",
+            "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { true |> 40.add }",
             "extend int { fn add(self, value:int): int { self + value } }\nfn bad(): int { (40.add)(true) }",
             "extend int { fn choose(self, value:string?):int {1}\n fn choose(self, value:int?):int {2} }\nfn bad():int { (1.choose)(null) }",
             "extend int { fn apply(self, f:(int)->int):int {f(self)}\n fn apply(self, f:(bool)->int):int {f(true)} }\nfn bad():int { (40.apply)(x => 42) }",
