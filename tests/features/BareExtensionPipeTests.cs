@@ -7,7 +7,6 @@ using Xunit;
 
 public sealed class BareExtensionPipeTests
 {
-    [Fact]
     public async Task PipesExecuteWithOrderAndDeferredWork()
     {
         await ExecutePipes();

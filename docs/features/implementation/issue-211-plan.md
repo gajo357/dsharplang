@@ -29,3 +29,4 @@ Commands: `PATH=/workspace/work/dotnet11:$PATH npm_config_cache=/tmp/dsharp-npm-
 - The focused feature test compiled generated C# with warnings as errors and executed ordering, deferred-failure, asynchronous, nullable and overload cases. The example also passed the D# CLI `check` command.
 - `.github/ai/verify.sh` passed documentation validation and all 25 automation tests. Its final isolated compiler stage could not run locally: pulling the pinned .NET SDK Docker image failed with `Forbidden`. GitHub CI must provide the isolated verification result.
 - The four old rejection inputs were updated as described above; all surrounding assertions remain in place.
+- GitHub's first compiler run passed all 379 tests but rejected the TRX as oversized. The new feature test is registered through the existing feature aggregate, preserving every assertion and the trusted report-size verifier while reducing report entries.
