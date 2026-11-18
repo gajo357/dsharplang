@@ -8,7 +8,6 @@ using Xunit;
 
 public sealed class DecimalTests
 {
-    [Fact]
     public async Task DecimalValuesExecuteAndInvalidProgramsAreDiagnosed()
     {
         const string source = """

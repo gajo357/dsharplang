@@ -21,3 +21,4 @@ Run `bash .github/ai/bootstrap.sh`, `bash scripts/verify-compiler.sh`, `.github/
 - Bootstrap and `scripts/verify-compiler.sh` passed: 18 compiler tests and 379 feature tests, with zero build warnings or errors. The decimal acceptance test executed generated C# under `fr-FR`, including exact literal boundaries, nested nullable/Option and collection behavior, numeric match reachability and runtime arithmetic faults.
 - The D# CLI accepted `examples/decimal_arithmetic.ds`.
 - `.github/ai/verify.sh` passed documentation and all 25 automation tests. Its final isolated compiler stage could not run locally because the pinned .NET SDK Docker image download returned `Forbidden`; GitHub CI must provide the isolated result.
+- GitHub's first compiler run passed all 379 tests but rejected the TRX as oversized. The decimal test now runs through the existing feature aggregate to reduce report entries; all assertions and the trusted report-size verifier remain intact.
