@@ -7,9 +7,11 @@ This status describes tested implementation, not the full syntax draft.
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
 is a target addition tracked in #129–#136. Issue #135 implements the ordinary
 function partial-application slice below. Issue #136 adds synchronous Result
-helpers; #219 adds the task-input `map` slice, and #221 adds the asynchronous
-`andThen` combinations. Task-input `mapError`, `tap` and `tapError`, callable HTTP
-preprocessing, Logger and the remaining #129 integrations remain future work.
+helpers; #219 adds task-input `map`, #221 adds the asynchronous `andThen`
+combinations, and #223 adds task-input `mapError`, `tap` and `tapError`.
+The #130 contract remains open: task-valued `map` payloads are not supported
+in stored Result values. Callable HTTP preprocessing, Logger and the remaining
+#129 integrations remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
 The Result helper bodies are authored as D# in
@@ -47,6 +49,7 @@ external interoperability guarantee follows from this lowering. See the
 | Synchronous Result composition | `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary generic functions | Applicable callbacks execute once; typed errors and nullable/Option payloads remain distinct |
 | Asynchronous Result map | `map` with a synchronous callback and `Task<Result<A, E>>` input in direct calls, pipes and supported typed callable contexts | Awaits the source once; invokes the callback only on success; faults and cancellation propagate |
 | Asynchronous Result andThen | `andThen` supports Result or Task<Result> inputs with synchronous Result-returning or async Task<Result>-returning callbacks | Awaits each task once, invokes the callback only on success, and preserves typed errors, evaluation order, faults and cancellation |
+| Asynchronous Result error mapping and taps | `mapError`, `tap` and `tapError` accept Task<Result> input with synchronous callbacks | Await input once; invoke the applicable callback at most once and preserve values, errors, faults, cancellation and evaluation order |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions and provably static partial calls | Pipes evaluate their left value once before the target and use normal call semantics |
@@ -547,10 +550,20 @@ and the callback may return `Result<B, E>` or `Task<Result<B, E>>`. Async forms
 return `Task<Result<B, E>>`. D# prelude helpers await the input and callback as
 needed, invoke the callback only on success, and preserve typed errors, eager
 callback expression evaluation, source order, faults and cancellation. Pipes do
-not implicitly await or unwrap. Task-input `mapError`, `tap` and `tapError`
-remain open under #130. See the
+not implicitly await or unwrap. See the
 [D# example](../../examples/async_result_andthen.ds) and
 [implementation plan](implementation/issue-221-plan.md).
+[Issue #223](https://github.com/gajo357/dsharplang/issues/223) adds task-input
+`mapError`, `tap` and `tapError` with synchronous callbacks. The D# prelude
+awaits the source once and invokes only the callback applicable to the Result
+case. `mapError` transforms the error; `tap` and `tapError` observe and
+preserve the original outcome. Callback expressions evaluate eagerly in source
+order, and exceptions and cancellation propagate without becoming errors. The
+pipe does not implicitly await or unwrap, and nullable and Option payloads retain
+their distinctions. Task-valued payloads inside Result remain unsupported, so
+#130 stays open. See the
+[D# example](../../examples/async_result_observers.ds) and
+[implementation plan](implementation/issue-223-plan.md).
 [Issue #36](https://github.com/gajo357/dsharplang/issues/36) adds immutable
 tuple values and types, with checked, nested `let` destructuring. Tuple elements
 are evaluated in order and a destructuring initializer is evaluated once. A
