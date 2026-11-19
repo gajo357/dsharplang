@@ -1,0 +1,12 @@
+module Demo
+
+type Invoice { amount: decimal }
+
+fn describe(invoice: Invoice): string {
+    $"Invoice total: {invoice.amount}"
+}
+
+fn answer(): string {
+    let invoice = Invoice { amount = 19.9500m }
+    describe(invoice)
+}

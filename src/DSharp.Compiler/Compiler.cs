@@ -4160,7 +4160,7 @@ public static class Binder
                                 }
                                 else
                                 {
-                                    if (!(IntegerType(bound.Type) || bound.Type is "string" or "char" or "bool" or "Unit"))
+                                    if (!(IntegerType(bound.Type) || bound.Type is "decimal" or "string" or "char" or "bool" or "Unit"))
                                         Fail("DS2026", hole.Token, "Interpolation requires a supported non-nullable scalar value.");
                                     parts.Add(new BoundInterpolationHole(bound.Expression, bound.Type));
                                 }
@@ -8057,6 +8057,12 @@ public static class CSharpEmitter
                                 "char" => "new string(" + holeValue + ", 1)",
                                 "bool" => "(" + holeValue + " ? \"true\" : \"false\")",
                                 "Unit" => "\"()\"",
+                                // All decimal values have a scale of at most 28.
+                                // Optional fractional digits retain the exact value
+                                // without an exponent or trailing zeroes. Force
+                                // either sign of zero to the adopted spelling.
+                                "decimal" => "(" + holeValue + " == 0m ? \"0\" : " + holeValue +
+                                    ".ToString(\"0.############################\", global::System.Globalization.CultureInfo.InvariantCulture))",
                                 "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" =>
                                     holeValue + ".ToString(global::System.Globalization.CultureInfo.InvariantCulture)",
                                 _ => throw new InvalidOperationException("Unsupported bound interpolation type.")

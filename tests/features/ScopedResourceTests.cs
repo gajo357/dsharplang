@@ -309,6 +309,7 @@ public sealed class ScopedResourceTests
         await new BareExtensionPipeTests().PipesExecuteWithOrderAndDeferredWork();
         await new MultilineBindingHeaderTests().ParenthesizedHeadersContinueAcrossLinesOnlyInsideTheirDelimiters();
         await new DecimalTests().DecimalValuesExecuteAndInvalidProgramsAreDiagnosed();
+        await new DecimalInterpolationTests().DecimalInterpolationPreservesValueOrderAndCultureIndependence();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
