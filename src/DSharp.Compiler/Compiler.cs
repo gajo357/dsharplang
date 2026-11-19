@@ -2283,6 +2283,9 @@ public static class Binder
         var resultOverloadSources = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["__dsharp_result_map_task"] = "map",
+            ["__dsharp_result_maperror_task"] = "mapError",
+            ["__dsharp_result_tap_task"] = "tap",
+            ["__dsharp_result_taperror_task"] = "tapError",
             ["__dsharp_result_andthen_async"] = "andThen",
             ["__dsharp_result_andthen_task"] = "andThen",
             ["__dsharp_result_andthen_task_async"] = "andThen"

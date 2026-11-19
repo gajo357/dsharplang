@@ -1,0 +1,16 @@
+module Demo
+
+type Invoice { total: int }
+type AppError { message: string }
+
+fn observeInvoice(invoice: Invoice): Unit { () }
+fn toAppError(message: string): AppError { AppError { message = message } }
+fn observeFailure(error: AppError): Unit { () }
+
+async fn process(pending: Task<Result<Invoice, string>>): Result<Invoice, AppError> {
+    let outcome = pending
+        |> tap(observeInvoice)
+        |> mapError(toAppError)
+        |> tapError(observeFailure)
+    await outcome
+}

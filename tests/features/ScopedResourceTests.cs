@@ -313,6 +313,8 @@ public sealed class ScopedResourceTests
         await new AsyncResultMapTests().TaskResultMapPreservesCompositionAndEffects();
         await new AsyncResultAndThenTests().AndThenPreservesAllResultAndTaskCombinations();
         await new AsyncAndThenPreludeTests().TransitiveDependenciesExecuteAndOmitUnusedHelpers();
+        await new AsyncResultObserversTests().AsyncObserversPreserveValuesTimingAndErrors();
+        await new AsyncResultObserversPreludeTests().TransitiveObserversExecuteAndOmitUnusedHelpers();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

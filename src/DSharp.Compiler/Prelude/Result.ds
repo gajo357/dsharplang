@@ -58,6 +58,16 @@ fn mapError<A, B, E>(convert: (E) -> B, value: Result<A, E>): Result<A, B> {
     }
 }
 
+// Internal implementation selected by the public mapError symbol for task inputs.
+async fn __dsharp_result_maperror_task<A, B, E>(convert: (E) -> B, value: Task<Result<A, E>>): Result<A, B> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(item) => Result.Success(item)
+        Result.Error(error) => Result.Error(convert(error))
+    }
+}
+
 fn tap<A, E>(observe: (A) -> Unit, value: Result<A, E>): Result<A, E> {
     match value {
         // Match arms cannot yet contain a bare block. This branch keeps the
@@ -70,6 +80,19 @@ fn tap<A, E>(observe: (A) -> Unit, value: Result<A, E>): Result<A, E> {
     }
 }
 
+// Internal implementation selected by the public tap symbol for task inputs.
+async fn __dsharp_result_tap_task<A, E>(observe: (A) -> Unit, value: Task<Result<A, E>>): Result<A, E> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(present) => if true {
+            observe(present)
+            resolved
+        } else { resolved }
+        Result.Error(error) => resolved
+    }
+}
+
 fn tapError<A, E>(observe: (E) -> Unit, value: Result<A, E>): Result<A, E> {
     match value {
         Result.Success(item) => value
@@ -77,5 +100,18 @@ fn tapError<A, E>(observe: (E) -> Unit, value: Result<A, E>): Result<A, E> {
             observe(error)
             value
         } else { value }
+    }
+}
+
+// Internal implementation selected by the public tapError symbol for task inputs.
+async fn __dsharp_result_taperror_task<A, E>(observe: (E) -> Unit, value: Task<Result<A, E>>): Result<A, E> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(item) => resolved
+        Result.Error(error) => if true {
+            observe(error)
+            resolved
+        } else { resolved }
     }
 }
