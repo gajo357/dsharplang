@@ -184,6 +184,7 @@ public sealed record BoundFor(string Name, BoundExpression Source, string Source
 public sealed record BoundUsing(string Name, BoundExpression Acquisition, string ResourceType, BoundBlock Body, string Type, bool AsyncRelease) : BoundExpression;
 public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundInteger(ulong Magnitude, string Type) : BoundExpression;
+public sealed record BoundDecimal(uint Low, uint Middle, uint High, byte Scale) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public abstract record BoundInterpolationPart;
@@ -378,6 +379,75 @@ internal static class IntegerLiterals
     }
 }
 
+// A decimal token denotes an exact 96-bit coefficient and a scale from 0 to
+// 28. Work with digits and a bounded exponent before constructing a BigInteger,
+// so neither very long tokens nor exponents can cause unbounded powers of ten.
+internal static class DecimalLiterals
+{
+    internal static bool TryParse(string text, out BoundDecimal value)
+    {
+        value = new(0, 0, 0, 0);
+        if (text.Length < 2 || text[^1] != 'm') return false;
+        var end = text.Length - 1;
+        var index = 0;
+        var digits = new StringBuilder();
+        bool ReadDigits(StringBuilder output, out int count)
+        {
+            count = 0;
+            var previousDigit = false;
+            while (index < end && (char.IsAsciiDigit(text[index]) || text[index] == '_'))
+            {
+                var c = text[index++];
+                if (c == '_')
+                {
+                    if (!previousDigit || index == end || !char.IsAsciiDigit(text[index])) return false;
+                    previousDigit = false;
+                }
+                else { output.Append(c); count++; previousDigit = true; }
+            }
+            return previousDigit;
+        }
+        if (!ReadDigits(digits, out _)) return false;
+        var fractionLength = 0;
+        if (index < end && text[index] == '.')
+        {
+            index++;
+            if (!ReadDigits(digits, out fractionLength)) return false;
+        }
+        long exponent = 0;
+        if (index < end && text[index] is 'e' or 'E')
+        {
+            index++;
+            var negative = index < end && text[index] == '-';
+            if (index < end && text[index] is '+' or '-') index++;
+            var exponentDigits = new StringBuilder();
+            if (!ReadDigits(exponentDigits, out _)) return false;
+            foreach (var digit in exponentDigits.ToString())
+                exponent = Math.Min(1_000_000_000L, exponent * 10 + digit - '0');
+            if (negative) exponent = -exponent;
+        }
+        if (index != end) return false;
+        var coefficient = digits.ToString().TrimStart('0');
+        if (coefficient.Length == 0) return true;
+        long scale = (long)fractionLength - exponent;
+        var last = coefficient.Length;
+        while (scale > 0 && last > 0 && coefficient[last - 1] == '0') { last--; scale--; }
+        coefficient = coefficient[..last];
+        if (scale > 28) return false;
+        if (scale < 0)
+        {
+            if (-scale > 29 || coefficient.Length - scale > 29) return false;
+            coefficient += new string('0', (int)-scale);
+            scale = 0;
+        }
+        if (coefficient.Length > 29 || !System.Numerics.BigInteger.TryParse(coefficient,
+            NumberStyles.None, CultureInfo.InvariantCulture, out var number) || number > (System.Numerics.BigInteger.One << 96) - 1) return false;
+        value = new((uint)(number & uint.MaxValue), (uint)((number >> 32) & uint.MaxValue),
+            (uint)((number >> 64) & uint.MaxValue), (byte)scale);
+        return true;
+    }
+}
+
 // Scan an interpolation as one lexical token while still recognizing nested
 // expressions, comments and interpolated strings inside its holes. Offsets are
 // relative to the supplied source; OriginSpan maps them back to the real file.
@@ -568,7 +638,27 @@ public static class Lexer
             else if (char.IsAsciiLetter(c) || c == '_')
                 do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
             else if (char.IsAsciiDigit(c))
-                do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
+            {
+                if (c == '0' && i + 1 < source.Length && source[i + 1] is 'x' or 'b')
+                    do { Advance(); } while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_'));
+                else
+                {
+                    do { Advance(); } while (i < source.Length && (char.IsAsciiDigit(source[i]) || source[i] == '_'));
+                    // A dot begins a fractional literal only when followed by
+                    // a digit; 40.add remains integer member access.
+                    if (i + 1 < source.Length && source[i] == '.' && char.IsAsciiDigit(source[i + 1]))
+                    {
+                        Advance();
+                        do { Advance(); } while (i < source.Length && (char.IsAsciiDigit(source[i]) || source[i] == '_'));
+                    }
+                    if (i < source.Length && source[i] is 'e' or 'E')
+                    {
+                        Advance();
+                        if (i < source.Length && source[i] is '+' or '-') Advance();
+                    }
+                    while (i < source.Length && (char.IsAsciiLetterOrDigit(source[i]) || source[i] == '_')) Advance();
+                }
+            }
             else if (i + 1 < source.Length && (source.Substring(i, 2) is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "=>" or "->" or "??" or "?." or "|>")) { Advance(); Advance(); }
             else if ("(),.:{}[]=+-*/%!<>|?".Contains(c)) Advance();
             else throw new SourceError(new("DS1001", path, new(i, 1, line, column), $"Unsupported character '{c}'."));
@@ -604,8 +694,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private Token DeclaredTypeIdentifier()
     {
         var name = Identifier();
-        if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong")
-            throw new SourceError(new("DS1002", path, name.Span, "A built-in integer type name cannot be declared as a type or type parameter."));
+        if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong" or "decimal")
+            throw new SourceError(new("DS1002", path, name.Span, "A built-in numeric type name cannot be declared as a type or type parameter."));
         return name;
     }
     private InterpolationSyntax Interpolation()
@@ -647,7 +737,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool TypeName(string text) => text.Length > 0 &&
         (char.IsAsciiLetter(text[0]) || text[0] == '_') &&
-        (!Reserved.Contains(text) || text is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "string" or "char");
+        (!Reserved.Contains(text) || text is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "bool" or "string" or "char");
 
     // Recognize the complete adopted type grammar before consulting symbols. This
     // deliberately recognizes function/tuple/qualified types that a later stage
@@ -1845,7 +1935,7 @@ public static class Binder
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["int"] = 0, ["sbyte"] = 0, ["byte"] = 0, ["short"] = 0, ["ushort"] = 0,
-            ["uint"] = 0, ["long"] = 0, ["ulong"] = 0,
+            ["uint"] = 0, ["long"] = 0, ["ulong"] = 0, ["decimal"] = 0,
             ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
             [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1
         };
@@ -1876,7 +1966,7 @@ public static class Binder
             {
                 if (candidate.IsFunction || candidate.IsTuple || candidate.Name == listSymbol ||
                     candidate.Name == mapSymbol || candidate.Name == setSymbol || scope.Contains(candidate.Name)) return false;
-                if (candidate.Name is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "string" or "char" or "Unit") return candidate.Arguments.Count == 0;
+                if (candidate.Name is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "bool" or "string" or "char" or "Unit") return candidate.Arguments.Count == 0;
                 if (candidate.Arguments.Any(argument => argument.ContainsFunction)) return false;
                 if (!records.TryGetValue(candidate.Name, out var record) && !unions.TryGetValue(candidate.Name, out _)) return false;
                 if (!candidate.Arguments.All(argument => EligibleKey(argument, new HashSet<string>(visiting, StringComparer.Ordinal)))) return false;
@@ -2270,8 +2360,17 @@ public static class Binder
                 if (literal.Minus is not null) value = -value;
                 return true;
             }
+            bool DecimalPatternValue(LiteralPatternSyntax literal, out decimal value)
+            {
+                value = default;
+                if (!DecimalLiterals.TryParse(literal.Literal.Text, out var magnitude)) return false;
+                value = new decimal(unchecked((int)magnitude.Low), unchecked((int)magnitude.Middle),
+                    unchecked((int)magnitude.High), literal.Minus is not null, magnitude.Scale);
+                return true;
+            }
             bool SameLiteral(LiteralPatternSyntax a, LiteralPatternSyntax b) =>
                 IntegerPatternValue(a, out var first) && IntegerPatternValue(b, out var second) ? first == second :
+                DecimalPatternValue(a, out var decimalFirst) && DecimalPatternValue(b, out var decimalSecond) ? decimalFirst == decimalSecond :
                 a.Literal.Text == b.Literal.Text && (a.Minus is null) == (b.Minus is null);
             bool Subsumes(PatternSyntax prior, PatternSyntax next) => (prior, next) switch
             {
@@ -2444,6 +2543,7 @@ public static class Binder
                 if (text is "true" or "false") return "bool";
                 if (text.StartsWith('"')) return "string";
                 if (text.StartsWith('\'')) return "char";
+                if (DecimalLiterals.TryParse(text, out _)) return "decimal";
                 if (IntegerLiterals.TryParse(text, out var magnitude, out var longSuffix))
                 {
                     if (longSuffix) return magnitude <= long.MaxValue ? "long" : null;
@@ -3025,9 +3125,10 @@ public static class Binder
                         {
                             ValueSyntax value when value.Value.Text is "true" or "false" ||
                                 IntegerLiterals.TryParse(value.Value.Text, out _, out _) ||
+                                DecimalLiterals.TryParse(value.Value.Text, out _) ||
                                 value.Value.Text.StartsWith('"') || value.Value.Text.StartsWith('\'') => new LiteralPatternSyntax(value.Value),
                             UnarySyntax { Operator.Text: "-", Operand: ValueSyntax value } unary when
-                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
+                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) || DecimalLiterals.TryParse(value.Value.Text, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
                             UnitSyntax unit => new UnitPatternSyntax(unit.Unit),
                             NullSyntax nullValue => new NullPatternSyntax(nullValue.Null),
                             _ => null
@@ -3038,6 +3139,7 @@ public static class Binder
                             if (point.Literal.Text is "true" or "false" && literal.Literal.Text is "true" or "false")
                                 return point.Literal.Text == literal.Literal.Text;
                             if (IntegerPatternValue(point, out var a) && IntegerPatternValue(literal, out var b)) return a == b;
+                            if (DecimalPatternValue(point, out var decimalPoint) && DecimalPatternValue(literal, out var decimalLiteral)) return decimalPoint == decimalLiteral;
                             return true; // Different spellings of text literals can denote the same value.
                         }
                         bool Covered(List<PatternSyntax> previous, PatternSyntax target) =>
@@ -3958,8 +4060,8 @@ public static class Binder
                         return new BoundLiteralPattern(new BoundUnit(), "Unit");
                     case LiteralPatternSyntax literal:
                         var literalValue = BindExpression(new ValueSyntax(literal.Literal), expected);
-                        if (literal.Minus is not null && !IntegerType(literalValue.Type))
-                            Fail("DS2019", literal.Token, "Only an integer literal can be negative.");
+                        if (literal.Minus is not null && !IntegerType(literalValue.Type) && literalValue.Type != "decimal")
+                            Fail("DS2019", literal.Token, "Only a numeric literal can be negative.");
                         if (literalValue.Type != expected)
                             Fail("DS2019", literal.Token, $"Expected a {DisplayType(expected)} pattern.");
                         return new BoundLiteralPattern(literal.Minus is null ? literalValue.Expression :
@@ -4470,8 +4572,8 @@ public static class Binder
                         var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
                         BoundPattern? singletonPattern = scrutinee.Expression switch
                         {
-                            BoundBool or BoundInt or BoundInteger or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
-                            BoundUnary { Operator: "-", Operand: BoundInt or BoundInteger } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundBool or BoundInt or BoundInteger or BoundDecimal or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundUnary { Operator: "-", Operand: BoundInt or BoundInteger or BoundDecimal } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
                             BoundNull => new BoundNullPattern(),
                             _ => null
                         };
@@ -5138,6 +5240,12 @@ public static class Binder
                         if (token.Text is "true" or "false") return (new BoundBool(token.Text == "true"), "bool");
                         if (token.Text.Length > 0 && char.IsAsciiDigit(token.Text[0]))
                         {
+                            if (token.Text.EndsWith('m'))
+                            {
+                                if (!DecimalLiterals.TryParse(token.Text, out var decimalValue))
+                                    Fail("DS2004", token, "Invalid decimal literal or value not exactly representable.");
+                                return (decimalValue, "decimal");
+                            }
                             if (!IntegerLiterals.TryParse(token.Text, out var magnitude, out var longSuffix))
                                 Fail("DS2004", token, "Invalid integer literal or magnitude outside the supported range.");
                             var hinted = expectedResult is not null && IsNullable(expectedResult) ? expectedResult[..^1] : expectedResult;
@@ -6058,8 +6166,8 @@ public static class Binder
                     case UnarySyntax unary:
                         var operand = BindExpression(unary.Operand, unary.Operator.Text == "!" ? "bool" : expectedResult);
                         var expected = unary.Operator.Text == "!" ? "bool" : operand.Type == "<never>" ? "int" : operand.Type;
-                        if (unary.Operator.Text != "!" && !IntegerType(expected))
-                            Fail("DS2002", unary.Operand.Token, "Unary arithmetic requires an integer operand.");
+                        if (unary.Operator.Text != "!" && !IntegerType(expected) && expected != "decimal")
+                            Fail("DS2002", unary.Operand.Token, "Unary arithmetic requires a numeric operand.");
                         Require(unary.Operand, operand.Type, expected);
                         return (new BoundUnary(unary.Operator.Text, Coerce(operand.Expression, expected, operand.Type)) { OperandType = expected }, operand.Type == "<never>" ? "<never>" : expected);
                     case BinarySyntax binary:
@@ -6159,7 +6267,7 @@ public static class Binder
                             return (new BoundBinary(Coerce(left.Expression, operandType!, left.Type), op, Coerce(right.Expression, operandType!, right.Type)) { OperandType = operandType! }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : "bool");
                         }
                         var integerOperand = left.Type == "<never>" ? right.Type == "<never>" ? "int" : right.Type : left.Type;
-                        if (!IntegerType(integerOperand)) Fail("DS2002", (left.Type == "<never>" ? binary.Right : binary.Left).Token, "Arithmetic and ordered comparisons require integer operands.");
+                        if (!IntegerType(integerOperand) && integerOperand != "decimal") Fail("DS2002", (left.Type == "<never>" ? binary.Right : binary.Left).Token, "Arithmetic and ordered comparisons require numeric operands.");
                         Require(binary.Left, left.Type, integerOperand); Require(binary.Right, right.Type, integerOperand);
                         return (new BoundBinary(Coerce(left.Expression, integerOperand, left.Type), op, Coerce(right.Expression, integerOperand, right.Type)) { OperandType = integerOperand }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : op is "<" or "<=" or ">" or ">=" ? "bool" : integerOperand);
                     default: throw new InvalidOperationException("Unknown expression syntax.");
@@ -7237,7 +7345,7 @@ public static class CSharpEmitter
                 shape.Name == module.MapSymbol || shape.Name == module.SetSymbol);
         bool IsTypeParameter(string type) => GenericTypes.TryParse(type, out var shape) &&
             shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name);
-        static bool IsValueType(string type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "bool" or "char" or "Unit" ||
+        static bool IsValueType(string type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "bool" or "char" or "Unit" ||
             GenericTypes.TryParse(type, out var shape) && shape.IsTuple && !shape.IsNullable;
         string CType(string type)
         {
@@ -8307,6 +8415,16 @@ public static class CSharpEmitter
                             .Append(" = checked((").Append(CType(literal.Type)).Append(")")
                             .Append(literal.Magnitude.ToString(CultureInfo.InvariantCulture)).Append("UL);\n");
                         return integerName;
+                    case BoundDecimal literal:
+                        // Construct an exact, nonconstant decimal. C# must not
+                        // evaluate D# overflow or division-by-zero at compile time.
+                        var decimalName = "__dsharp_decimal_" + (literalCount++).ToString(CultureInfo.InvariantCulture);
+                        output.Append("            decimal ").Append(decimalName).Append(" = new global::System.Decimal(")
+                            .Append("unchecked((int)").Append(literal.Low.ToString(CultureInfo.InvariantCulture)).Append("U), ")
+                            .Append("unchecked((int)").Append(literal.Middle.ToString(CultureInfo.InvariantCulture)).Append("U), ")
+                            .Append("unchecked((int)").Append(literal.High.ToString(CultureInfo.InvariantCulture)).Append("U), false, ")
+                            .Append(literal.Scale.ToString(CultureInfo.InvariantCulture)).Append(");\n");
+                        return decimalName;
                     case BoundNever never:
                         var neverHelper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
                         output.Append("            ").Append(HelperResult(never.Type, never)).Append(" ").Append(neverHelper).Append(HelperBody(never));

@@ -53,6 +53,26 @@ internal static class MatchCoverage
                 var b = Integer(right.Value);
                 return a is not null && b is not null && a == b;
             }
+            if (left.Type == "decimal")
+            {
+                // A decimal's coefficient and scale are not its identity:
+                // 1m and 1.00m, as well as both signs of zero, compare equal.
+                static decimal? Decimal(BoundExpression value)
+                {
+                    static decimal Number(BoundDecimal number) => new(
+                        unchecked((int)number.Low), unchecked((int)number.Middle),
+                        unchecked((int)number.High), false, number.Scale);
+                    return value switch
+                    {
+                        BoundDecimal number => Number(number),
+                        BoundUnary { Operator: "-", Operand: BoundDecimal number } => -Number(number),
+                        _ => null
+                    };
+                }
+                var a = Decimal(left.Value);
+                var b = Decimal(right.Value);
+                return a is not null && b is not null && a == b;
+            }
             return object.Equals(left.Value, right.Value);
         }
 
