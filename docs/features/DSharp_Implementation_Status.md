@@ -7,11 +7,12 @@ This status describes tested implementation, not the full syntax draft.
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
 is a target addition tracked in #129–#136. Issue #135 implements the ordinary
 function partial-application slice below. Issue #136 adds synchronous Result
-helpers; their async overloads, callable HTTP preprocessing, Logger and the
-remaining #129 integrations remain future work.
+helpers; #219 adds the task-input `map` slice. The other async Result helper
+variants, callable HTTP preprocessing, Logger and the remaining #129 integrations
+remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
-The synchronous Result helper bodies are authored as D# in
+The Result helper bodies are authored as D# in
 [`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
 compiler and parsed and bound as the active implementation by #142.
 
@@ -44,6 +45,7 @@ external interoperability guarantee follows from this lowering. See the
 | Explicit Option values | Standard `Option<T>` with `None` and `Some(T)`; nullable and nested payloads remain distinct | Matching and structural equality preserve cases and payloads; no implicit conversion to or from nullable values |
 | Result values | Standard `Result<T,E>`, typed `Success`/`Error`, Unit shorthand and exhaustive matching | Present and null successes remain distinct from errors; discarded Result statements are rejected |
 | Synchronous Result composition | `andThen`, `map`, `mapError`, `tap` and `tapError` as ordinary generic functions | Applicable callbacks execute once; typed errors and nullable/Option payloads remain distinct |
+| Asynchronous Result map | `map` with a synchronous callback and `Task<Result<A, E>>` input in direct calls, pipes and supported typed callable contexts | Awaits the source once; invokes the callback only on success; faults and cancellation propagate |
 | Result propagation | Postfix `?` requires a standard Result operand and an enclosing Result with the same error type | Success yields its payload; Error exits the nearest function without evaluating later expressions |
 | Function types and immutable closures | Function-valued parameters, locals and returns; typed or contextually inferred lambda parameters; immutable data captures | Returned closures retain independent captured values; lambda `return` and Result `?` remain within the lambda |
 | Value pipes and return inference | `value |> function`, plus inferred returns for ordinary acyclic functions and provably static partial calls | Pipes evaluate their left value once before the target and use normal call semantics |
@@ -527,8 +529,18 @@ and service/interface/extension integrations remain tracked by #129. See the
 callback-first Result helpers through the standard prelude. They use ordinary
 calls and pipes, evaluate callback expressions eagerly, and invoke callbacks only
 for the applicable outcome. `map` wraps rather than flattening nested results;
-`tap` observers return Unit. Async overloads remain tracked by #130. See the
+`tap` observers return Unit. See the
 [implementation plan](implementation/issue-136-plan.md).
+[Issue #219](https://github.com/gajo357/dsharplang/issues/219) adds the
+task-input `map` form: a synchronous callback and `Task<Result<A, E>>` produce
+`Task<Result<B, E>>`. Direct calls, pipes and typed callable contexts select the
+task form when supported. The D# prelude helper awaits its input once and invokes
+the callback only for success; errors, task faults and cancellation propagate.
+Callback expressions retain ordinary eager evaluation, and the pipe does not
+implicitly await or unwrap values. Other async helper forms, including the
+`andThen` combinations, remain open under #130. See the
+[D# example](../../examples/async_result_map.ds) and
+[implementation plan](implementation/issue-219-plan.md).
 [Issue #36](https://github.com/gajo357/dsharplang/issues/36) adds immutable
 tuple values and types, with checked, nested `let` destructuring. Tuple elements
 are evaluated in order and a destructuring initializer is evaluated once. A
@@ -552,7 +564,7 @@ CLI accept multiple sources while retaining single-file use. The
 [D# example](../../examples/multifile/) demonstrates cross-file calls and
 qualified names. Generated C# module-wrapper names are not a .NET interop
 contract. General-purpose D# standard-library packaging remains separate work;
-the five synchronous Result helpers use the embedded D# prelude.
+the synchronous Result helpers and task-input `map` use the embedded D# prelude.
 [Issue #47](https://github.com/gajo357/dsharplang/issues/47) adds synchronous
 and async extensions as statically resolved methods. The compiler searches the
 current module and each file's direct imports; duplicate imports do not create

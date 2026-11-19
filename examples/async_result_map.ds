@@ -1,0 +1,7 @@
+module Demo
+
+fn addOne(value: int): int { value + 1 }
+
+async fn answer(pending: Task<Result<int, string>>): Result<int, string> {
+    await (pending |> map(addOne))
+}

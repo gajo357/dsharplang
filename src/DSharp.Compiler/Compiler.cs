@@ -2278,16 +2278,20 @@ public static class Binder
         }
         ReserveTokens(syntax);
         var preludeNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? taskResultMapHelper = null;
         foreach (var declaration in prelude.Functions)
         {
             var sourceName = declaration.Name.Text;
             if (preludeNames.ContainsKey(sourceName)) Fail("DS2001", declaration.Name, "Duplicate prelude function declaration.");
             var helperName = sourceName;
-            if (signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName) || services.ContainsKey(helperName))
+            // This implementation is a compiler-private overload, not a new
+            // source-level name. Pick an identity absent from all source tokens.
+            if (sourceName == "__dsharp_result_map_task" || signatures.ContainsKey(helperName) || cases.ContainsKey(helperName) || records.ContainsKey(helperName) || unions.ContainsKey(helperName) || services.ContainsKey(helperName))
             {
                 helperName = "__dsharp_prelude_" + sourceName;
                 while (!reservedPreludeNames.Add(helperName)) helperName += "_";
             }
+            if (sourceName == "__dsharp_result_map_task") taskResultMapHelper = helperName;
             preludeNames.Add(sourceName, helperName);
             var scope = TypeScope(declaration.TypeParameters);
             functionTypeScopes.Add(helperName, scope);
@@ -2296,7 +2300,7 @@ public static class Binder
                 if (!GenericTypes.TryParse(token.Text, out var shape)) return token;
                 TypeShape Rebind(TypeShape value) => value with
                 {
-                    Name = scope.TryGetValue(value.Name, out var symbol) ? symbol : value.Name == "Result" ? resultSymbol : value.Name,
+                    Name = scope.TryGetValue(value.Name, out var symbol) ? symbol : value.Name == "Result" ? resultSymbol : value.Name == "Task" ? taskSymbol : value.Name,
                     Arguments = value.Arguments.Select(Rebind).ToArray()
                 };
                 return token with { Text = Rebind(shape).ToString() };
@@ -3338,7 +3342,11 @@ public static class Binder
         foreach (var function in syntax.Functions.Where(function => !function.InferReturnType)) Schedule(function);
         // User bodies determine which prelude declarations are needed. Their
         // explicit signatures permit binding their bodies after the user code.
-        inferenceOrder.AddRange(resultHelpers.Values);
+        // The task overload can be discovered while binding another prelude
+        // body. Schedule its body last so that such a dependency is emitted
+        // without eagerly including an otherwise unused helper.
+        inferenceOrder.AddRange(resultHelpers.Values.Where(helper => helper.Name.Text != taskResultMapHelper));
+        if (taskResultMapHelper is not null) inferenceOrder.Add(resultHelpers[taskResultMapHelper]);
         var functions = new List<BoundFunction>();
         // Infer every omitted signature before the final body-checking pass.
         // Runtime-unreachable calls may still need a callee's inferred type
@@ -4131,6 +4139,87 @@ public static class Binder
                 for (var i = 0; i < arguments.Count; i++)
                     argumentsBound.Add(BindPattern(arguments[i], Substitute(unionCase.PayloadTypes[i].Text, substitutions!, unionCase.PayloadTypes[i]), introduced));
                 return new BoundCasePattern(expected, unionCase.Name.Text, argumentsBound);
+            }
+            // Speculatively bind both standard map signatures using the actual
+            // context; a candidate is never selected by declaration order.
+            // The exact syntax node is guarded so nested map expressions still
+            // resolve independently while the outer candidate is being tested.
+            var resolvingResultMaps = new HashSet<ExpressionSyntax>(ReferenceEqualityComparer.Instance);
+            (BoundExpression Expression, string Type) BindResultMap(ExpressionSyntax syntaxNode, Token location,
+                string? expected, string? pipeInput, string? pipeOutput, bool pipeNull,
+                IReadOnlyList<string?>? groupedTypes, string? groupedExpected, bool pipeTarget)
+            {
+                var savedReturns = inferredReturns;
+                var savedReachable = inferenceReachable;
+                var savedHasReturn = hasReturn;
+                var savedTupleCount = tupleBindingCount;
+                var savedConditionalCounter = conditionalReceiverCounter;
+                var savedDirectAwait = directResourceAwait;
+                var savedUsedHelpers = usedResultHelpers.ToArray();
+                var savedOwnedCalls = ownedCalls.ToArray();
+                var savedOwnedMembers = ownedMemberCalls.ToArray();
+                var savedAwaitedMembers = awaitedOwnedMembers.ToArray();
+                var savedAwaitedCalls = awaitedOwnedCalls.ToArray();
+                var savedOwnedCases = ownedResultCases.ToArray();
+                var savedOwnedPropagations = ownedPropagations.ToArray();
+                var savedFlags = (resultUsed, optionUsed, listUsed, mapUsed, setUsed, mutableListUsed, mutableMapUsed, taskUsed);
+                void Restore<T>(HashSet<T> target, T[] original)
+                {
+                    target.Clear();
+                    target.UnionWith(original);
+                }
+                ExpressionSyntax TaskCandidate() => syntaxNode switch
+                {
+                    ValueSyntax value => value with { Value = value.Value with { Text = taskResultMapHelper! } },
+                    CallSyntax call => call with { Name = call.Name with { Text = taskResultMapHelper! } },
+                    _ => throw new InvalidOperationException("Invalid Result.map candidate.")
+                };
+                bool Probe(ExpressionSyntax candidate)
+                {
+                    if (savedReturns is not null) inferredReturns = new List<string>();
+                    inferenceReachable = false;
+                    try
+                    {
+                        var bound = BindExpression(candidate, expected, pipeInput, pipeOutput, pipeNull, groupedTypes, groupedExpected, pipeTarget);
+                        return expected is null || !SupportedType(expected, activeTypeParameters) || Convertible(bound.Type, expected);
+                    }
+                    catch (SourceError) { return false; }
+                    finally
+                    {
+                        inferredReturns = savedReturns;
+                        inferenceReachable = savedReachable;
+                        hasReturn = savedHasReturn;
+                        tupleBindingCount = savedTupleCount;
+                        conditionalReceiverCounter = savedConditionalCounter;
+                        directResourceAwait = savedDirectAwait;
+                        Restore(usedResultHelpers, savedUsedHelpers);
+                        Restore(ownedCalls, savedOwnedCalls);
+                        Restore(ownedMemberCalls, savedOwnedMembers);
+                        Restore(awaitedOwnedMembers, savedAwaitedMembers);
+                        Restore(awaitedOwnedCalls, savedAwaitedCalls);
+                        Restore(ownedResultCases, savedOwnedCases);
+                        Restore(ownedPropagations, savedOwnedPropagations);
+                        (resultUsed, optionUsed, listUsed, mapUsed, setUsed, mutableListUsed, mutableMapUsed, taskUsed) = savedFlags;
+                    }
+                }
+                resolvingResultMaps.Add(syntaxNode);
+                try
+                {
+                    var taskCandidate = TaskCandidate();
+                    var synchronous = Probe(syntaxNode);
+                    var asynchronous = Probe(taskCandidate);
+                    if (synchronous && asynchronous)
+                        Fail("DS2026", location, "Result.map is ambiguous; supply an expected Result or Task<Result> callable type.");
+                    if (asynchronous)
+                    {
+                        taskUsed = true;
+                        return BindExpression(taskCandidate, expected, pipeInput, pipeOutput, pipeNull, groupedTypes, groupedExpected, pipeTarget);
+                    }
+                    // Preserve the established synchronous diagnostic when no
+                    // candidate fits; normal binding supplies the source span.
+                    return BindExpression(syntaxNode, expected, pipeInput, pipeOutput, pipeNull, groupedTypes, groupedExpected, pipeTarget);
+                }
+                finally { resolvingResultMaps.Remove(syntaxNode); }
             }
             (BoundExpression Expression, string Type) BindExpression(ExpressionSyntax expression, string? expectedResult = null, string? pipeInputType = null, string? pipeOutputType = null, bool pipeNullInput = false,
                 IReadOnlyList<string?>? groupedArgumentTypes = null, string? groupedExpectedResult = null, bool isPipeTarget = false)
@@ -5264,6 +5353,12 @@ public static class Binder
                             var selected = BareCase(token);
                             return BindCase(selected.Union, selected.Case, token, Array.Empty<ExpressionSyntax>(), expectedResult: expectedResult);
                         }
+                        if (taskResultMapHelper is not null &&
+                            !locals.ContainsKey(token.Text) && !inaccessibleCaptures.Contains(token.Text) && !IsDefaultMethodName(token.Text) &&
+                            preludeNames.TryGetValue("map", out var standardMapValue) && token.Text == standardMapValue &&
+                            !resolvingResultMaps.Contains(valueSyntax))
+                            return BindResultMap(valueSyntax, token, expectedResult, pipeInputType, pipeOutputType,
+                                pipeNullInput, groupedArgumentTypes, groupedExpectedResult, isPipeTarget);
                         if (!locals.ContainsKey(token.Text) && signatures.TryGetValue(token.Text, out var namedFunction))
                         {
                             if (ownedFactories.Contains(token.Text))
@@ -5281,7 +5376,7 @@ public static class Binder
                         return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
                         if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(call.Name.Text) && !inaccessibleCaptures.Contains(call.Name.Text) &&
-                            preludeNames.TryGetValue(call.Name.Text, out var preludeCallName))
+                            preludeNames.TryGetValue(call.Name.Text, out var preludeCallName) && call.Name.Text != preludeCallName)
                             call = call with { Name = call.Name with { Text = preludeCallName } };
                         if (!locals.ContainsKey(call.Name.Text) && inaccessibleCaptures.Contains(call.Name.Text))
                             Fail("DS2026", call.Name, "Lambda capture is not supported.");
@@ -5322,6 +5417,11 @@ public static class Binder
                                 call.TypeArguments.Select(type => ScopedType(type, functionTypeScope)).ToArray(), expectedResult, true,
                                 ownedResultCases.Contains(call));
                         }
+                        if (taskResultMapHelper is not null &&
+                            preludeNames.TryGetValue("map", out var standardMapCall) && call.Name.Text == standardMapCall &&
+                            !resolvingResultMaps.Contains(call))
+                            return BindResultMap(call, call.Name, expectedResult, pipeInputType, pipeOutputType,
+                                pipeNullInput, groupedArgumentTypes, groupedExpectedResult, isPipeTarget);
                         if (!signatures.TryGetValue(call.Name.Text, out var target)) Fail("DS2009", call.Name, "Unknown function.");
                         if (ownedFactories.Contains(call.Name.Text))
                         {
@@ -6656,6 +6756,39 @@ public static class Binder
             {
                 var unwrappedReceiver = receiverSyntax;
                 while (unwrappedReceiver is GroupSyntax group) unwrappedReceiver = group.Inner;
+                // An immediately saturated sequence of standard map prefixes
+                // is equivalent to one positional call: its callback and
+                // input expressions still evaluate once, left to right. This
+                // lets the final input resolve the overload and infer lambda
+                // types even for map()(transform)(input).
+                CallSyntax? mapPrefix = null;
+                var prefixArguments = new List<ExpressionSyntax>();
+                bool CollectMapPrefix(ExpressionSyntax node)
+                {
+                    while (node is GroupSyntax grouped) node = grouped.Inner;
+                    if (node is InvokeSyntax invoke)
+                    {
+                        if (!CollectMapPrefix(invoke.Receiver)) return false;
+                        prefixArguments.AddRange(invoke.Arguments);
+                        return true;
+                    }
+                    if (node is not CallSyntax prefix || taskResultMapHelper is null || locals.ContainsKey(prefix.Name.Text) ||
+                        inaccessibleCaptures.Contains(prefix.Name.Text) || IsDefaultMethodName(prefix.Name.Text) ||
+                        !preludeNames.TryGetValue("map", out var standardMap))
+                        return false;
+                    var prefixName = resultHelpers.ContainsKey(function.Name.Text) &&
+                        preludeNames.TryGetValue(prefix.Name.Text, out var resolvedPreludeName)
+                            ? resolvedPreludeName : prefix.Name.Text;
+                    if (prefixName != standardMap) return false;
+                    mapPrefix = prefixName == prefix.Name.Text ? prefix : prefix with { Name = prefix.Name with { Text = prefixName } };
+                    prefixArguments.AddRange(prefix.Arguments);
+                    return true;
+                }
+                if (CollectMapPrefix(unwrappedReceiver) && prefixArguments.Count < 2 && prefixArguments.Count + arguments.Count == 2)
+                {
+                    prefixArguments.AddRange(arguments);
+                    return BindExpression(mapPrefix! with { Arguments = prefixArguments }, expectedResult);
+                }
                 if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) && !cases.ContainsKey(name.Value.Text) && signatures.ContainsKey(name.Value.Text))
                     return BindExpression(new CallSyntax(name.Value, location, arguments), expectedResult);
