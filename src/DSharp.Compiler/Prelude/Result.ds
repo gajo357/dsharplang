@@ -14,6 +14,16 @@ fn map<A, B, E>(transform: (A) -> B, value: Result<A, E>): Result<B, E> {
     }
 }
 
+// Internal implementation selected by the public map symbol for task inputs.
+async fn __dsharp_result_map_task<A, B, E>(transform: (A) -> B, value: Task<Result<A, E>>): Result<B, E> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(item) => Result.Success(transform(item))
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
 fn mapError<A, B, E>(convert: (E) -> B, value: Result<A, E>): Result<A, B> {
     match value {
         Result.Success(item) => Result.Success(item)
