@@ -222,7 +222,7 @@ public sealed class Float32Tests
             "fn bad(): float32 { 1f + 1 }",
             "fn bad(): float32 { 1 + 1f }",
             "fn bad(): int { 1f }",
-            "fn bad(value: float): int { 1 }",
+            "fn bad(value: float128): int { 1 }",
             "type float32 { value: int }\nfn bad(): int { 1 }",
             "fn bad<float32>(value: float32): float32 { value }",
             "fn bad(): Unit { let value = Map.empty<float32, int>()\n () }",

@@ -93,6 +93,25 @@ internal static class MatchCoverage
                 var b = Float32(right.Value);
                 return a is not null && b is not null && a.Value == b.Value;
             }
+            if (left.Type == "float")
+            {
+                // Distinct source spellings may round to the same binary64
+                // value. IEEE equality also equates positive and negative zero.
+                static double? Float64(BoundExpression value)
+                {
+                    static double Number(BoundFloat64 number) =>
+                        BitConverter.Int64BitsToDouble(unchecked((long)number.Bits));
+                    return value switch
+                    {
+                        BoundFloat64 number => Number(number),
+                        BoundUnary { Operator: "-", Operand: BoundFloat64 number } => -Number(number),
+                        _ => null
+                    };
+                }
+                var a = Float64(left.Value);
+                var b = Float64(right.Value);
+                return a is not null && b is not null && a.Value == b.Value;
+            }
             return object.Equals(left.Value, right.Value);
         }
 

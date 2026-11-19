@@ -186,6 +186,7 @@ public sealed record BoundInt(int Value) : BoundExpression;
 public sealed record BoundInteger(ulong Magnitude, string Type) : BoundExpression;
 public sealed record BoundDecimal(uint Low, uint Middle, uint High, byte Scale) : BoundExpression;
 public sealed record BoundFloat32(uint Bits) : BoundExpression;
+public sealed record BoundFloat64(ulong Bits) : BoundExpression;
 public sealed record BoundBool(bool Value) : BoundExpression;
 public sealed record BoundText(string Value, bool IsChar) : BoundExpression;
 public abstract record BoundInterpolationPart;
@@ -695,7 +696,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     private Token DeclaredTypeIdentifier()
     {
         var name = Identifier();
-        if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong" or "decimal" or "float32")
+        if (name.Text is "sbyte" or "byte" or "short" or "ushort" or "uint" or "long" or "ulong" or "decimal" or "float32" or "float")
             throw new SourceError(new("DS1002", path, name.Span, "A built-in numeric type name cannot be declared as a type or type parameter."));
         return name;
     }
@@ -738,7 +739,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
     }
     private static bool TypeName(string text) => text.Length > 0 &&
         (char.IsAsciiLetter(text[0]) || text[0] == '_') &&
-        (!Reserved.Contains(text) || text is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "bool" or "string" or "char");
+        (!Reserved.Contains(text) || text is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "float" or "bool" or "string" or "char");
 
     // Recognize the complete adopted type grammar before consulting symbols. This
     // deliberately recognizes function/tuple/qualified types that a later stage
@@ -1936,7 +1937,7 @@ public static class Binder
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["int"] = 0, ["sbyte"] = 0, ["byte"] = 0, ["short"] = 0, ["ushort"] = 0,
-            ["uint"] = 0, ["long"] = 0, ["ulong"] = 0, ["decimal"] = 0, ["float32"] = 0,
+            ["uint"] = 0, ["long"] = 0, ["ulong"] = 0, ["decimal"] = 0, ["float32"] = 0, ["float"] = 0,
             ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
             [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1
         };
@@ -2398,10 +2399,19 @@ public static class Binder
                 if (literal.Minus is not null) value = -value;
                 return true;
             }
+            bool Float64PatternValue(LiteralPatternSyntax literal, out double value)
+            {
+                value = default;
+                if (!Float64Literals.TryParse(literal.Literal.Text, out var bits)) return false;
+                value = BitConverter.Int64BitsToDouble(unchecked((long)bits));
+                if (literal.Minus is not null) value = -value;
+                return true;
+            }
             bool SameLiteral(LiteralPatternSyntax a, LiteralPatternSyntax b) =>
                 IntegerPatternValue(a, out var first) && IntegerPatternValue(b, out var second) ? first == second :
                 DecimalPatternValue(a, out var decimalFirst) && DecimalPatternValue(b, out var decimalSecond) ? decimalFirst == decimalSecond :
                 Float32PatternValue(a, out var floatFirst) && Float32PatternValue(b, out var floatSecond) ? floatFirst == floatSecond :
+                Float64PatternValue(a, out var doubleFirst) && Float64PatternValue(b, out var doubleSecond) ? doubleFirst == doubleSecond :
                 a.Literal.Text == b.Literal.Text && (a.Minus is null) == (b.Minus is null);
             bool Subsumes(PatternSyntax prior, PatternSyntax next) => (prior, next) switch
             {
@@ -2576,6 +2586,7 @@ public static class Binder
                 if (text.StartsWith('\'')) return "char";
                 if (DecimalLiterals.TryParse(text, out _)) return "decimal";
                 if (Float32Literals.TryParse(text, out _)) return "float32";
+                if (Float64Literals.TryParse(text, out _)) return "float";
                 if (IntegerLiterals.TryParse(text, out var magnitude, out var longSuffix))
                 {
                     if (longSuffix) return magnitude <= long.MaxValue ? "long" : null;
@@ -3159,9 +3170,10 @@ public static class Binder
                                 IntegerLiterals.TryParse(value.Value.Text, out _, out _) ||
                                 DecimalLiterals.TryParse(value.Value.Text, out _) ||
                                 Float32Literals.TryParse(value.Value.Text, out _) ||
+                                Float64Literals.TryParse(value.Value.Text, out _) ||
                                 value.Value.Text.StartsWith('"') || value.Value.Text.StartsWith('\'') => new LiteralPatternSyntax(value.Value),
                             UnarySyntax { Operator.Text: "-", Operand: ValueSyntax value } unary when
-                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) || DecimalLiterals.TryParse(value.Value.Text, out _) || Float32Literals.TryParse(value.Value.Text, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
+                                IntegerLiterals.TryParse(value.Value.Text, out _, out _) || DecimalLiterals.TryParse(value.Value.Text, out _) || Float32Literals.TryParse(value.Value.Text, out _) || Float64Literals.TryParse(value.Value.Text, out _) => new LiteralPatternSyntax(value.Value, unary.Operator),
                             UnitSyntax unit => new UnitPatternSyntax(unit.Unit),
                             NullSyntax nullValue => new NullPatternSyntax(nullValue.Null),
                             _ => null
@@ -3174,6 +3186,7 @@ public static class Binder
                             if (IntegerPatternValue(point, out var a) && IntegerPatternValue(literal, out var b)) return a == b;
                             if (DecimalPatternValue(point, out var decimalPoint) && DecimalPatternValue(literal, out var decimalLiteral)) return decimalPoint == decimalLiteral;
                             if (Float32PatternValue(point, out var floatPoint) && Float32PatternValue(literal, out var floatLiteral)) return floatPoint == floatLiteral;
+                            if (Float64PatternValue(point, out var doublePoint) && Float64PatternValue(literal, out var doubleLiteral)) return doublePoint == doubleLiteral;
                             return true; // Different spellings of text literals can denote the same value.
                         }
                         bool Covered(List<PatternSyntax> previous, PatternSyntax target) =>
@@ -4087,7 +4100,7 @@ public static class Binder
                         return new BoundLiteralPattern(new BoundUnit(), "Unit");
                     case LiteralPatternSyntax literal:
                         var literalValue = BindExpression(new ValueSyntax(literal.Literal), expected);
-                        if (literal.Minus is not null && !IntegerType(literalValue.Type) && literalValue.Type is not ("decimal" or "float32"))
+                        if (literal.Minus is not null && !IntegerType(literalValue.Type) && literalValue.Type is not ("decimal" or "float32" or "float"))
                             Fail("DS2019", literal.Token, "Only a numeric literal can be negative.");
                         if (literalValue.Type != expected)
                             Fail("DS2019", literal.Token, $"Expected a {DisplayType(expected)} pattern.");
@@ -4684,8 +4697,8 @@ public static class Binder
                         var boundArms = new List<(BoundPattern Pattern, BoundExpression? Guard, BoundExpression Value, string Type, bool GuardNever)>();
                         BoundPattern? singletonPattern = scrutinee.Expression switch
                         {
-                            BoundBool or BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
-                            BoundUnary { Operator: "-", Operand: BoundInt or BoundInteger or BoundDecimal or BoundFloat32 } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundBool or BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundFloat64 or BoundText or BoundUnit => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
+                            BoundUnary { Operator: "-", Operand: BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundFloat64 } => new BoundLiteralPattern(scrutinee.Expression, scrutineeType!),
                             BoundNull => new BoundNullPattern(),
                             _ => null
                         };
@@ -5364,6 +5377,15 @@ public static class Binder
                                 if (!Float32Literals.TryParse(token.Text, out var bits))
                                     Fail("DS2004", token, "Invalid float32 literal or value outside the finite range.");
                                 return (new BoundFloat32(bits), "float32");
+                            }
+                            // A suffix-free decimal point or exponent selects binary64.
+                            // Hexadecimal digits (including e/f) remain integer tokens.
+                            if (!token.Text.StartsWith("0x", StringComparison.Ordinal) && !token.Text.StartsWith("0b", StringComparison.Ordinal) &&
+                                token.Text.IndexOfAny(new[] { '.', 'e', 'E' }) >= 0)
+                            {
+                                if (!Float64Literals.TryParse(token.Text, out var bits))
+                                    Fail("DS2004", token, "Invalid float literal or value outside the finite range.");
+                                return (new BoundFloat64(bits), "float");
                             }
                             if (!IntegerLiterals.TryParse(token.Text, out var magnitude, out var longSuffix))
                                 Fail("DS2004", token, "Invalid integer literal or magnitude outside the supported range.");
@@ -6292,7 +6314,7 @@ public static class Binder
                     case UnarySyntax unary:
                         var operand = BindExpression(unary.Operand, unary.Operator.Text == "!" ? "bool" : expectedResult);
                         var expected = unary.Operator.Text == "!" ? "bool" : operand.Type == "<never>" ? "int" : operand.Type;
-                        if (unary.Operator.Text != "!" && !IntegerType(expected) && expected is not ("decimal" or "float32"))
+                        if (unary.Operator.Text != "!" && !IntegerType(expected) && expected is not ("decimal" or "float32" or "float"))
                             Fail("DS2002", unary.Operand.Token, "Unary arithmetic requires a numeric operand.");
                         Require(unary.Operand, operand.Type, expected);
                         return (new BoundUnary(unary.Operator.Text, Coerce(operand.Expression, expected, operand.Type)) { OperandType = expected }, operand.Type == "<never>" ? "<never>" : expected);
@@ -6393,7 +6415,7 @@ public static class Binder
                             return (new BoundBinary(Coerce(left.Expression, operandType!, left.Type), op, Coerce(right.Expression, operandType!, right.Type)) { OperandType = operandType! }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : "bool");
                         }
                         var integerOperand = left.Type == "<never>" ? right.Type == "<never>" ? "int" : right.Type : left.Type;
-                        if (!IntegerType(integerOperand) && integerOperand is not ("decimal" or "float32")) Fail("DS2002", (left.Type == "<never>" ? binary.Right : binary.Left).Token, "Arithmetic and ordered comparisons require numeric operands.");
+                        if (!IntegerType(integerOperand) && integerOperand is not ("decimal" or "float32" or "float")) Fail("DS2002", (left.Type == "<never>" ? binary.Right : binary.Left).Token, "Arithmetic and ordered comparisons require numeric operands.");
                         Require(binary.Left, left.Type, integerOperand); Require(binary.Right, right.Type, integerOperand);
                         return (new BoundBinary(Coerce(left.Expression, integerOperand, left.Type), op, Coerce(right.Expression, integerOperand, right.Type)) { OperandType = integerOperand }, left.Type == "<never>" || right.Type == "<never>" ? "<never>" : op is "<" or "<=" or ">" or ">=" ? "bool" : integerOperand);
                     default: throw new InvalidOperationException("Unknown expression syntax.");
@@ -7504,7 +7526,7 @@ public static class CSharpEmitter
                 shape.Name == module.MapSymbol || shape.Name == module.SetSymbol);
         bool IsTypeParameter(string type) => GenericTypes.TryParse(type, out var shape) &&
             shape.Arguments.Count == 0 && parameterNames.ContainsKey(shape.Name);
-        static bool IsValueType(string type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "bool" or "char" or "Unit" ||
+        static bool IsValueType(string type) => type is "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "float" or "bool" or "char" or "Unit" ||
             GenericTypes.TryParse(type, out var shape) && shape.IsTuple && !shape.IsNullable;
         string CType(string type)
         {
@@ -7521,7 +7543,7 @@ public static class CSharpEmitter
                     return current.IsNullable ? "global::System.Nullable<" + tuple + ">" : tuple;
                 }
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
-                    current.Name == "Unit" ? unitType : current.Name == "float32" ? "float" : current.Name == module.ListSymbol ? listTypeName! :
+                    current.Name == "Unit" ? unitType : current.Name == "float32" ? "float" : current.Name == "float" ? "double" : current.Name == module.ListSymbol ? listTypeName! :
                     current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
                     current.Name == module.MutableListSymbol ? mutableListTypeName! : current.Name == module.MutableMapSymbol ? mutableMapTypeName! :
                     current.Name == module.TaskSymbol ? "global::System.Threading.Tasks.Task" :
@@ -7560,7 +7582,7 @@ public static class CSharpEmitter
             }
             return type == "Unit" ? "true" :
                 type == "string" ? "global::System.String.Equals(" + left + ", " + right + ", global::System.StringComparison.Ordinal)" :
-                type == "float32" || IsNominal(type) || IsTypeParameter(type) ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")" : left + " == " + right;
+                type is "float32" or "float" || IsNominal(type) || IsTypeParameter(type) ? container + "." + equalityDispatcher + "<" + CType(type) + ">(" + left + ", " + right + ")" : left + " == " + right;
         }
         output.Append("public readonly struct ").Append(unitType).Append(" {}\n\n");
         output.Append("public interface ").Append(structuralInterface).Append(" { bool __dsharp_equals(object other); }\n\n");
@@ -8060,6 +8082,7 @@ public static class CSharpEmitter
             output.Append("    internal static bool ").Append(equalityDispatcher).Append("<__DSharp_Value>(__DSharp_Value __left, __DSharp_Value __right)\n    {\n")
                 .Append("        if (__left is null || __right is null) return __left is null && __right is null;\n")
                 .Append("        if (__left is float __leftFloat && __right is float __rightFloat) return __leftFloat == __rightFloat;\n")
+                .Append("        if (__left is double __leftDouble && __right is double __rightDouble) return __leftDouble == __rightDouble;\n")
                 .Append("        if (__left is ").Append(structuralInterface).Append(" __data) return __data.__dsharp_equals(__right);\n")
                 .Append("        if (__left is global::System.Runtime.CompilerServices.ITuple __leftTuple && __right is global::System.Runtime.CompilerServices.ITuple __rightTuple)\n")
                 .Append("        {\n            if (__leftTuple.Length != __rightTuple.Length) return false;\n")
@@ -8592,6 +8615,12 @@ public static class CSharpEmitter
                         output.Append("            float ").Append(floatName).Append(" = global::System.BitConverter.Int32BitsToSingle(unchecked((int)")
                             .Append(literal.Bits.ToString(CultureInfo.InvariantCulture)).Append("U));\n");
                         return floatName;
+                    case BoundFloat64 literal:
+                        // Preserve exact binary64 bits and runtime IEEE behavior.
+                        var doubleName = "__dsharp_float_" + (literalCount++).ToString(CultureInfo.InvariantCulture);
+                        output.Append("            double ").Append(doubleName).Append(" = global::System.BitConverter.Int64BitsToDouble(unchecked((long)")
+                            .Append(literal.Bits.ToString(CultureInfo.InvariantCulture)).Append("UL));\n");
+                        return doubleName;
                     case BoundNever never:
                         var neverHelper = "__dsharp_if_" + (conditionalCount++).ToString(CultureInfo.InvariantCulture);
                         output.Append("            ").Append(HelperResult(never.Type, never)).Append(" ").Append(neverHelper).Append(HelperBody(never));
@@ -8836,18 +8865,18 @@ public static class CSharpEmitter
                         var left = EmitExpression(binary.Left);
                         var right = EmitExpression(binary.Right);
                         if ((binary.Operator is "==" or "!=") && (binary.OperandType.EndsWith("?", StringComparison.Ordinal) ||
-                            binary.OperandType is "string" or "float32" || IsNominal(binary.OperandType) || IsTypeParameter(binary.OperandType) ||
+                            binary.OperandType is "string" or "float32" or "float" || IsNominal(binary.OperandType) || IsTypeParameter(binary.OperandType) ||
                             GenericTypes.TryParse(binary.OperandType, out var binaryShape) && binaryShape.IsTuple))
                         {
                             var equals = EqualValue(binary.OperandType, left, right);
                             return binary.Operator == "!=" ? "(!(" + equals + "))" : equals;
                         }
-                        if (binary.OperandType == "float32" && binary.Operator is "<" or "<=" or ">" or ">=")
+                        if (binary.OperandType is "float32" or "float" && binary.Operator is "<" or "<=" or ">" or ">=")
                         {
                             // Distinct operands avoid C# self-comparison warnings
                             // while retaining IEEE NaN ordering and source order.
                             var floatComparison = "__dsharp_float_comparison_" + (integerHelperCount++).ToString(CultureInfo.InvariantCulture);
-                            output.Append("            bool ").Append(floatComparison).Append("(float a, float b) => a ").Append(binary.Operator).Append(" b;\n");
+                            output.Append("            bool ").Append(floatComparison).Append("(").Append(CType(binary.OperandType)).Append(" a, ").Append(CType(binary.OperandType)).Append(" b) => a ").Append(binary.Operator).Append(" b;\n");
                             return floatComparison + "(" + left + ", " + right + ")";
                         }
                         if (binary.Operator == "%" && binary.OperandType is "sbyte" or "short")
