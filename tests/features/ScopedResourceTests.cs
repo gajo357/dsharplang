@@ -311,6 +311,8 @@ public sealed class ScopedResourceTests
         await new DecimalTests().DecimalValuesExecuteAndInvalidProgramsAreDiagnosed();
         await new DecimalInterpolationTests().DecimalInterpolationPreservesValueOrderAndCultureIndependence();
         await new AsyncResultMapTests().TaskResultMapPreservesCompositionAndEffects();
+        await new AsyncResultAndThenTests().AndThenPreservesAllResultAndTaskCombinations();
+        await new AsyncAndThenPreludeTests().TransitiveDependenciesExecuteAndOmitUnusedHelpers();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

@@ -7,6 +7,33 @@ fn andThen<A, B, E>(next: (A) -> Result<B, E>, value: Result<A, E>): Result<B, E
     }
 }
 
+// Internal implementations selected by the public andThen symbol.
+async fn __dsharp_result_andthen_async<A, B, E>(next: (A) -> Task<Result<B, E>>, value: Result<A, E>): Result<B, E> {
+    match value
+    {
+        Result.Success(item) => await next(item)
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
+async fn __dsharp_result_andthen_task<A, B, E>(next: (A) -> Result<B, E>, value: Task<Result<A, E>>): Result<B, E> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(item) => next(item)
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
+async fn __dsharp_result_andthen_task_async<A, B, E>(next: (A) -> Task<Result<B, E>>, value: Task<Result<A, E>>): Result<B, E> {
+    let resolved = await value
+    match resolved
+    {
+        Result.Success(item) => await next(item)
+        Result.Error(error) => Result.Error(error)
+    }
+}
+
 fn map<A, B, E>(transform: (A) -> B, value: Result<A, E>): Result<B, E> {
     match value {
         Result.Success(item) => Result.Success(transform(item))
