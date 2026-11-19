@@ -73,6 +73,26 @@ internal static class MatchCoverage
                 var b = Decimal(right.Value);
                 return a is not null && b is not null && a == b;
             }
+            if (left.Type == "float32")
+            {
+                // Literals are bound after binary32 rounding, so distinct
+                // spellings can denote the same value. IEEE equality also
+                // treats the two signs of zero as equal.
+                static float? Float32(BoundExpression value)
+                {
+                    static float Number(BoundFloat32 number) =>
+                        BitConverter.Int32BitsToSingle(unchecked((int)number.Bits));
+                    return value switch
+                    {
+                        BoundFloat32 number => Number(number),
+                        BoundUnary { Operator: "-", Operand: BoundFloat32 number } => -Number(number),
+                        _ => null
+                    };
+                }
+                var a = Float32(left.Value);
+                var b = Float32(right.Value);
+                return a is not null && b is not null && a.Value == b.Value;
+            }
             return object.Equals(left.Value, right.Value);
         }
 

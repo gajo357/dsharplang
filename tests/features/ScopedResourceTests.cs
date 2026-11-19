@@ -315,6 +315,7 @@ public sealed class ScopedResourceTests
         await new AsyncAndThenPreludeTests().TransitiveDependenciesExecuteAndOmitUnusedHelpers();
         await new AsyncResultObserversTests().AsyncObserversPreserveValuesTimingAndErrors();
         await new AsyncResultObserversPreludeTests().TransitiveObserversExecuteAndOmitUnusedHelpers();
+        await new Float32Tests().Float32ValuesFollowIeeeSemantics();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()
