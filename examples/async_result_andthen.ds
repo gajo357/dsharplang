@@ -1,0 +1,12 @@
+module Demo
+
+type Request { amount: int }
+type Receipt { total: int }
+
+async fn save(request: Request): Result<Receipt, string> {
+    Success(Receipt { total = request.amount })
+}
+
+async fn submit(pending: Task<Result<Request, string>>): Result<Receipt, string> {
+    await (pending |> andThen(save))
+}
