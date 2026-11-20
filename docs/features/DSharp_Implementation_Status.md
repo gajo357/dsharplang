@@ -79,6 +79,7 @@ external interoperability guarantee follows from this lowering. See the
 | Checked integer arithmetic | Eight integer widths, context-typed literals, decimal/hex/binary forms, separators and `L`; matching operand types required | Checked arithmetic, unsigned negation and zero/overflow faults execute at invocation |
 | Decimal arithmetic | `decimal` values and exact `m`-suffixed literals; same-type unary, arithmetic and comparison operations | Decimal operations follow pinned .NET behavior; equality and collection keys ignore trailing scale |
 | Binary32 arithmetic | `float32` values and `f`-suffixed literals; same-type unary, arithmetic and comparison operations | IEEE NaN, infinity and signed-zero behavior extends through supported structural equality; float-containing map/set keys are rejected |
+| Binary64 arithmetic | `float` values and unsuffixed fractional or exponent literals; same-type unary, arithmetic and comparison operations | IEEE NaN, infinity and signed-zero behavior extends through supported structural equality; float-containing map/set keys are rejected |
 | Comments and documentation | Single-line and non-nested block comments; contiguous `///` groups attach to module, function, record and union declarations | Comments preserve source locations and do not change execution |
 | Source diagnostics and duplicate functions | Implemented and tested | Rejected before emission |
 | CLI check/compile | Implemented, smoke-tested | SDK builds generated library |
@@ -140,8 +141,8 @@ fault at runtime, and equality ignores trailing scale. Decimal values work in
 supported nullable, generic and immutable data contexts, including map and set
 keys. `decimal` remains allowed as a value or field identifier for backward
 compatibility; DEC-02’s numeric name reservation remains unresolved, as in #48.
-Conversions, general text-formatting APIs, currency semantics and binary64 floating
-point remain separate work; decimal interpolation is covered by #217. #49 remains open. See the
+Conversions, general text-formatting APIs and currency semantics remain separate
+work; decimal interpolation is covered by #217 and binary64 by #227. #49 remains open. See the
 [D# example](../../examples/decimal_arithmetic.ds) and
 [implementation plan](implementation/issue-215-plan.md).
 [Issue #225](https://github.com/gajo357/dsharplang/issues/225) adds the `float32`
@@ -153,11 +154,24 @@ generic and nested immutable values, even when comparing a value with itself.
 Map and set keys containing `float32` are rejected recursively; float values
 remain supported in safe data positions. As with other numeric type names,
 `float32` remains available as a value or field identifier for compatibility;
-DEC-02's global numeric-name reservation remains unresolved. Binary64 `float`,
-explicit conversions and general floating formatting remain separate work, so
-#49 stays open. See the
+DEC-02's global numeric-name reservation remains unresolved. Binary64 `float` is
+covered by #227; explicit conversions and general floating formatting remain
+separate work, so #49 stays open. See the
 [D# example](../../examples/float32_arithmetic.ds) and
 [implementation plan](implementation/issue-225-plan.md).
+[Issue #227](https://github.com/gajo357/dsharplang/issues/227) adds the D#
+`float` type as IEEE binary64, generated as C# `double`, and unsuffixed
+fractional or exponent literals with invariant parsing, finite-range checks
+before rounding and round-to-nearest-even behavior. Same-type arithmetic,
+comparisons and remainder preserve IEEE NaN, infinity and signed-zero behavior.
+NaN remains unequal to itself through supported nullable, generic and nested
+immutable values, even when comparing a value with itself. Map and set keys
+containing `float` are rejected recursively; binary64 values remain supported
+in safe data positions. Float32, decimal and integer types remain distinct; no
+implicit mixed numeric conversions are added. Explicit conversions and general
+floating formatting remain separate work, so #49 stays open. See the
+[D# example](../../examples/float_arithmetic.ds) and
+[implementation plan](implementation/issue-227-plan.md).
 [Issue #20](https://github.com/gajo357/dsharplang/issues/20) adds explicit int
 parameters and positional calls in the same module, resolved regardless of
 declaration order. Parameter names cannot be duplicated, reassigned or redeclared

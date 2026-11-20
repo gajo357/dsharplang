@@ -1,0 +1,9 @@
+module Demo
+
+fn average(total: float, count: float): float {
+    total / count
+}
+
+fn answer(): float {
+    average(7.5, 3.0)
+}

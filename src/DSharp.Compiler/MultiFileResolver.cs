@@ -119,7 +119,7 @@ internal static class MultiFileResolver
                 {
                     var name = shape.Name;
                     if (!shape.IsFunction && !shape.IsTuple && !parameters.Contains(name) && name is not
-                        ("sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "bool" or "char" or "string" or "Unit"))
+                        ("sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "float" or "bool" or "char" or "string" or "Unit"))
                     {
                         var dot = name.LastIndexOf('.');
                         var found = dot < 0 ? Lookup(token, name, s => s.Kind is "record" or "union" or "interface" or "service" or "resource") :
