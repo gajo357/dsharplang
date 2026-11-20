@@ -2348,6 +2348,10 @@ public static class Binder
         // Return inference is deliberately local to a checked, acyclic call
         // graph. Distinguish calls to lexical function values from calls to
         // module functions; the former cannot establish a static call graph.
+        // Keep the proof tied to the actual syntax node and selected extension.
+        // A later inference pass must not turn unrelated method values into
+        // statically known calls merely because they have a matching type.
+        var provenExtensionPipes = new Dictionary<FieldAccessSyntax, string>(ReferenceEqualityComparer.Instance);
         (HashSet<string> Calls, bool Indirect, HashSet<string> StrictCalls, bool UnknownReceiver) AnalyzeDependencies(FunctionSyntax source, bool includeUnreachable = false, bool includeDeadBranches = false)
         {
             var calls = new HashSet<string>(StringComparer.Ordinal);
@@ -2899,6 +2903,36 @@ public static class Binder
                 }
                 return callback < 0 || arguments.Count <= callback || StaticCallback(arguments[callback], names);
             }
+            // Prove a direct, saturated pipe to exactly one visible extension.
+            // All potentially competing extensions on that receiver make the
+            // proof conservative; ordinary binding still decides applicability.
+            // In particular, this does not prove a staged or dynamic invocation.
+            (FieldAccessSyntax Access, string Id)? StaticallyBareExtensionPipe(PipeSyntax pipe, HashSet<string> names)
+            {
+                ExpressionSyntax target = pipe.Right;
+                while (target is GroupSyntax group) target = group.Inner;
+                if (target is not FieldAccessSyntax access || NeverExpression(pipe.Left) || NeverExpression(access.Receiver)) return null;
+                var receiver = StaticType(access.Receiver, names);
+                var input = StaticType(pipe.Left, names);
+                var parameters = Parameters(source.TypeParameters);
+                if (receiver is null || input is null || !SupportedType(receiver, parameters) || !SupportedType(input, parameters) ||
+                    !DataType(receiver) || !DataType(input) || !GenericTypes.TryParse(receiver, out var shape) ||
+                    shape.IsFunction || !GenericTypes.TryParse(input, out var inputShape) || inputShape.IsFunction) return null;
+                // A real field or collection operation can take precedence.
+                // Exclude all collection receivers here rather than guess.
+                if (shape.Name == listSymbol || shape.Name == mapSymbol || shape.Name == setSymbol ||
+                    StaticRecordField(access.Receiver, access.Field.Text, names, false) is not null) return null;
+                var candidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
+                    (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
+                    signatures[extension.Id].Parameters[0].Type.Text == receiver).ToArray();
+                if (candidates.Length != 1) return null;
+                var method = signatures[candidates[0].Id];
+                if (method.IsAsync || method.Parameters.Count != 2 || method.Parameters[1].Type.Text != input) return null;
+                var result = CallableResult(method);
+                if (!SupportedType(result, parameters) || !DataType(result) ||
+                    !GenericTypes.TryParse(result, out var resultShape) || resultShape.IsFunction) return null;
+                return (access, candidates[0].Id);
+            }
             void WithUnknownNames(IEnumerable<string> hidden, Action action)
             {
                 var previousTypes = knownTypes;
@@ -3077,8 +3111,9 @@ public static class Binder
                     case PipeSyntax pipe:
                     {
                         var provenBare = StaticallyBareCollectionPartial(pipe.Right, new[] { pipe.Left }, names);
+                        var provenExtension = StaticallyBareExtensionPipe(pipe, names);
                         var previousStrict = strictContext;
-                        if (provenBare) strictContext = true;
+                        if (provenBare || provenExtension is not null) strictContext = true;
                         try
                         {
                         Expression(pipe.Left, names);
@@ -3099,6 +3134,17 @@ public static class Binder
                         else if (pipeTarget is CallSyntax partialCall && !names.Contains(partialCall.Name.Text) &&
                             signatures.TryGetValue(DependencyName(partialCall.Name.Text, names), out var partialTarget) && partialCall.Arguments.Count < partialTarget.Parameters.Count)
                             Expression(pipeTarget, names);
+                        else if (provenExtension is { } extension)
+                        {
+                            // The receiver and input are evaluated before the
+                            // call, and the selected body is a strict graph edge.
+                            Expression(extension.Access.Receiver, names);
+                            if (includeUnreachable || !NeverExpression(extension.Access.Receiver))
+                            {
+                                AddCall(extension.Id);
+                                provenExtensionPipes[extension.Access] = extension.Id;
+                            }
+                        }
                         else if (provenBare || StaticallyCompletedPartial(pipeTarget, new[] { pipe.Left }, names))
                             Expression(pipeTarget, names);
                         else
@@ -5316,7 +5362,8 @@ public static class Binder
                                         .OrderBy(name => name, StringComparer.Ordinal)) + ".");
                                 if (methodCandidates.Length == 1)
                                 {
-                                    if (inferencePass && inferenceReachable && inferredReturns is not null)
+                                    if (inferencePass && inferenceReachable && inferredReturns is not null &&
+                                        !(isPipeTarget && provenExtensionPipes.TryGetValue(access, out var provenExtension) && provenExtension == methodCandidates[0].Id))
                                         Fail("DS2027", access.Field, "An explicit return type is required for extension method values.");
                                     var extension = methodCandidates[0];
                                     var methodTarget = signatures[extension.Id];
