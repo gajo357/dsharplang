@@ -1524,9 +1524,10 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     var methodParameters = TypedParameters();
                     Expect(":");
                     var returnType = TypeToken();
+                    var signatureEnd = tokens[position - 1];
                     var methodBody = Current.Text == "{" ? Block() : null;
                     methods.Add(new(methodName, methodParameters, returnType, isAsyncMethod) { DocumentationComments = methodDocs, Body = methodBody });
-                    if (methodBody is null && Current.Text != "}" && Current.Span.Line == returnType.Span.Line)
+                    if (methodBody is null && Current.Text != "}" && Current.Span.Line == signatureEnd.Span.Line)
                         throw Error("Expected a newline after an interface method signature.");
                 }
                 Expect("}");
@@ -1601,8 +1602,9 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     var fieldName = Identifier(); Expect(":");
                     if (Current.Text == "") throw Error("Expected a field type.");
                     var fieldType = TypeToken();
+                    var fieldEnd = tokens[position - 1];
                     fields.Add(new(fieldName, fieldType));
-                    if (Current.Text != "}" && Current.Span.Line == fieldType.Span.Line)
+                    if (Current.Text != "}" && Current.Span.Line == fieldEnd.Span.Line)
                         throw Error("Expected a newline after a record field declaration.");
                 }
                 Expect("}");

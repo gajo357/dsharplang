@@ -318,6 +318,7 @@ public sealed class ScopedResourceTests
         await new Float32Tests().Float32ValuesFollowIeeeSemantics();
         await new Float64Tests().FloatValuesFollowIeeeSemantics();
         await new FloatInterpolationTests().FloatInterpolationPreservesValuesOrderAndCulture();
+        await new MultilineDeclarationBoundaryTests().MultilineTypesPreserveDeclarationBoundaries();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

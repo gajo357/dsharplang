@@ -1,0 +1,34 @@
+module Demo
+
+type Reading {
+    range: (
+        int,
+        int
+    )
+    labels: List<
+        string
+    >
+}
+
+interface Reader {
+    range(): (
+        int,
+        int
+    )
+    label(): string
+}
+
+service Fixed: Reader {
+    range() { (20, 22) }
+    label() { "example" }
+}
+
+fn answer(): int {
+    let reader: Reader = Fixed()
+    let reading = Reading {
+        range = reader.range()
+        labels = [reader.label()]
+    }
+    let (left, right) = reading.range
+    left + right
+}
