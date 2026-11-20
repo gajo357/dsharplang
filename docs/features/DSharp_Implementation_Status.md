@@ -617,6 +617,12 @@ checked from the end of its header. The initializer is still evaluated once.
 Other declaration headers are not included in this slice. See the
 [D# example](../../examples/multiline_binding_headers.ds) and
 [implementation plan](implementation/issue-213-plan.md).
+[Issue #231](https://github.com/gajo357/dsharplang/issues/231) checks record
+field and bodyless interface method boundaries against the end of a multiline
+type. A following declaration must start on a later line; newlines inside
+supported tuple, function and generic types remain valid. Comments preserve
+the boundary. See the [D# example](../../examples/multiline_declarations.ds)
+and [implementation plan](implementation/issue-231-plan.md).
 [Issue #46](https://github.com/gajo357/dsharplang/issues/46) adds multi-file
 module contributions and explicit, file-scoped imports. The compiler API and
 CLI accept multiple sources while retaining single-file use. The
