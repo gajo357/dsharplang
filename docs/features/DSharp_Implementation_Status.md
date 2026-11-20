@@ -743,10 +743,19 @@ uses the pipe input and available output context while preserving field and
 built-in precedence, import visibility, ambiguity diagnostics, and existing
 capability, resource and builder restrictions. Async extension calls return tasks
 without implicitly awaiting them. Untyped standalone method values remain
-unsupported, and omitted-return inference for extension-method pipes remains
-conservative. See the
+unsupported. See the
 [D# example](../../examples/bare_extension_pipes.ds) and
 [implementation plan](implementation/issue-211-plan.md).
+[Issue #233](https://github.com/gajo357/dsharplang/issues/233) infers omitted
+function returns through bare pipes to the only visible same-name extension on a
+known immutable non-collection receiver, when it is synchronous and unary with
+a known exact data input and data result. The analysis tracks the input,
+receiver and selected extension;
+recursive, ambiguous and indirect dependencies remain conservative. Collections,
+overloaded extension families, nullable input conversions, staged applications,
+callbacks and async extensions are outside this inference slice. See the
+[D# example](../../examples/bare_extension_pipe_inference.ds) and
+[implementation plan](implementation/issue-233-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

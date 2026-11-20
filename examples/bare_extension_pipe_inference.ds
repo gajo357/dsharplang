@@ -1,0 +1,17 @@
+module Demo
+
+type Invoice { price: int }
+
+extend Invoice {
+    fn withFee(self, fee: int): int {
+        self.price + fee
+    }
+}
+
+fn total(invoice: Invoice, fee: int) {
+    fee |> invoice.withFee
+}
+
+fn answer(): int {
+    total(Invoice { price = 40 }, 2)
+}
