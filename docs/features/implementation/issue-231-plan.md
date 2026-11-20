@@ -19,5 +19,5 @@ Run `bash .github/ai/bootstrap.sh`, `bash scripts/verify-compiler.sh`, `bash .gi
 ## Results
 
 - Bootstrap, the 18 core compiler tests and the D# CLI check of `examples/multiline_declarations.ds` passed. An independent set of 36 CLI probes covered multiline and nullable types, comments, closing braces and line endings.
-- The initial feature run passed 377 registrations but the new test failed when reflection did not search inherited generated module methods. After correcting the lookup, the complete new test passed in a focused harness for LF, CRLF and CR; the full compiler suite was rerun.
+- The initial feature run passed 377 registrations but the new test failed when reflection did not search inherited generated module methods. After correcting the lookup, the complete new test passed in a focused harness for LF, CRLF and CR; `scripts/verify-compiler.sh` then passed all 18 compiler tests and 378 feature registrations with no build warnings.
 - `.github/ai/verify.sh` passed documentation and all 25 automation tests. The isolated compiler stage could not run locally because the pinned Docker image download returned `Forbidden`; GitHub CI supplies that verification.
