@@ -321,6 +321,7 @@ public sealed class ScopedResourceTests
         await new MultilineDeclarationBoundaryTests().MultilineTypesPreserveDeclarationBoundaries();
         await new BareExtensionPipeInferenceTests().BareExtensionPipesInferAndPreserveSafety();
         await new CollectionExtensionPipeInferenceTests().CollectionExtensionPipesInferAndPreserveSafety();
+        await new AsyncExtensionPipeInferenceTests().AsyncExtensionPipesInferTasksAndPreserveSafety();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

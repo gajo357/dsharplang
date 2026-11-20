@@ -1,0 +1,17 @@
+module Demo
+
+type Invoice { amount: int }
+
+extend Invoice {
+    async fn withFee(self, fee: int): int {
+        self.amount + fee
+    }
+}
+
+fn total(invoice: Invoice, fee: int) {
+    fee |> invoice.withFee
+}
+
+async fn answer(): int {
+    await total(Invoice { amount = 40 }, 2)
+}
