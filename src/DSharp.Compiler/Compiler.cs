@@ -4285,7 +4285,7 @@ public static class Binder
                                 }
                                 else
                                 {
-                                    if (!(IntegerType(bound.Type) || bound.Type is "decimal" or "string" or "char" or "bool" or "Unit"))
+                                    if (!(IntegerType(bound.Type) || bound.Type is "decimal" or "float32" or "float" or "string" or "char" or "bool" or "Unit"))
                                         Fail("DS2026", hole.Token, "Interpolation requires a supported non-nullable scalar value.");
                                     parts.Add(new BoundInterpolationHole(bound.Expression, bound.Type));
                                 }
@@ -8214,6 +8214,42 @@ public static class CSharpEmitter
                         var interpolationHelper = "__dsharp_interpolation_" + interpolationId;
                         output.Append("            ").Append(HelperResult("string", interpolation)).Append(" ")
                             .Append(interpolationHelper).Append(HelperBody(interpolation));
+                        // Round-trip formatting chooses the significant digits for
+                        // the original IEEE width. DEC-01 has its own choice of
+                        // fixed versus scientific notation, so reconstruct both
+                        // spellings from those digits instead of relying on CLR's
+                        // notation thresholds. Keep this local to interpolation so
+                        // programs without floating holes emit no formatting helper.
+                        var floatFormatHelper = "__dsharp_format_float_" + interpolationId;
+                        if (interpolation.Parts.OfType<BoundInterpolationHole>().Any(hole => hole.Type is "float32" or "float"))
+                        {
+                            output.Append($$"""
+            string {{floatFormatHelper}}(string candidate)
+            {
+                if (candidate == "NaN" || candidate == "Infinity" || candidate == "-Infinity") return candidate;
+                var negative = candidate[0] == '-';
+                var start = negative ? 1 : 0;
+                var exponentIndex = candidate.IndexOfAny(new char[] { 'E', 'e' });
+                var end = exponentIndex < 0 ? candidate.Length : exponentIndex;
+                var exponent = exponentIndex < 0 ? 0 : global::System.Int32.Parse(candidate.Substring(exponentIndex + 1), global::System.Globalization.CultureInfo.InvariantCulture);
+                var mantissa = candidate.Substring(start, end - start);
+                var dot = mantissa.IndexOf('.');
+                var point = (dot < 0 ? mantissa.Length : dot) + exponent;
+                var digits = mantissa.Replace(".", "");
+                var first = 0;
+                while (first < digits.Length - 1 && digits[first] == '0') first++;
+                point -= first;
+                digits = digits.Substring(first).TrimEnd('0');
+                var fixedText = point <= 0 ? "0." + new string('0', -point) + digits :
+                    point >= digits.Length ? digits + new string('0', point - digits.Length) + ".0" :
+                    digits.Substring(0, point) + "." + digits.Substring(point);
+                var scientific = digits.Substring(0, 1) + "." + (digits.Length == 1 ? "0" : digits.Substring(1)) +
+                    "e" + (point - 1).ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                return (negative ? "-" : "") + (fixedText.Length <= scientific.Length ? fixedText : scientific);
+            }
+
+""");
+                        }
                         var interpolationParts = new List<string>();
                         foreach (var part in interpolation.Parts)
                         {
@@ -8241,6 +8277,12 @@ public static class CSharpEmitter
                                 // either sign of zero to the adopted spelling.
                                 "decimal" => "(" + holeValue + " == 0m ? \"0\" : " + holeValue +
                                     ".ToString(\"0.############################\", global::System.Globalization.CultureInfo.InvariantCulture))",
+                                "float32" => "(" + holeValue + " == 0f ? (global::System.BitConverter.SingleToInt32Bits(" + holeValue +
+                                    ") < 0 ? \"-0.0\" : \"0.0\") : " + floatFormatHelper + "(" + holeValue +
+                                    ".ToString(\"R\", global::System.Globalization.CultureInfo.InvariantCulture)))",
+                                "float" => "(" + holeValue + " == 0d ? (global::System.BitConverter.DoubleToInt64Bits(" + holeValue +
+                                    ") < 0 ? \"-0.0\" : \"0.0\") : " + floatFormatHelper + "(" + holeValue +
+                                    ".ToString(\"R\", global::System.Globalization.CultureInfo.InvariantCulture)))",
                                 "sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" =>
                                     holeValue + ".ToString(global::System.Globalization.CultureInfo.InvariantCulture)",
                                 _ => throw new InvalidOperationException("Unsupported bound interpolation type.")

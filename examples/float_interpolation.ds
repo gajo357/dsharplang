@@ -1,0 +1,18 @@
+module Demo
+
+type Reading {
+    temperature: float
+    uncertainty: float32
+}
+
+fn describe(reading: Reading): string {
+    $"Temperature: {reading.temperature}; uncertainty: {reading.uncertainty}"
+}
+
+fn answer(): string {
+    let reading = Reading {
+        temperature = 21.5
+        uncertainty = 0.00001f
+    }
+    describe(reading)
+}

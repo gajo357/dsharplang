@@ -36,7 +36,7 @@ external interoperability guarantee follows from this lowering. See the
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
 | Typed int parameters and same-module calls | Explicit int parameter/return types, positional argument lists, forward and nested call binding | Generated functions accept int arguments and execute calls |
 | UTF-16 string and char literals | Literals, basic escapes, parameters/locals/returns and ordinal equality | Unicode and exact UTF-16 code-unit round trips tested |
-| Scalar string interpolation | `$"...{expression}..."`, ordinary escapes and `{{` / `}}`; non-nullable string, char, bool, Unit, integer and decimal values | Expressions evaluate once from left to right; scalar formatting is invariant, including across async and early-exit paths |
+| Scalar string interpolation | `$"...{expression}..."`, ordinary escapes and `{{` / `}}`; non-nullable string, char, bool, Unit, integer, decimal and binary floating values | Expressions evaluate once from left to right; scalar formatting is invariant, including across async and early-exit paths |
 | Unit and explicit return | Unit values, empty blocks, Unit statements and reachable-result checks | Nested early returns leave the nearest function without evaluating remaining expressions |
 | Immutable records | Named construction, public fields, nested records, copy updates, structural equality and source diagnostics | Copies preserve the original; field expressions evaluate in source order |
 | Discriminated unions and wrappers | Named cases with zero or more positional immutable payloads; qualified or unambiguous construction | Nominal values and nested record/union payloads compare structurally |
@@ -203,8 +203,7 @@ and evaluated once, left to right; `{{` and `}}` insert literal braces, and
 ordinary string escapes apply. Strings and characters insert their text, booleans
 render as `true` or `false`, Unit as `()`, and `sbyte`, `byte`, `short`, `ushort`,
 `int`, `uint`, `long` and `ulong` use invariant decimal formatting. Nullable
-and composite values and binary floating types `float32` and `float` cannot yet
-be interpolated, and #50 remains open. See the
+and composite values cannot yet be interpolated, and #50 remains open. See the
 [D# example](../../examples/interpolation.ds) and
 [implementation plan](implementation/issue-50-plan.md).
 [Issue #217](https://github.com/gajo357/dsharplang/issues/217) adds interpolation
@@ -212,9 +211,17 @@ of non-nullable `decimal` expressions. It renders the full supported decimal ran
 as plain invariant digits, removes fractional trailing zeros and writes all zero
 values as `0`, including negative zero. It retains the existing interpolation
 evaluation order and async and fault behavior. General formatting APIs and
-nullable, composite and binary floating interpolation remain separate work. See
+nullable and composite interpolation remain separate work. See
 the [D# example](../../examples/decimal_interpolation.ds) and
 [implementation plan](implementation/issue-217-plan.md).
+[Issue #229](https://github.com/gajo357/dsharplang/issues/229) adds non-nullable
+`float32` and `float` interpolation. It formats shortest round-trip digits
+invariantly, selects the shorter fixed or normalized scientific spelling, and
+preserves signed zero, NaN and infinities. Evaluation order and async, early
+return and fault behavior follow existing interpolation. General formatting
+APIs and nullable and composite interpolation remain separate work; #49 and
+#50 stay open. See the [D# example](../../examples/float_interpolation.ds) and
+[implementation plan](implementation/issue-229-plan.md).
 [Issue #24](https://github.com/gajo357/dsharplang/issues/24) adds the distinct
 `Unit` value `()`, empty Unit blocks, Unit-valued statements and explicit
 `return`. An `if` without `else` is permitted only when its completing branch
