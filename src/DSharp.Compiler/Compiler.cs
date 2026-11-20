@@ -2345,6 +2345,13 @@ public static class Binder
             signatures.Add(helperName, helper);
             resultHelpers.Add(helperName, helper);
         }
+        // Intrinsic collection method names take precedence over extensions,
+        // even if available context cannot establish an intrinsic method type.
+        // Share the rule between inference proof and ordinary member binding.
+        bool CollectionMethodCollision(TypeShape shape, string member) => !shape.IsNullable &&
+            (shape.Name == listSymbol && member is "length" or "append" or "get" or "filter" or "map" or "fold" ||
+             shape.Name == mapSymbol && member is "count" or "contains" or "get" or "set" ||
+             shape.Name == setSymbol && member is "count" or "contains" or "add");
         // Return inference is deliberately local to a checked, acyclic call
         // graph. Distinguish calls to lexical function values from calls to
         // module functions; the former cannot establish a static call graph.
@@ -2919,8 +2926,10 @@ public static class Binder
                     !DataType(receiver) || !DataType(input) || !GenericTypes.TryParse(receiver, out var shape) ||
                     shape.IsFunction || !GenericTypes.TryParse(input, out var inputShape) || inputShape.IsFunction) return null;
                 // A real field or collection operation can take precedence.
-                // Exclude all collection receivers here rather than guess.
-                if (shape.Name == listSymbol || shape.Name == mapSymbol || shape.Name == setSymbol ||
+                // The proof does not widen the existing nullable collection
+                // behavior; only known non-nullable collection types qualify.
+                if (shape.IsNullable && (shape.Name == listSymbol || shape.Name == mapSymbol || shape.Name == setSymbol) ||
+                    CollectionMethodCollision(shape, access.Field.Text) ||
                     StaticRecordField(access.Receiver, access.Field.Text, names, false) is not null) return null;
                 var candidates = extensionDeclarations.Where(extension => extension.Method.Name.Text == access.Field.Text &&
                     (access.ExtensionCandidates is null || access.ExtensionCandidates.Contains(extension.Id)) &&
@@ -5211,10 +5220,8 @@ public static class Binder
                         }
                         // Intrinsic names keep priority even when their method
                         // type cannot be established from the available context.
-                        var collectionCollision = GenericTypes.TryParse(receiverType ?? "", out var methodReceiverShape) && !methodReceiverShape.IsNullable &&
-                            (methodReceiverShape.Name == listSymbol && access.Field.Text is "length" or "append" or "get" or "filter" or "map" or "fold" ||
-                             methodReceiverShape.Name == mapSymbol && access.Field.Text is "count" or "contains" or "get" or "set" ||
-                             methodReceiverShape.Name == setSymbol && access.Field.Text is "count" or "contains" or "add");
+                        var collectionCollision = GenericTypes.TryParse(receiverType ?? "", out var methodReceiverShape) &&
+                            CollectionMethodCollision(methodReceiverShape, access.Field.Text);
                         // A bare extension on the right of a pipe can be chosen
                         // by the incoming argument and the remaining result. If
                         // the input needs context (for example, a lambda), a
