@@ -756,6 +756,12 @@ overloaded extension families, nullable input conversions, staged applications,
 callbacks and async extensions are outside this inference slice. See the
 [D# example](../../examples/bare_extension_pipe_inference.ds) and
 [implementation plan](implementation/issue-233-plan.md).
+[Issue #235](https://github.com/gajo357/dsharplang/issues/235) extends that
+inference to statically known non-nullable immutable List, Map and Set receivers
+when the method name does not collide with a built-in collection operation.
+The existing exact-input, unique-target, dependency and lifetime checks remain
+in force. See the [D# example](../../examples/collection_extension_pipe_inference.ds)
+and [implementation plan](implementation/issue-235-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

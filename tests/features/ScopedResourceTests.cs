@@ -320,6 +320,7 @@ public sealed class ScopedResourceTests
         await new FloatInterpolationTests().FloatInterpolationPreservesValuesOrderAndCulture();
         await new MultilineDeclarationBoundaryTests().MultilineTypesPreserveDeclarationBoundaries();
         await new BareExtensionPipeInferenceTests().BareExtensionPipesInferAndPreserveSafety();
+        await new CollectionExtensionPipeInferenceTests().CollectionExtensionPipesInferAndPreserveSafety();
     }
 
     private static async Task ImportedResourceUsesItsDeclaringModule()

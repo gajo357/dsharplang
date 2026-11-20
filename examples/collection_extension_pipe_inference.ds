@@ -1,0 +1,15 @@
+module Demo
+
+extend List<int> {
+    fn withFee(self, fee: int): int {
+        self.length() + fee
+    }
+}
+
+fn total(items: List<int>, fee: int) {
+    fee |> items.withFee
+}
+
+fn answer(): int {
+    total([10, 20], 40)
+}
