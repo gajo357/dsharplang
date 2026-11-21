@@ -106,10 +106,10 @@ Treat these as requirements once incorporated into the approved repository desig
 5. **Error propagation:** postfix `?` applies to a compatible `Result`, not an unchecked nullable unwrap. `?.` and `??` handle nullable access/fallback.
 6. **Public declarations:** no visibility modifiers. Public visibility does not defeat lexical scope, immutable fields, resource lifetimes or runtime dispatch restrictions.
 7. **Interface defaults:** interface methods may have bodies; methods without bodies require implementation. Explicit service implementations take precedence. No `default service` selection feature.
-8. **Callable workers:** a worker may be called and its result awaited through the runtime. It remains an isolated invocation, not a direct method call on shared mutable state.
-9. **Message-only queues:** queued agents cannot be called as workers, directly invoke `handle`, expose completion tasks or disguise the handler as a lambda. Only enqueue acceptance may be awaited by a producer.
+8. **Actor dispatch:** Invoke uses durable scheduling and awaits the exact Handle result; targeted Dispatch acknowledges one durable invocation and untargeted Dispatch acknowledges publication to explicit subscriptions. See the [actor handoff](DSharp_Actor_Runtime_Instructions.md).
+9. **Actor isolation:** do not construct actors or call Handle directly. Selection is pinned at acceptance; retries retain the selection.
 10. **Queue contracts:** a queue message root is a declared data `type` or Unit. Nested fields must be immutable and serializable; runtime capabilities, tasks, functions and connections are not payloads.
-11. **Handler outcomes:** every normal handler path reports success or error to the runtime/supervisor. Queue retry decisions are independent of returning a result to a caller.
+11. **Handler outcomes:** normal Result errors are completed business values; retry policies address execution faults, not normal business answers.
 12. **First-class lambdas:** inferred/typed parameters, multiple parameters, block bodies, function values, immutable captures, returned lambdas and async lambdas. Captures must respect lifetime and non-escape rules.
 13. **Explicit composition:** handlers declare triggers; application code registers definitions and dependencies. No implicit application-handler discovery and no YAML application source of truth. Logger is an explicit runtime-owned system-actor exception, not permission for packages to auto-activate handlers.
 14. **Discoverable contracts:** compiler diagnostics identify required `handle`/`trigger` members. Trigger types determine handler input and valid policies; editor features use the same semantic contract model.
@@ -144,9 +144,9 @@ none of those implementation slices.
 - **HTTP and runtime dispatch:** use `pipeline = callable` with ordinary pipes
   and Result helpers, not `pipeline {}`. Check input/output and explicit HTTP
   error mappings; the host invokes preprocessing once and `handle` only on
-  success. `call(worker)` and `enqueue(agent)` must preserve their existing
-  runtime contracts and lifetimes, with durable acceptance receipts distinct
-  from queued handler results. Wrapping middleware remains separate.
+  success. Actor operations use the dispatcher described in the actor handoff;
+  durable acceptance and completed results remain distinct. Wrapping middleware
+  remains separate.
 - **Capture and scopes:** `Logger.log` captures structured immutable events and
   performs a non-waiting transient submission, returning Unit. Validate literal/
   constant templates and named fields; retain eager argument evaluation even at

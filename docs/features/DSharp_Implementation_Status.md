@@ -1,5 +1,7 @@
 # Compiler implementation status
 
+> **Actor cutover:** The [21 November handoff](DSharp_Actor_Runtime_Instructions.md) is the target, not implemented behavior. The compiler currently executes interfaces/default methods, services and scoped resources. #240 owns removal and migration of the service-dependent fixtures after replacement actor/resource forms exist. The actor dispatcher, durable runtime, registration and observer remain planned. Existing examples classify as follows: `interfaces-services.ds` and `multiline_declarations.ds` demonstrate historical service syntax; `default-interface-methods.ds` demonstrates interface defaults through a service; `owned-service-factories.ds` and `owned-result-resources.ds` demonstrate scoped resource ownership through service factories. Business work moves to actors, external adapters to resources, and pure calculations to functions. Preserve their assertions and interface/cleanup coverage in the migration.
+
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
 This status describes tested implementation, not the full syntax draft.

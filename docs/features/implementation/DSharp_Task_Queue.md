@@ -6,6 +6,8 @@ These task briefs are prepared prompts, not launched Codex tasks. Launch one fou
 
 The [pipes, partial application and logging specification](../DSharp_Pipes_and_Logging.md) extends the target contracts. The new tasks at the end of this queue track that work; their presence does not claim implementation. Preserve completed #35's historical plain-pipe scope. Runtime setup and the remaining design dependencies still apply.
 
+**Actor cutover:** Follow [#239](https://github.com/gajo357/dsharplang/issues/239), the [actor handoff](../DSharp_Actor_Runtime_Instructions.md) and the current [#101 delivery order and 21-check owner map](https://github.com/gajo357/dsharplang/issues/101). The older worker, queue and service prompts below are historical where they conflict. #13/#14 must be reviewed before dependent runtime work; #51/#54 own declaration/registration spelling. #240 migrates existing service fixtures after replacement forms exist.
+
 ## P00 — Align the repository with Codex web
 
 ### #8 — SET-01: Reconcile planning documents with the implemented bootstrap

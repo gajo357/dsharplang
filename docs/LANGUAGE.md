@@ -1,17 +1,6 @@
 # Type system and syntax
 
-**Source precedence:** the selected requirements in the current syntax reference,
-[section 21.2](features/DSharp_Syntax_Reference.md), and the handoff's section 4
-supersede older conflicting examples here. In particular, declarations are public,
-interfaces may supply method defaults, `T?` matches present values or null,
-`Success(value)` constructs results, local builders cannot escape, and callable
-workers differ from enqueue-only agents. No default-service selection is implied.
-The [pipes and logging target](features/DSharp_Pipes_and_Logging.md) supersedes
-older composition/logging details: positional-prefix partial application,
-ordinary Result helpers, callable HTTP preprocessing and host-scoped Logger.
-Remaining syntax/API proposals stay provisional. See the
-[implementation status](features/DSharp_Implementation_Status.md) for currently
-executable behavior; importing a target specification does not implement it.
+The [21 November actor handoff](features/DSharp_Actor_Runtime_Instructions.md) takes precedence over conflicting historical actor, service, worker, queue and dispatch proposals. Its examples are illustrative; declaration and registration spelling and the runtime fault surface require bounded review in #51/#54 and #13/#14. Current executable compiler behavior is recorded in [implementation status](features/DSharp_Implementation_Status.md); the actor runtime is not implemented.
 
 This document separates established language semantics from syntax that has not
 been designed. It is based on [Feature specification v0.2](design/FEATURES.md),
@@ -104,37 +93,17 @@ represented in the language's type system. Fatal CLR/native failures may still
 terminate the process. HTTP response mappings likewise belong to the boundary
 and are not yet specified as exact status-code rules.
 
-## Interfaces, services, and dependencies
+## Interfaces, actors, and dependencies
 
-Interfaces declare contracts, without inherited implementation or state. Several
-services may implement one interface, and one service may implement several
-interfaces. Application composition explicitly supplies dependencies, allowing
-alternative implementations and test doubles without a global service locator.
+Ordinary interfaces retain default methods and explicit implementations for resource providers and test substitutes. The currently executable D# service model is historical and will be removed by #240. Application work moves to actors, external access to resources, and pure calculation to functions. Actors declare resource dependencies; explicit host registration binds them without a service locator.
 
-Service references expose contract operations without exposing private state.
-Invocations normally own fresh private state per trigger. Typed messages carry
-immutable data between services; services cannot directly access one another's
-private state. Persistent actors remain unresolved and must not be inferred from
-sequential queue policies.
-
-```text
-illustrative contract ReceiptSender:
-  input: immutable receipt message
-  outcome: typed success or delivery failure
-
-application supplies a ReceiptSender implementation to a handler
-handler calls through the contract, without accessing implementation state
-```
-
-No service declaration keyword, call syntax, dispatch syntax, or lifetime
-annotation is selected by this notation.
+An actor has one checked Handle. Invoke returns that exact result after durable scheduling; targeted Dispatch and untargeted Dispatch return acceptance receipts. Registration, declaration spelling and runtime fault syntax are pending reviewed contracts; see the [actor handoff](features/DSharp_Actor_Runtime_Instructions.md).
 
 ## Typed composition and middleware
 
 A step accepts known input and produces the input required by its successor.
 Composition checks must account for asynchronous completion and typed failures.
-Ordinary functions and service methods both participate; service calls retain
-isolation and ownership rules.
+Ordinary functions and supported resource operations participate, retaining ownership rules. Actor dispatch uses the explicit dispatcher contract.
 
 The arrows below describe data flow, not an operator:
 
