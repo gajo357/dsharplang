@@ -89,7 +89,7 @@ This is automatic partial application of ordinary multi-argument functions. Thei
 
 ### Methods, generics and async
 
-Partial application covers D# functions, function values, service methods, interface methods (including defaults), and supported extension methods. Capturing a service receiver must retain its dispatch semantics and obey its lifetime. Mutable builders and scoped resources cannot escape by being partially applied instead of captured in an explicit lambda.
+The partial-application target covers D# functions, function values, supported resource and interface methods (including defaults), and supported extension methods. Capturing a receiver must retain its dispatch semantics and obey its lifetime. Mutable builders and scoped resources cannot escape by being partially applied instead of captured in an explicit lambda. Existing fully supplied service-method calls remain executable until the #240 cutover; this target does not claim method partial application is implemented. Actors use the dispatcher rather than direct method calls.
 
 For an async function, partial application produces a function whose eventual return is the same `Task<R>`. It starts no task until the remaining arguments arrive. It never blocks or awaits for the caller.
 
@@ -155,6 +155,8 @@ A typed error skips subsequent success callbacks. Creating the callback argument
 
 Callable HTTP preprocessing uses ordinary pipes and Result helpers; wrapping middleware remains separate. Actor execution uses the three dispatcher operations in the [actor handoff](DSharp_Actor_Runtime_Instructions.md), not worker/queue adapters. Invoke waits for the exact Handle result through durable scheduling. Targeted Dispatch acknowledges one accepted invocation; untargeted Dispatch acknowledges a publication. Neither Dispatch waits for recipient completion. The exact declaration and dispatcher syntax remain subject to reviewed contracts.
 
+The contextual `pipeline` member is a declaration slot containing an ordinary typed callable, not a `pipeline {}` expression. The compiler checks its input, successful output against the handler input, and explicit HTTP error mappings. The host invokes preprocessing once and invokes the handler only on success; without preprocessing the binding contract supplies the handler input directly. Pipes do not implicitly unwrap results. Wrapping middleware owns before/after behavior and cleanup, and authorization is checked at runtime rather than inferred from an Authorized-shaped record.
+
 ## 6. What Logger is
 
 `Logger` is the standard system actor, registered once per application host. It owns a bounded, transient mailbox and output delivery state. It is provided by the runtime and does not need a declaration under `eventHandlers/`. This exception is explicit for runtime facilities; installing arbitrary packages still cannot auto-activate their handlers.
@@ -204,7 +206,7 @@ using tenantScope = Logger.scope(tenantId: request.tenantId) {
 
 `Logger.scope` is a synchronous caller-context helper associated with Logger. It is not a queued request to change the actor's own scope. It returns a scoped resource disposed by `using` on success, early return, postfix-? propagation, fault and cancellation.
 
-Scopes flow through awaited service calls and are isolated between concurrent logical invocations. Child scopes form immutable context chains. Merge outer fields, then inner fields, then event fields; the more specific value wins. Capture the final snapshot at log submission, so disposing/changing the current scope cannot alter buffered events. Runtime metadata is separate and cannot be overwritten by a user field with the same spelling.
+Scopes flow through supported awaited calls and are isolated between concurrent logical invocations. Child scopes form immutable context chains. Merge outer fields, then inner fields, then event fields; the more specific value wins. Capture the final snapshot at log submission, so disposing/changing the current scope cannot alter buffered events. Runtime metadata is separate and cannot be overwritten by a user field with the same spelling.
 
 Actors create a new invocation scope with parent correlation. Runtime boundary adapters explicitly transfer allowed context; do not rely on thread-local state or accidental execution-context flow through Channels. Queues persist configured correlation fields and reconstruct context for each attempt; they do not persist a live scope or automatically copy all user fields. Message ID stays stable across retries, while attempt and invocation ID identify each execution. Log context is diagnostic data, never authorization evidence.
 

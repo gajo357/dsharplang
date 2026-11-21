@@ -205,7 +205,7 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 **Outcome:** Runtime implementation has approved public contracts, project boundaries and executable test infrastructure.
 
 1. Resolve actor dispatch/fault outcomes (#13), durable acceptance/store transitions (#14), HTTP composition/authorization (#15), safe interop boundaries (#16), and cron/WebSocket lifecycle sections (#18). Each design issue produces a focused decision-record PR.
-2. Record exact types/state transitions and representative positive/negative cases. Separate application Error from runtime fault, cancellation and timeout; settle the provisional CallError shape before code depends on it.
+2. Record exact types/state transitions and representative positive/negative cases. Separate application Error from runtime fault, cancellation and timeout; review the runtime fault surface under #13 without reinstating the superseded CallError wrapper.
 3. Use #9 to add the approved runtime projects, references, pinned dependencies and trusted tests. Include controlled time/randomness. Prove a deliberately failing test fails verification before removing the deliberate failure.
 4. Keep infrastructure changes scoped to #9. Normal runtime features consume the resulting contracts and commands instead of changing project policy as a side effect.
 
@@ -537,34 +537,16 @@ Dependencies below are translated from the current issue bodies into actual GitH
 | P04 | [#44](https://github.com/gajo357/dsharplang/issues/44) · LANG-27 | Implement default interface method bodies | [#43](https://github.com/gajo357/dsharplang/issues/43) |
 | P04 | [#45](https://github.com/gajo357/dsharplang/issues/45) · LANG-28 | Implement scoped using and resource non-escape | [#41](https://github.com/gajo357/dsharplang/issues/41), [#43](https://github.com/gajo357/dsharplang/issues/43), [#17](https://github.com/gajo357/dsharplang/issues/17) |
 | P04 | [#46](https://github.com/gajo357/dsharplang/issues/46) · LANG-29 | Implement multi-file modules and imports | [#20](https://github.com/gajo357/dsharplang/issues/20), [#12](https://github.com/gajo357/dsharplang/issues/12) |
-| P05 | [#13](https://github.com/gajo357/dsharplang/issues/13) · DEC-03 | Freeze worker invocation and failure contracts | Bootstrap |
-| P05 | [#14](https://github.com/gajo357/dsharplang/issues/14) · DEC-04 | Freeze durable queue and store protocols | Bootstrap |
+| P05 | [#13](https://github.com/gajo357/dsharplang/issues/13) · DEC-03 | Freeze actor invocation and failure contracts | #239 |
+| P05 | [#14](https://github.com/gajo357/dsharplang/issues/14) · DEC-04 | Freeze durable invocation, publication and store protocols | #239 |
 | P05 | [#15](https://github.com/gajo357/dsharplang/issues/15) · DEC-05 | Freeze HTTP composition and authorization contracts | Bootstrap |
 | P05 | [#16](https://github.com/gajo357/dsharplang/issues/16) · DEC-06 | Freeze safe CLR and NuGet interoperability | Bootstrap |
 | P05 | [#18](https://github.com/gajo357/dsharplang/issues/18) · DEC-08 | Freeze scheduling and WebSocket lifecycle contracts | Bootstrap |
 | P05 | [#9](https://github.com/gajo357/dsharplang/issues/9) · SET-02 | Enable bounded runtime projects and trusted runtime tests | [#13](https://github.com/gajo357/dsharplang/issues/13), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P06 | Checked actor contracts and registration | #51 → #52 → #53 → #54; #241 binds dispatch; #240 migrates service fixtures once replacements exist |
-| P06 | Checked actor contracts and registration | #51 → #52 → #53 → #54; #241 binds dispatch; #240 migrates service fixtures once replacements exist |
-| P06 | Checked actor contracts and registration | #51 → #52 → #53 → #54; #241 binds dispatch; #240 migrates service fixtures once replacements exist |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
-| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
-| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
-| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
-| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
-| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
+| P06 | #51–#54, #240, #241 | Checked actor contracts, registration, fixture cutover and dispatcher typing | #239 and reviewed #13/#14; #240 waits for replacement forms |
+| P07 | #58, #242, #96, #100, #10 | Host registry, selection and tooling | #58 freezes registration before #242 selects; see #101 for remaining gates |
+| P08 | #59, #60, #78, #61–#64, #56 | Durable acceptance and execution | #59 → #60 and #78 with #242 feed #61; #62 → #63; #56 supplies the executor joined by #64 |
+| P09 | #65–#68, #57, #243, #71 | Policies, waits and inspection | #65 → #66 → #67 precede #57; #68 adds follow-ups and #243/#71 use admission metadata |
 | P10 | [#79](https://github.com/gajo357/dsharplang/issues/79) · LIB-02 | Implement standard immutable time, identity and binary values | [#9](https://github.com/gajo357/dsharplang/issues/9), [#11](https://github.com/gajo357/dsharplang/issues/11), [#78](https://github.com/gajo357/dsharplang/issues/78) |
 | P10 | [#69](https://github.com/gajo357/dsharplang/issues/69) · RUN-14 | Implement recoverable event fan-out | [#64](https://github.com/gajo357/dsharplang/issues/64), [#68](https://github.com/gajo357/dsharplang/issues/68), [#52](https://github.com/gajo357/dsharplang/issues/52) |
 | P10 | [#70](https://github.com/gajo357/dsharplang/issues/70) · RUN-15 | Implement durable cron occurrence creation | [#68](https://github.com/gajo357/dsharplang/issues/68), [#18](https://github.com/gajo357/dsharplang/issues/18), [#79](https://github.com/gajo357/dsharplang/issues/79) |

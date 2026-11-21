@@ -20,8 +20,8 @@ syntax. This document must not be treated as a finalized parser specification.
 | Data | Immutable record-like values with value equality; nested collections are immutable. Updates create new values. | Declaration/update syntax, equality details, collection APIs. |
 | Unions | Discriminated alternatives and exhaustive pattern matching. | Variant syntax, representation, matching grammar. |
 | Results | Typed success and failure. | Exact result types, propagation, and interaction with other failure channels. |
-| Contracts | Interfaces have no inherited implementation or state; services can implement multiple interfaces, and several services can implement one interface. | Interface/service declarations and resolution syntax. |
-| Composition | Functions and service methods connect through typed inputs and outputs, accounting for asynchronous completion and typed failures. | Operators, combinators, context representation, wrapping APIs. |
+| Contracts | Interfaces may supply default method bodies but no inherited state; implementations can satisfy multiple interfaces. | Interface declarations and resolution syntax. |
+| Composition | Functions and supported resource operations connect through typed inputs and outputs, accounting for asynchronous completion and typed failures; actors use the dispatcher. | Operators, combinators, context representation, wrapping APIs. |
 | JSON | Built-in serialization and typed decoding with structured errors. | Naming rules, schema evolution, decoding APIs, custom converters. |
 | Resources | Scoped ownership for connections, streams, and transaction handles. | Compiler/runtime enforcement mechanism and syntax. |
 
