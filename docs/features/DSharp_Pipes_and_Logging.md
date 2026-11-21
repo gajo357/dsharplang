@@ -89,7 +89,7 @@ This is automatic partial application of ordinary multi-argument functions. Thei
 
 ### Methods, generics and async
 
-Partial application covers D# functions, function values, service methods, interface methods (including defaults), and supported extension methods. Capturing a service receiver must retain its dispatch semantics and obey its lifetime. Mutable builders and scoped resources cannot escape by being partially applied instead of captured in an explicit lambda.
+The partial-application target covers D# functions, function values, supported resource and interface methods (including defaults), and supported extension methods. Capturing a receiver must retain its dispatch semantics and obey its lifetime. Mutable builders and scoped resources cannot escape by being partially applied instead of captured in an explicit lambda. Existing fully supplied service-method calls remain executable until the #240 cutover; this target does not claim method partial application is implemented. Actors use the dispatcher rather than direct method calls.
 
 For an async function, partial application produces a function whose eventual return is the same `Task<R>`. It starts no task until the remaining arguments arrive. It never blocks or awaits for the caller.
 
@@ -151,43 +151,11 @@ A typed error skips subsequent success callbacks. Creating the callback argument
 
 `Success(null)` and `Success(None)` are still successes. Nullable/optional payloads remain explicitly handled by subsequent code. Native nullability stays idempotent; Option tags are never erased by composition.
 
-## 5. Services, workers and HTTP
+## 5. Actor dispatch and HTTP
 
-Service methods participate directly. `call(worker)` adapts a runtime-owned worker reference into a callable step; it preserves dispatch, concurrency, deadlines and the current worker-call error contract. It must never expose or invoke `.handle` directly. Map the full worker-call error explicitly when the surrounding workflow has another error type.
+Callable HTTP preprocessing uses ordinary pipes and Result helpers; wrapping middleware remains separate. Actor execution uses the three dispatcher operations in the [actor handoff](DSharp_Actor_Runtime_Instructions.md), not worker/queue adapters. Invoke waits for the exact Handle result through durable scheduling. Targeted Dispatch acknowledges one accepted invocation; untargeted Dispatch acknowledges a publication. Neither Dispatch waits for recipient completion. The exact declaration and dispatcher syntax remain subject to reviewed contracts.
 
-```text
-let reserve = input =>
-    call(reserveStock)(input)
-    |> mapError(error => StockFailure(error))
-```
-
-`enqueue(agent)` adapts a queued reference into a step returning the existing asynchronous acceptance Result. Successful output is the acceptance receipt, not the handler result. It waits for the durable enqueue commit when awaited. A following step can use the receipt; it cannot use the eventual queued result. `call(queueAgent)` is rejected. `Logger.log` is the explicitly transient system facility described below, not a change to business-queue acceptance.
-
-For HTTP, retain the contextual `pipeline` member as a declaration slot whose value is an ordinary typed callable. Replace the older list-of-steps block with an expression:
-
-```text
-agent CreateInvoice(invoices: InvoiceService) {
-    trigger Http.post("/invoices")
-
-    pipeline = async raw => {
-        await (
-            raw
-            |> authenticateRequest
-            |> andThen(authorizeCreateInvoice)
-            |> andThen(decodeCreateInvoice)
-        )
-    }
-
-    handle(request: Authorized<CreateInvoiceRequest, CreateInvoices>)
-        : Result<Invoice, InvoiceError> {
-        await invoices.create(request.body, request.identity)
-    }
-}
-```
-
-The three named preprocessing functions are application/adaptor functions with explicitly compatible errors. Their detailed transport types remain part of DEC-05. The compiler checks the callable input, successful output against `handle`, and explicit HTTP error mappings. The host invokes it once and calls `handle` only on success. If preprocessing is absent, the binding contract directly supplies the handler input.
-
-There is no general `pipeline {}` expression or implicit result-aware `|>`. Wrapping ASP.NET middleware still handles before/after behavior and cleanup; it is not replaced by a list of transformations. Auth checks execute at runtime; an Authorized-shaped public record alone is not proof of permission.
+The contextual `pipeline` member is a declaration slot containing an ordinary typed callable, not a `pipeline {}` expression. The compiler checks its input, successful output against the handler input, and explicit HTTP error mappings. The host invokes preprocessing once and invokes the handler only on success; without preprocessing the binding contract supplies the handler input directly. Pipes do not implicitly unwrap results. Wrapping middleware owns before/after behavior and cleanup, and authorization is checked at runtime rather than inferred from an Authorized-shaped record.
 
 ## 6. What Logger is
 
@@ -238,9 +206,9 @@ using tenantScope = Logger.scope(tenantId: request.tenantId) {
 
 `Logger.scope` is a synchronous caller-context helper associated with Logger. It is not a queued request to change the actor's own scope. It returns a scoped resource disposed by `using` on success, early return, postfix-? propagation, fault and cancellation.
 
-Scopes flow through awaited service calls and are isolated between concurrent logical invocations. Child scopes form immutable context chains. Merge outer fields, then inner fields, then event fields; the more specific value wins. Capture the final snapshot at log submission, so disposing/changing the current scope cannot alter buffered events. Runtime metadata is separate and cannot be overwritten by a user field with the same spelling.
+Scopes flow through supported awaited calls and are isolated between concurrent logical invocations. Child scopes form immutable context chains. Merge outer fields, then inner fields, then event fields; the more specific value wins. Capture the final snapshot at log submission, so disposing/changing the current scope cannot alter buffered events. Runtime metadata is separate and cannot be overwritten by a user field with the same spelling.
 
-Workers create a new invocation scope with parent correlation. Runtime boundary adapters explicitly transfer allowed context; do not rely on thread-local state or accidental execution-context flow through Channels. Queues persist configured correlation fields and reconstruct context for each attempt; they do not persist a live scope or automatically copy all user fields. Message ID stays stable across retries, while attempt and invocation ID identify each execution. Log context is diagnostic data, never authorization evidence.
+Actors create a new invocation scope with parent correlation. Runtime boundary adapters explicitly transfer allowed context; do not rely on thread-local state or accidental execution-context flow through Channels. Queues persist configured correlation fields and reconstruct context for each attempt; they do not persist a live scope or automatically copy all user fields. Message ID stays stable across retries, while attempt and invocation ID identify each execution. Log context is diagnostic data, never authorization evidence.
 
 ## 9. Startup configuration and output plugins
 
@@ -404,7 +372,7 @@ Keep one bounded issue, plan and PR per slice. Preserve existing issue mappings 
 | LOG-02 / [#132](https://github.com/gajo357/dsharplang/issues/132) | Logger actor, console and plugin lifecycle | No caller I/O wait, real actor dispatch, bounded delivery, failed-output isolation, shutdown |
 | LOG-03 / [#133](https://github.com/gajo357/dsharplang/issues/133) | Database output and retention | Same RuntimeStore, committed batches, deduplication, expiry/capacity, queue coexistence |
 | LOG-04 / [#134](https://github.com/gajo357/dsharplang/issues/134) | LogReader and observer search | Typed filters, JSON null/missing/numbers, pagination, auth, absent store and timeout cases |
-| OPS-01 / #91 | Runtime instrumentation/metrics/tracing | Reuse Logger; correlate HTTP, workers and queue attempts without recursive delivery |
+| OPS-01 / #91 | Runtime instrumentation/metrics/tracing | Reuse Logger; correlate HTTP, actor invocations and queue attempts without recursive delivery |
 
 Run executed generated-C# tests for language claims; syntax acceptance is insufficient. Use fake outputs and controlled clocks/barriers for delivery tests. Include a blocked-output test proving producer calls and healthy outputs progress; test crash loss as documented, not as a false durability guarantee. The database/query slices require real-provider integration tests, not only mocks. Option remains LANG-40 and nullable-generic issue #30 keeps its own completion criteria.
 
@@ -421,7 +389,7 @@ and the trusted verifier remain protected. No test migration is performed by
 this specification update. #129 remains open for the later async, method,
 extension and lifetime matrix, and #130 remains open for async helpers.
 
-Runtime adapters belong to #56 (`call(worker)`) and #61 (`enqueue(agent)`) or
+Runtime dispatcher and admission work belong to #241, #57 and #61 or
 their bounded integration children. LOG-04 depends on the core observer #92;
 the observer core must not depend on LOG-04. Runtime/setup and remaining design
 gates still apply. Slice plans must define concrete logging data/error/query
@@ -430,4 +398,4 @@ preserving this document's semantics and defaults.
 
 ## 15. What stays outside this change
 
-No new general pipeline block, magical pipe unwrapping, arbitrary argument holes, automatic error unions, automatic worker retries, durable distributed workflows, guaranteed audit delivery, automatic Option wire schema, or mandatory database/cloud logger. The startup handler folder rules, Channels/database architecture, C# backend and Minimal API hosting remain unchanged. Third-party output packages and advanced search can be implemented independently once the output/event contracts pass their conformance tests.
+No new general pipeline block, magical pipe unwrapping, arbitrary argument holes, automatic error unions, implicit actor retries, durable distributed workflows, guaranteed audit delivery, automatic Option wire schema, or mandatory database/cloud logger. The startup handler folder rules, Channels/database architecture, C# backend and Minimal API hosting remain unchanged. Third-party output packages and advanced search can be implemented independently once the output/event contracts pass their conformance tests.

@@ -20,7 +20,7 @@ that their compiler or runtime implementation is complete.
 
 D# combines F#-inspired inference, expressions and discriminated unions with C#-style braces, calls, comments and familiar operators. Its execution model centres on isolated agents, typed results and explicit application composition.
 
-The established direction is: immutable values; explicit missing values; typed success/error outcomes; services with interfaces; agents whose handlers always report an outcome; and code-based registration. This document proposes concrete spellings and fills gaps needed for a readable reference. Numeric defaults, async declarations and runtime-call error types remain reviewable. This revision incorporates public-only declarations, default interface methods, method-local mutable builders, native nullable matching, and distinct callable workers versus queued agents. Where it differs from the companion feature document, these newer decisions take precedence.
+The [actor handoff](DSharp_Actor_Runtime_Instructions.md) supersedes conflicting actor, service and dispatch examples in older revisions. It adopts one actor contract and three dispatcher operations; exact declaration and registration spelling and runtime fault surface await #51/#54 and #13/#14. The current service implementation remains executable until #240; see [implementation status](DSharp_Implementation_Status.md). Other syntax and feature decisions remain as documented.
 
 “Agent” is the source-language term used here for an actor/handler definition. It does not imply an AI agent. Syntax examples demonstrate a proposed design; external library APIs shown are illustrative contracts, not claims that packages already exist.
 
@@ -38,9 +38,7 @@ The established direction is: immutable values; explicit missing values; typed s
 10. Expressions, matching and control flow
 11. Asynchronous operations and resources
 12. Interfaces and default methods
-13. Workers, agents and handler outcomes
-14. Worker calls, queue submission and supervision
-15. Triggers and execution policies
+13–15. Actors, dispatch and triggers
 16. Typed HTTP pipelines
 17. Application composition
 18. Modules and public declarations
@@ -515,7 +513,7 @@ let triple = multiplier(3)
 let result = triple(7)
 ```
 
-The lambda captures the immutable `factor`. Capturing ordinary immutable values is allowed. Capturing method-local mutable builders or scoped resources is rejected under the initial rules. Service and worker capabilities may be captured only where their lifetimes permit; such closures are execution objects, not durable data or queue payloads.
+The lambda captures the immutable `factor`. Capturing ordinary immutable values is allowed. Capturing method-local mutable builders or scoped resources is rejected under the initial rules. Runtime capabilities obey their checked lifetimes and cannot become durable message data.
 
 Function values cannot be fields or union payloads in immutable data `type` declarations in this draft. They remain usable as local values, method parameters and function return values. This avoids disguising captured capabilities as serializable data.
 
@@ -620,11 +618,7 @@ them. Faults/cancellation follow the normal contract, without automatic conversi
 to Error, retries, parallelism or durability. `Success(null)` and `Success(None)`
 remain successes. See the [exact overload and acceptance contract](DSharp_Pipes_and_Logging.md#4-result-composition-through-ordinary-functions).
 
-`call(worker)` adapts a runtime-owned worker reference while preserving dispatch,
-concurrency, deadlines and worker-call errors. `enqueue(agent)` adapts a queued
-reference to its asynchronous durable-acceptance Result, whose success is a
-receipt, not a handler result. `call(queueAgent)` and direct `.handle` dispatch
-remain invalid.
+Actor operations use the dispatcher described in the [handoff](DSharp_Actor_Runtime_Instructions.md); no `call(worker)` or `enqueue(agent)` adapter is part of the adopted contract. Ordinary value pipes retain their existing behavior.
 
 ## 10. Expressions, matching and control flow
 
@@ -739,7 +733,7 @@ service SqlInvoiceStore(db: Database): InvoiceStore {
 }
 ```
 
-The service implements `find` and uses the default `exists`. Calls to `find` from the default body dispatch to that service's implementation. A service may replace `exists` by defining a matching method, for example using a database existence query.
+This snippet illustrates historical service syntax; its invoice and database types are not defined here. The executable [default-interface-methods example](../../examples/default-interface-methods.ds) demonstrates the supported interface-default behavior through a service, and #240 will migrate service-dependent fixtures. In the illustration, the service implements `find` and uses the default `exists`. Calls to `find` from the default body dispatch to that service's implementation. A service may replace `exists` by defining a matching method, for example using a database existence query.
 
 Rules:
 
@@ -765,229 +759,23 @@ app {
 
 Providing default method bodies does not select a default service implementation or discover registrations automatically.
 
-## 13. Workers, agents and handler outcomes
+## 13–15. Actors, dispatch and triggers
 
-A **worker** is an agent that can be called and awaited. A **queued agent** accepts messages and reports each attempt's outcome to its supervisor. These are different reference types and invocation contracts.
+An actor has one checked Handle accepting a declared immutable message or Unit and yielding its declared result. The application binds resources explicitly. A default actor establishes a public target; a flat ordered list of compatible specializations supplies pure canHandle predicates. Select the first match, or the default, once before durable acceptance; retries never select a fallback.
 
-| Declaration | Input | Handler outcome | How another agent interacts |
-| --- | --- | --- | --- |
-| `worker` | Typed request or `Unit` | `Result<T, E>` | Call and await a result. |
-| `agent` with a queue trigger | Declared data `type` or `Unit` | `Result<Unit, E>` in this draft | Enqueue only; no awaited handler result. |
-| `agent` with event/cron trigger | Declared event `type` or `Unit` | `Result<Unit, E>` in this draft | Publish an event or let the schedule enqueue work. |
-| `agent` with HTTP trigger | Typed pipeline input | `Result<T, E>` | HTTP host dispatches; internal code calls a separate worker. |
+`await Invoke<Actor>(message)` obtains the exact Handle result. `await Dispatch<Actor>(message)` acknowledges durable acceptance. `await Dispatch(message)` acknowledges a publication to zero or more explicit subscriptions; it never infers a target. These forms illustrate semantics, not finalized grammar. Invalid target/message and discarded awaitables are diagnostics; no actor is directly constructed or called. Result errors are business values; faults, timeouts, cancellation and failed acceptance are distinct.
 
-Using `worker Name` for a callable declaration is the proposed spelling of the agreed distinction. Queue handlers use `Unit` for their success payload because the supervisor needs completion status, not a direct reply. Result reporting through events is explicit application behaviour.
-
-```text
-worker GetInvoice(store: InvoiceStore) {
-    handle(id: InvoiceId): Result<Invoice?, StoreError> {
-        await store.find(id)
-    }
-}
-```
-
-Both workers and triggered agents have one `handle` entry point, explicit dependencies and a result on every normal completion path. They may use `await` without an `async` modifier. A handler cannot fall through and implicitly succeed.
-
-```text
-agent SendInvoice(mail: MailService) {
-    trigger Queue<Invoice>("invoice-delivery")
-
-    handle(invoice: Invoice): Result<Unit, DeliveryError> {
-        await mail.send(invoice)
-    }
-}
-```
-
-An agent reference is a runtime capability, not an ordinary instance exposing a directly callable `handle` method. Public visibility does not allow bypassing dispatch, queues or supervision. The compiler rejects calling a queued agent, taking its `handle` as a callback, or casting it to a callable worker.
-
-The runtime may reuse infrastructure, but correctness must not depend on retained per-request data. The current baseline uses isolated invocations; persistent state and temporary-cache syntax remain separate decisions.
-
-## 14. Worker calls, queue submission and supervision
-
-### 14.1 Queue outcomes belong to the supervisor
-
-A queued handler reports one attempt's result. The supervisor completes the message, applies eligible retries or retains a terminal failure according to its policy. The producer cannot await that handler's business result, including through a completion task returned by enqueueing.
-
-| Attempt outcome | Meaning |
-| --- | --- |
-| `Success()` | Queued work completed successfully. |
-| `Error(error)` | Declared application failure; policy decides what to do. |
-| Unexpected fault | Execution failure outside the declared error union. |
-| Cancellation/deadline | Execution-control outcome requiring a defined runtime policy. |
-
-Retrying does not roll back external effects. Queue retries must not be imported implicitly into direct worker-call semantics.
-
-### 14.2 Calling a worker
-
-```text
-worker InvoiceSummary(getInvoice: GetInvoice) {
-    handle(id: InvoiceId): Result<string, CallError<StoreError>> {
-        let invoice = (await getInvoice(id))?
-
-        match invoice {
-            null => Success("No invoice found")
-            value => Success($"Invoice total: {value.total}")
-        }
-    }
-}
-```
-
-Only worker references support the direct runtime call syntax `await worker(input)`. A queued agent may call a worker, and a worker may enqueue work, but the reverse interaction does not turn a queue into request/reply. Ordinary async service calls and I/O remain awaitable too; the restriction concerns waiting for an agent's handler result.
-
-### 14.3 Worker-call failures — still provisional
-
-To distinguish application errors from dispatch failures, timeouts and faults, this draft retains the proposed runtime wrapper:
-
-```text
-type CallError<E> {
-    | Application(E)
-    | Unavailable
-    | TimedOut
-    | Cancelled
-    | Faulted(FaultId)
-}
-```
-
-Calling a worker whose handler returns `Result<T, E>` would produce `Task<Result<T, CallError<E>>>`. This wrapper is not a finalized decision. A caller may map it into its own error type. `FaultId` points to diagnostic details without exposing them as a public error payload.
-
-A timeout does not prove execution stopped or side effects did not occur. Automatic retries are not implied for worker calls; they need explicit policy and idempotency rules if introduced.
-
-### 14.4 Enqueue acceptance, never handler completion
-
-Proposed queue-reference API:
-
-```text
-let acceptance = await sendInvoice.enqueue(invoice)
-
-match acceptance {
-    Success(receipt) => Success(receipt.messageId)
-    Error(error) => Error(error)
-}
-```
-
-`enqueue` returns `Task<Result<EnqueueReceipt, EnqueueError>>`. Awaiting it waits for the configured durable acceptance guarantee, not processing. The receipt identifies the message; it contains no handler-result task. These library type/API names remain provisional.
-
-```text
-// Compile errors: a queued agent cannot be called as a worker
-let result = await sendInvoice(invoice)
-let result = await sendInvoice.handle(invoice)
-```
-
-Event publication follows the same acceptance-versus-processing distinction. Runtime inspection may expose job status operationally, but is not an agent request/reply contract. If business logic needs an eventual response, model a separate completion event or application workflow explicitly.
-
-Rescheduling is not a business error. Its control API still needs to be reconciled with mandatory `Result` handler returns; no untyped third result case is implied.
-
-## 15. Triggers and execution policies
-
-Triggers and policies are inspectable declarations, not executable handler code. The names of factories such as `Queue`, `Event` and `Cron` are library-level names.
-
-### 15.1 Queue
-
-```text
-agent SendInvoice(mail: MailService) {
-    trigger Queue<Invoice>("invoice-delivery")
-
-    policy {
-        concurrency = 4
-        scope = PerHost
-
-        retry TemporaryFailure {
-            maxAttempts = 5
-            backoff = exponential
-        }
-    }
-
-    handle(invoice: Invoice): Result<Unit, DeliveryError> {
-        await mail.send(invoice)
-    }
-}
-```
-
-`TemporaryFailure` must identify a variant in `DeliveryError`. `maxAttempts` includes the first attempt. The declaration enables retry only for that variant, not every error or runtime fault. Runtime-fault retry policy is separate and remains to be designed. Backoff parameters and jitter defaults must be specified before this API is final.
-
-Queue payload and handler input must match. Concurrency scope, sequential ordering, per-key partitioning and store capabilities retain the semantics of the feature specification; a numeric concurrency limit alone does not promise deployment-wide ordering.
-
-### Queue message constraints
-
-The top-level queue message must be a record or union declared with `type`, or `Unit`. A bare primitive, list, tuple, nullable root, function, service reference or worker reference is not a queue message; wrap data in an explicit named contract.
-
-```text
-type SendInvoices {
-    invoiceIds: List<InvoiceId>
-    note: string?
-}
-
-// Valid contracts
-Queue<SendInvoices>("send-invoices")
-Queue<Unit>("refresh-cache")
-
-// Invalid roots
-Queue<string>("send-invoices")
-Queue<List<InvoiceId>>("send-invoices")
-```
-
-Data fields and union payloads are recursively immutable. Durable queue validation also requires serializable fields: callbacks, tasks, live connections, service/worker references and other runtime capabilities are not message data even if a reference cannot be reassigned. Immutable primitives, nullable data, nested data types and immutable collections of eligible elements are supported. Generic contracts are checked after substitution.
-
-`Unit` is sent as `()`; a no-argument `handle()` is equivalent to receiving that no-payload input. Stable contract identities and payload evolution remain necessary for persisted messages. Event deliveries and scheduled queue payloads obey the same constraints.
-
-### 15.2 Event subscription
-
-```text
-agent NotifyDoctor(notifications: NotificationService) {
-    trigger Event<InvoiceCreated>(subscription: "notify-doctor")
-
-    handle(event: InvoiceCreated): Result<Unit, NotificationError> {
-        await notifications.invoiceCreated(event)
-    }
-}
-```
-
-The subscription gets its own queued delivery and independent outcome. Different subscriptions are not competing consumers of a single delivery.
-
-### 15.3 Scheduled execution
-
-```text
-agent CheckOverdueInvoices(invoices: InvoiceService) {
-    trigger Cron(
-        name: "check-overdue-invoices",
-        schedule: "0 8 * * *",
-        timezone: "Europe/Sarajevo",
-        missed: RunOnce
-    )
-
-    handle(): Result<Unit, InvoiceError> {
-        await invoices.checkOverdue()
-    }
-}
-```
-
-`handle()` is a no-payload entry point and corresponds to `Unit` input. The cron expression dialect, daylight-saving behaviour and occurrence metadata contract still need specification. Stable names must survive source-symbol renaming where persisted work exists.
+An Invoke records awaited parent/attempt relationships and preserves the original fault. Dispatch deliveries start independent roots. Events, schedules and HTTP remain explicit triggers. Publication freezes subscriptions and selections before acknowledgement and recovers fan-out without missing or duplicate logical deliveries. Event subscriptions retain explicit identities and independently retry their deliveries; multiple runtime instances of one subscription compete for that delivery. Schedules retain timezone and explicit missed-run policy (skip, run once or catch up). FIFO and per-key ordering, concurrency, bounded admission and retry policies apply to the public target across its specializations. See [the handoff](DSharp_Actor_Runtime_Instructions.md), #13/#14 and #51/#54 for contracts, and #101 for the 21 verification owners.
 
 ## 16. Typed HTTP pipelines
 
-```text
-agent CreateInvoice(invoices: InvoiceService) {
-    trigger Http.post("/invoices")
+Illustrative preprocessing composition (transport, registration and actor syntax remain subject to review):
 
-    pipeline = async raw => {
-        await (
-            raw
-            |> authenticateRequest
-            |> andThen(authorizeCreateInvoice)
-            |> andThen(decodeCreateInvoice)
-        )
-    }
-
-    handle(request: Authorized<CreateInvoiceRequest, CreateInvoices>)
-        : Result<Invoice, InvoiceError> {
-        await invoices.create(request.body, request.identity)
-    }
-}
-```
+`raw |> authenticateRequest |> andThen(authorizeCreateInvoice) |> andThen(decodeCreateInvoice)`
 
 The contextual `pipeline` member holds an ordinary typed callable expression.
 There is no general `pipeline {}` expression or list-of-steps composition block.
-The example uses application/adaptor functions with explicitly compatible errors;
+The expression uses application/adaptor functions with explicitly compatible errors;
 their transport types remain part of DEC-05. One typed envelope supplies the
 handler input and carries the validated body and authorization context explicitly.
 
@@ -1016,31 +804,7 @@ Wrapping middleware for tracing, logging or transaction scopes must be supported
 
 ## 17. Application composition
 
-```text
-app {
-    let database = SqlDatabase.fromConfig(databaseConfig)
-    bind InvoiceStore = SqlInvoiceStore(database)
-
-    workers.register(GetInvoice, InvoiceSummary)
-    api.register(CreateInvoice)
-    agents.register(SendInvoice, NotifyDoctor, CheckOverdueInvoices)
-}
-```
-
-This is a composition sketch; other dependencies referenced by enabled handlers must also be bound. Resource initialization must still follow the startup lifecycle rather than opening connections merely by declaring metadata.
-
-- `bind Contract = expression` chooses an implementation or resource recipe explicitly.
-- `workers.register` enables callable worker definitions.
-- `api.register` enables HTTP-triggered agent definitions.
-- `agents.register` enables queue, event and scheduled agent definitions and validates their triggers.
-- Registration takes typed definition references, not handler-name strings.
-- Registration does not execute a handler or accept work before startup completes.
-- The API router dispatches concurrent invocations; central registration is not a global sequential actor.
-- Duplicate routes/identities, missing dependencies and invalid policies are rejected before accepting work. Statically known errors should be compile-time errors.
-
-There is no preferred/default-service selection mechanism. Interface method defaults apply within the explicitly selected implementation.
-
-Configuration and secret-source APIs remain open. Values may come from JSON/environment variables while application wiring stays in code. No application YAML grammar is introduced here.
+Startup explicitly registers actor targets, ordered specializations, subscriptions and resource bindings, then validates and freezes the host registry before accepting work. Registration syntax remains to be reviewed in #54. Selection is per subscription and never suppresses other deliveries. Resources and interfaces support external adapters and test substitutes; standard .NET IServiceCollection is unaffected.
 
 ### 17.1 Logger and output configuration
 
@@ -1077,7 +841,7 @@ ordinary expression behavior.
 message. It follows `using` cleanup on every exit and flows through awaited calls
 without leaking between concurrent invocations. Merge outer, inner and event
 fields in that order and capture the final snapshot at submission. Runtime
-metadata is separate. Workers/queues transfer allowed correlation explicitly;
+metadata is separate. Actor and queue boundaries transfer allowed correlation explicitly;
 diagnostic context never grants authorization.
 
 ```text
@@ -1143,7 +907,7 @@ fn normalizeNote(note: string?): string {
 
 **All declarations and members are public.** There are no `public`, `private`, `protected` or `internal` modifiers. Lexical scope still applies: a local binding is not addressable outside its function simply because declarations have public visibility.
 
-A file declares one module; files may contribute to the same module. Modules organize names. Imports make named modules available without discovering or registering handlers. Public visibility does not change mutability, resource lifetimes or worker/queue invocation restrictions.
+A file declares one module; files may contribute to the same module. Modules organize names. Imports make named modules available without discovering or registering handlers. Public visibility does not change mutability, resource lifetimes or actor dispatch and ownership restrictions.
 
 Data constructors are public. Validation must occur at the operation/boundary where required rather than depending on private constructors. Execution-owned state and runtime handles still follow their own ownership and validity rules.
 
@@ -1159,9 +923,9 @@ Package manifests, import aliases and F#/C# interop syntax remain deferred.
 | `import` | Make a module available. |
 | `type` | Declare a record or discriminated union. |
 | `interface` | Declare a service contract. |
-| `service` | Declare dependency-backed implementation code. |
-| `agent` | Declare a triggered agent, including message-only queue agents. |
-| `worker` | Declare a callable agent whose result may be awaited. |
+| `service` | Currently executable historical syntax; #240 removes it in the actor cutover. |
+| Trigger declarations | Explicit HTTP, event and schedule bindings; syntax awaits review. |
+| Actor declaration | One Handle; exact keyword awaits #51. |
 | `fn` | Declare an ordinary function. |
 | `async` | Declare an asynchronous ordinary function or service method. |
 | `await` | Await asynchronous completion. |
@@ -1187,7 +951,7 @@ Package manifests, import aliases and F#/C# interop syntax remain deferred.
 | `retry` | Retry rule inside a policy. |
 | `bind` | Dependency binding inside application composition. |
 
-Words such as `concurrency`, `scope`, `maxAttempts` and `backoff` are policy field names, not globally reserved keywords. `Http`, `Queue`, `Event`, `Cron`, `Result`, `Success`, `Error`, `Unit` and `CallError` are types, cases or library names. Primitive names are built-in type names. `_` is special wildcard syntax.
+Words such as `concurrency`, `scope`, `maxAttempts` and `backoff` are policy field names, not globally reserved keywords. `Http`, `Queue`, `Event`, `Cron`, `Result`, `Success`, `Error`, `Unit` are types, cases or library names. Primitive names are built-in type names. `_` is special wildcard syntax.
 
 ### 19.3 Operators and punctuation
 
@@ -1213,84 +977,9 @@ Proposed precedence, highest to lowest: member access/calls/postfix propagation;
 
 Generic brackets and type suffixes are parsed in type/generic contexts, not as arithmetic operators. Full parser disambiguation rules remain an implementation task. There is no ternary `?:`; `if` already returns a value.
 
-## 20. Complete worked example
+## 20. Actor example
 
-This example uses an in-memory implementation, a default interface method, a lambda and nullable matching. No external database API is assumed.
-
-```text
-module BillingExample
-
-type InvoiceId {
-    | InvoiceId(int)
-}
-
-type Invoice {
-    id: InvoiceId
-    total: decimal
-    note: string?
-}
-
-type StoreError {
-    | Unavailable
-}
-
-interface InvoiceStore {
-    async find(id: InvoiceId): Result<Invoice?, StoreError>
-
-    async exists(id: InvoiceId): Result<bool, StoreError> {
-        let invoice = (await find(id))?
-
-        match invoice {
-            null => Success(false)
-            value => Success(true)
-        }
-    }
-}
-
-service DemoInvoiceStore: InvoiceStore {
-    find(id) {
-        match id {
-            InvoiceId(1) => Success(Invoice {
-                id = id
-                total = 125.50m
-                note = null
-            })
-
-            _ => Success(null)
-        }
-    }
-}
-
-worker GetInvoice(store: InvoiceStore) {
-    handle(id: InvoiceId): Result<Invoice?, StoreError> {
-        await store.find(id)
-    }
-}
-
-worker InvoiceSummary(getInvoice: GetInvoice) {
-    handle(id: InvoiceId): Result<string, CallError<StoreError>> {
-        let found = (await getInvoice(id))?
-        let describe = (invoice: Invoice) => {
-            let note = invoice.note ?? "No note"
-            $"Total: {invoice.total}. {note}"
-        }
-
-        match found {
-            null => Success("No invoice found")
-            invoice => Success(describe(invoice))
-        }
-    }
-}
-
-app {
-    bind InvoiceStore = DemoInvoiceStore()
-    workers.register(GetInvoice, InvoiceSummary)
-}
-```
-
-The service inherits the default `exists` body and the `find` signature's async contract. `GetInvoice` returns missing data as `Success(null)`. `InvoiceSummary` matches either null or the non-null invoice, then passes that value to a lambda.
-
-Only workers are directly callable here. Queue submission uses the separate API in section 14. The provisional `CallError` wrapper can become nested across worker layers; applications may map it to a stable domain error instead. Registration enables definitions but does not invoke them.
+The [handoff](DSharp_Actor_Runtime_Instructions.md) contains illustrative actor, specialization, subscription and resource examples. Their semantics are adopted; their spelling is not yet executable or finalized. The existing interface/default and resource examples remain compiler fixtures until #240 migrates their service-dependent portions.
 
 ## 21. Diagnostics and open decisions
 
@@ -1316,8 +1005,8 @@ Only workers are directly callable here. Queue submission uses the separate API 
 | A mutable builder field, return value or capture | Builder cannot escape its creating method. |
 | A live connection in a queued message | Only immutable serializable data may be queued. |
 | `Queue<string>(...)` | Use a declared data type or Unit as the message contract. |
-| `await queueAgent(message)` | Queued agents accept messages only; call a worker to await a handler result. |
-| `queueAgent.handle(message)` or a reference to that entry point | Runtime-only entry; dispatch cannot be bypassed. |
+| Discarded Invoke or Dispatch awaitable | Observe completion or acceptance. |
+| Direct cross-actor Handle call | Use the dispatcher; runtime dispatch cannot be bypassed. |
 | Visibility modifiers | All declarations are public; remove the modifier. |
 
 ### 21.2 Established choices in this revision
@@ -1326,7 +1015,7 @@ Only workers are directly callable here. Queue submission uses the separate API 
 - Native `T?` with direct present-value/null matching and `Success(value)` construction; explicit `Option<T>` with distinct `None` and `Some(T)` cases.
 - Default bodies for individual interface methods, not default service selection.
 - Immutable data properties and method-local mutable collection builders with non-escape restrictions.
-- Callable workers separated from queued agents; queue acceptance does not expose handler completion.
+- One actor model; Invoke waits for completion, while both Dispatch forms acknowledge acceptance.
 - Queue roots restricted to declared data types or Unit, with recursively immutable and serializable contents.
 - First-class lambdas, including typed signatures, captures, returned functions and async bodies.
 - Positional-prefix partial application while preserving multi-parameter function types and capture/lifetime rules.
@@ -1335,11 +1024,11 @@ Only workers are directly callable here. Queue submission uses the separate API 
 
 ### 21.3 Remaining design work
 
-1. Finalize worker-call failure reporting and the provisional `CallError` wrapper.
+1. Define the runtime fault surface under #13 without wrapping business Result values.
 2. Confirm exact function-type and async spellings, parser precedence and generic disambiguation.
 3. Specify wrapping middleware, typed path/query binding and HTTP transport/error/response mappings; callable preprocessing and Result helper composition are specified in the companion.
 4. Define authorization enforcement and runtime capability validity under public-only declarations.
-5. Reconcile result-returning queued handlers with rescheduling and other supervisor-control operations.
+5. Specify actor execution-fault retries independently of normal Result values under #14.
 6. Finalize queue acceptance guarantees, receipt API, contract versioning and serialization constraints.
 7. Finalize numeric names, collection APIs, equality constraints, time types and JSON encoding details.
 8. Define safe .NET interop without mutable-builder escapes or unchecked foreign nulls/exceptions.
@@ -1348,83 +1037,6 @@ Only workers are directly callable here. Queue submission uses the separate API 
 
 Borrowed mutable-builder parameters/captures, general local-variable reassignment, advanced generic constraints, raw strings, package manifests, filename extensions and CLI syntax remain deferred. gRPC remains deferred.
 
-## 22. Discoverable agent contracts and developer tooling
+## 22. Discoverable actor contracts and tooling
 
-### 22.1 Required and available members
-
-Programmers should discover agent requirements through compiler diagnostics, editor completion and generated contract documentation. A new agent declaration is not an unstructured collection of specially named methods.
-
-| Declaration | Required | Optional | Invalid |
-| --- | --- | --- | --- |
-| `worker` | Exactly one typed `handle` | Helper methods; explicitly supported worker policies | Queue/event/cron/HTTP trigger; queue retry policy |
-| Queue `agent` | Exactly one queue `trigger` and one `handle` | Queue `policy`, helper methods | Direct invocation or awaited handler completion |
-| Event `agent` | Exactly one event `trigger` and one `handle` | Subscription delivery policies, helper methods | Direct invocation or awaited handler completion |
-| Scheduled `agent` | Exactly one schedule `trigger` and one `handle` | Schedule/queue policies, helper methods | Direct invocation or awaited handler completion |
-| HTTP `agent` | Exactly one HTTP `trigger` and one `handle` | Typed `pipeline = callable`, supported HTTP policies, helper methods | Inheriting queue retry rules implicitly |
-
-Exactly one trigger per `agent` is the proposed initial grammar constraint; sharing logic is done through services/workers. The compiler rejects unsupported declaration members and duplicate reserved members. It must not silently ignore a misspelled `handle`, `trigger` or policy field.
-
-`handle`, `trigger`, `pipeline` and `policy` are contextual language members. Trigger factory names and policy values are typed library symbols. These contracts do not require the programmer to repeat an extra agent interface declaration.
-
-### 22.2 Deriving the handler signature
-
-```text
-agent SendInvoice {
-    trigger Queue<SendInvoiceMessage>("invoice-delivery")
-}
-```
-
-Once the trigger is resolved, the compiler knows the message type, valid handler shape and supported policy category. For this example it must report a missing handler with the expected shape:
-
-```text
-SendInvoice requires:
-handle(message: SendInvoiceMessage): Result<Unit, E>
-
-Choose the application error type E and implement the handler.
-```
-
-The trigger does not invent the error type. A code action may leave an editor placeholder for it; that placeholder is not valid completed source. Before a trigger is present, completion shows available trigger categories and the need for `handle` without guessing a message type.
-
-Queue/event message types must satisfy section 15. Scheduled handlers use Unit input unless a later approved contract defines an immutable occurrence message. A worker's explicit handler signature supplies its input/output/error types. HTTP's trigger and pipeline supply its final input contract.
-
-### 22.3 One shared semantic contract
-
-The compiler, registration generator, documentation generator and language server should use the same resolved contract model. It should describe:
-
-- Declaration kind, source location and required/optional members.
-- Input, success and application-error types.
-- Invocation capability: callable worker, enqueue-only reference, event subscription, schedule or HTTP dispatch.
-- Supported typed trigger and policy definitions, including defaults and restrictions.
-- Dependencies, stable runtime identities and startup validation requirements.
-- Documentation and diagnostic identifiers attached to those definitions.
-
-Avoid separate hard-coded signature lists in the editor and compiler. Packages can provide typed trigger/policy metadata through a bounded supported extension mechanism; installing a package must not run code during completion or discover application handlers automatically. The exact metadata API is not yet frozen.
-
-### 22.4 Editor behaviour
-
-The initial tooling target should provide:
-
-1. Diagnostics on incomplete declarations, with source ranges and expected signatures.
-2. Completion for `handle`, `trigger`, `pipeline`, `policy` and ordinary helper methods in the correct declaration context.
-3. Completion and documentation for valid fields inside the selected policy type.
-4. Hover text showing the resolved message, result and invocation contract.
-5. “Implement required members” to insert the missing signature, preserving existing code.
-6. Go-to-definition for the message type, handler and referenced service/worker contracts.
-7. Signature help and inferred parameter types for lambdas, service methods and worker calls.
-
-The CLI must produce the same semantic errors without an editor. An initial compiler milestone may deliver CLI diagnostics first, with language-server features in a later milestone. Syntax highlighting alone is not contract-aware completion.
-
-### 22.5 Required validation examples
-
-| Case | Expected outcome |
-| --- | --- |
-| Queue trigger present, handler absent | Missing-handler diagnostic with the trigger's message type. |
-| Handler present, triggered agent has no trigger | Missing-trigger diagnostic. |
-| Queue message differs from handler parameter | Input mismatch diagnostic before code generation. |
-| Queue handler returns a business payload | Reject under the initial `Result<Unit, E>` queue contract. |
-| Worker declares a queue trigger | Reject incompatible declaration kind. |
-| Misspelled policy field | Unknown-field diagnostic, never a silently ignored setting. |
-| Editor adds a required handler | Correct signature inserted without deleting existing members. |
-| Queue reference used as a function or callback | Reject bypass of runtime-owned queue dispatch. |
-
-These checks are language/type constraints, independent of all-public visibility. Some policy capabilities and registration conflicts depend on the configured store or environment and therefore must also be validated at startup.
+Compiler, registration and editor tooling should share one resolved actor contract: Handle input/result, public target, specialization compatibility, resource dependencies, subscriptions and policies. Diagnose missing or incompatible Handle and canHandle members, invalid dispatch targets and messages, unsupported policy fields and bypasses of dispatch. Registration and provider validation also run at startup. Exact metadata APIs and syntax remain subject to review.

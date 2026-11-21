@@ -6,6 +6,8 @@ These task briefs are prepared prompts, not launched Codex tasks. Launch one fou
 
 The [pipes, partial application and logging specification](../DSharp_Pipes_and_Logging.md) extends the target contracts. The new tasks at the end of this queue track that work; their presence does not claim implementation. Preserve completed #35's historical plain-pipe scope. Runtime setup and the remaining design dependencies still apply.
 
+**Actor cutover:** Follow [#239](https://github.com/gajo357/dsharplang/issues/239), the [actor handoff](../DSharp_Actor_Runtime_Instructions.md) and the current [#101 delivery order and 21-check owner map](https://github.com/gajo357/dsharplang/issues/101). The older worker, queue and service prompts below are historical where they conflict. #13/#14 must be reviewed before dependent runtime work; #51/#54 own declaration/registration spelling. #240 migrates existing service fixtures after replacement forms exist.
+
 ## P00 — Align the repository with Codex web
 
 ### #8 — SET-01: Reconcile planning documents with the implemented bootstrap
@@ -1184,7 +1186,7 @@ Do not merge, deploy or start another issue.
 
 ## P05 — Freeze runtime boundaries and add runtime projects
 
-### #13 — DEC-03: Freeze worker invocation and failure contracts
+### #13 — DEC-03: Freeze actor invocation and failure contracts
 
 Issue: https://github.com/gajo357/dsharplang/issues/13
 
@@ -1218,7 +1220,7 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-### #14 — DEC-04: Freeze durable queue and store protocols
+### #14 — DEC-04: Freeze durable invocation, publication and store protocols
 
 Issue: https://github.com/gajo357/dsharplang/issues/14
 
@@ -1390,9 +1392,11 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-## P06 — First callable worker
+## P06 — Actor contracts and registration
 
-### #51 — LANG-34: Implement worker declaration contracts
+The grouping of older prompts below is historical. Follow #101's current delivery order: durable admission and execution precede public completion waits.
+
+### #51 — LANG-34: Implement checked actor declaration contracts
 
 Issue: https://github.com/gajo357/dsharplang/issues/51
 
@@ -1426,13 +1430,13 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-### #56 — RUN-01: Execute isolated callable worker invocations
+### #56 — RUN-01: Execute one isolated actor attempt
 
 Issue: https://github.com/gajo357/dsharplang/issues/56
 
 Plan: `docs/features/implementation/issue-56-plan.md`
 
-Track `call(worker)` as a callable adapter preserving runtime dispatch, deadlines, concurrency and the complete worker-call error contract. No direct `.handle` dispatch or queued-agent request/reply shortcut.
+Implement the isolated internal executor for one selected actor attempt. #64 joins it to durable claims and outcomes; #57 owns the public completion wait. Do not introduce a callable-worker adapter or direct actor construction and Handle calls by application code.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/56.
@@ -1462,7 +1466,7 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-### #57 — RUN-02: Handle worker faults, deadlines and cancellation
+### #57 — RUN-02: Public Invoke waits, deadlines and faults
 
 Issue: https://github.com/gajo357/dsharplang/issues/57
 
@@ -1496,9 +1500,9 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-## P07 — Agent contracts and explicit application hosting
+## P07 — Actor contracts and explicit application hosting
 
-### #52 — LANG-35: Implement triggered-agent contracts and message restrictions
+### #52 — LANG-35: Implement typed message contracts and restrictions
 
 Issue: https://github.com/gajo357/dsharplang/issues/52
 
@@ -1844,13 +1848,13 @@ If publishing the PR is unavailable, say so explicitly.
 Do not merge, deploy or start another issue.
 ```
 
-### #61 — RUN-06: Implement durable enqueue and acceptance receipts
+### #61 — RUN-06: Implement durable targeted acceptance and receipts
 
 Issue: https://github.com/gajo357/dsharplang/issues/61
 
 Plan: `docs/features/implementation/issue-61-plan.md`
 
-Track `enqueue(agent)` as a callable adapter returning the existing asynchronous durable acceptance Result and receipt, never the handler result. Awaiting success still waits for the durable commit.
+Persist the invocation, pinned selection and routing/chain metadata before acknowledging targeted acceptance. The receipt acknowledges responsibility, not the Handle result; retain stable submission identity for uncertain acknowledgements and deduplicated retry. Dispatcher typing belongs to #241 and public completion waiting to #57.
 
 ```text
 Implement https://github.com/gajo357/dsharplang/issues/61.
@@ -3302,7 +3306,7 @@ Plan: `docs/features/implementation/issue-130-plan.md`
 
 Dependencies: #31 and #135; synchronous child #136 first. The async matrix waits for #41/#42 and approved library setup.
 
-Parent tracking task. Provide callback-first/data-last andThen, map, mapError, tap and tapError as ordinary symbols. Track all Result/Task combinations without retry, flattening by map, implicit Option/null unwrapping or error erasure. Worker/queue adapters remain #56/#61.
+Parent tracking task. Provide callback-first/data-last andThen, map, mapError, tap and tapError as ordinary symbols. Track all Result/Task combinations without retry, flattening by map, implicit Option/null unwrapping or error erasure. Actor dispatch and acceptance remain #241/#61, with public waits in #57.
 
 ```text
 Plan the remaining bounded implementation slices for https://github.com/gajo357/dsharplang/issues/130.

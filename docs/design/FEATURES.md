@@ -2,7 +2,7 @@
 
 **Version:** 0.2  
 **Date:** 10 November 2026  
-**Status:** Design specification; not a claim of implemented functionality.
+**Status:** Historical design specification; not a claim of implemented functionality. The [actor handoff](../features/DSharp_Actor_Runtime_Instructions.md) supersedes conflicting worker, service and dispatch proposals.
 
 A strongly typed language for backend services, API integrations and reliable background work on .NET. The design combines immutable data, explicit dependencies, isolated execution and typed composition with optional first-party packages for HTTP, WebSockets, queues and events.
 

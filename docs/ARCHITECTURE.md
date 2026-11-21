@@ -1,13 +1,6 @@
 # Architecture and implementation
 
-**Source precedence:** the selected requirements in syntax reference revision 0.3,
-[section 21.2](features/DSharp_Syntax_Reference.md), and the handoff's section 4
-supersede older conflicting examples here. In particular, declarations are public,
-interfaces may supply method defaults, `T?` matches present values or null,
-`Success(value)` constructs results, local builders cannot escape, and callable
-workers differ from enqueue-only agents. No default-service selection is implied.
-Remaining syntax/API proposals stay provisional. Only the literal-function subset
-in [COMPILER_BOOTSTRAP.md](COMPILER_BOOTSTRAP.md) is currently executable.
+The [21 November actor handoff](features/DSharp_Actor_Runtime_Instructions.md) takes precedence over conflicting historical actor, service, worker, queue and dispatch proposals. Its examples are illustrative; declaration and registration spelling and the runtime fault surface require bounded review in #51/#54 and #13/#14. Current executable compiler behavior is recorded in [implementation status](features/DSharp_Implementation_Status.md); the actor runtime is not implemented.
 
 This document explains [Feature specification v0.2](design/FEATURES.md).
 Runtime components below are planned. The minimal compiler bootstrap is implemented;
@@ -51,7 +44,7 @@ flowchart TD
 | Configuration and Secrets | Validated settings and asynchronous secret providers. |
 
 These are composable first-party NuGet package areas, not an implemented package
-catalog. Workers need not host HTTP; HTTP applications need not use queues.
+catalog. HTTP hosting remains optional; actor invocation uses durable admission.
 
 ## Composition and lifecycle
 
@@ -93,38 +86,11 @@ Configuration-source APIs and custom startup hooks remain open.
 
 ## Invocation, ownership, and failure
 
-A trigger normally creates a fresh isolated invocation under its execution policy.
-Concurrent triggers may create concurrent instances. Each owns private state and
-communicates through typed messages and service references. Awaiting another
-service result does not occupy a worker thread.
+A fresh actor invocation has one checked Handle and explicitly bound resources. Actors do not construct or call other actors directly. Awaited Invoke targets a public actor through durable scheduling and returns its exact Handle result; targeted Dispatch acknowledges durable acceptance; untargeted Dispatch acknowledges a frozen publication to zero or more explicit subscriptions. A business Result error is a completed answer. Runtime faults, timeout, cancellation and failed acceptance remain distinct; #13 defines their reviewed surface.
 
-Ordinary handler failures are contained; callers receive failure or timeout.
-Dependencies do not automatically propagate crashes or establish supervision.
-Supervision governs restart and recovery. Retrying an operation is separate from
-restarting an instance, and neither undoes external side effects.
+Ordered, pure predicates select one specialization or the default before acceptance. Retries preserve that selection and target-wide policies. An awaited chain records its parent attempt and original fault; detached Dispatch starts an independent root. After restart the chain is diagnostic, not a restored continuation. Awaiting consumes no blocked worker thread; exclusive permits remain held, with ancestor re-entry rejected and other cycles bounded.
 
-Persistent actors and restart-state restoration remain unresolved. Sequential
-queues do not preserve invocation memory. A proposed persistent-actor default
-runs one handler through completion, including awaits; call cycles would need
-bounded waits and careful design. Fatal CLR or native failures may terminate the
-OS process. BEAM-style per-actor GC and execution preemption are not promised.
-
-| Dependency | Ownership rule |
-| --- | --- |
-| Immutable value | Shareable without mutation, including nested collections. |
-| Service reference | Grants contract access without exposing private state. |
-| Resource capability | Safe operations over runtime-managed infrastructure. |
-| Connection or stream | Exclusively owned in a bounded operation scope. |
-
-Database pools are shared infrastructure. Operations borrow and return
-connections; a transaction owns one connection for its scope. Transaction handles
-cannot escape or be sent to another actor. Filesystem capabilities can restrict
-directories and operations. Simple operations manage handles; streams close on
-completion or failure. File handles normally need no pooling.
-
-Private memory does not prevent races in external files or data. Use an owning
-actor or storage coordination. Closing a failed write does not undo partial
-output; atomic replacement is a separate operation.
+Resources bind shared concurrency-safe infrastructure and scope connections, transactions, requests, responses and streams. Release them on success, error and cancellation. A transaction may contain ordinary awaits but must finish before an actor wait or restart boundary. Actor retries can repeat external effects; use repeat-safe operations or explicit reconciliation. Built-in HTTP resources use IHttpClientFactory in both host types. The [handoff](features/DSharp_Actor_Runtime_Instructions.md) defines these requirements; #45, #58 and #244–#247 own implementation evidence.
 
 ## HTTP pipelines
 
@@ -198,7 +164,7 @@ silently weakened.
 ### Events and schedules
 
 An event has zero or more subscriptions, each receiving an independent queued
-delivery with its own outcome. Workers in one subscription compete for its work;
+delivery with its own outcome. Runtime instances of one subscription compete for its work;
 they are not separate subscribers. Subscription declarations identify triggers
 and handlers; the runtime manages backing queues without requiring a separate
 queue reference or message mapping. Optional filters and mappings should be pure

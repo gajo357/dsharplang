@@ -6,6 +6,8 @@ Prepared 11 November 2026 for [gajo357/dsharplang](https://github.com/gajo357/ds
 
 No GitHub issues were created by producing this document. IDs such as LANG-02 are backlog identifiers, not GitHub issue numbers. Replace dependency IDs with real issue/PR links as issues are created.
 
+The [21 November actor handoff](DSharp_Actor_Runtime_Instructions.md) supersedes conflicting actor, service and dispatch briefs in this historical catalog. Use current issue bodies and [#101](https://github.com/gajo357/dsharplang/issues/101) for cutover order.
+
 ### 13 November 2026 reconciliation: pipes and logging
 
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)

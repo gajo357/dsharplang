@@ -1,5 +1,7 @@
 # DEC-04: Durable queue and RuntimeStore contract
 
+> **Historical proposal, superseded:** The [21 November actor handoff](../DSharp_Actor_Runtime_Instructions.md) takes precedence over conflicting worker, queue and business-error semantics below. This record is retained for history, not an approved contract. #13/#14 must replace it with bounded reviewed contracts after #239.
+
 **Status:** Draft proposal for review; not adopted or implemented.  
 **Issue:** [#14](https://github.com/gajo357/dsharplang/issues/14).  
 **Base:** `53599ca920d522cb91076a276052ea86af51a968`.

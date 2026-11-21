@@ -7,6 +7,8 @@
 
 **13 November 2026 update:** Incorporate the [pipes, partial application and logging target](../DSharp_Pipes_and_Logging.md). This changes the target and backlog, not implemented status. Main includes the plain-pipe #35 and tuple #36 work; the new partial application, helper and logging slices remain separate work. Use the current [implementation status](../DSharp_Implementation_Status.md) for tested behavior.
 
+**21 November actor cutover:** [#239](https://github.com/gajo357/dsharplang/issues/239) imports the [actor handoff](../DSharp_Actor_Runtime_Instructions.md). Follow the current [#101 delivery order and 21-check ownership map](https://github.com/gajo357/dsharplang/issues/101) wherever this historical roadmap conflicts. #13/#14 are bounded reviewed contracts, #51/#54 own declaration and registration spelling, and no pre-durability public worker milestone remains. Existing service code is executable until #240; this handoff does not implement actors.
+
 ## 1. Execution model
 
 Use the existing published environment in **Codex web**.
@@ -98,10 +100,10 @@ Within a row, proceed left to right. Follow the detailed phase notes for parent/
 | P03 | Functions, collections and local builders | [#11](https://github.com/gajo357/dsharplang/issues/11) → [#33](https://github.com/gajo357/dsharplang/issues/33) → [#34](https://github.com/gajo357/dsharplang/issues/34) → [#35](https://github.com/gajo357/dsharplang/issues/35) → [#36](https://github.com/gajo357/dsharplang/issues/36) → [#37](https://github.com/gajo357/dsharplang/issues/37) → [#38](https://github.com/gajo357/dsharplang/issues/38) → [#39](https://github.com/gajo357/dsharplang/issues/39) → [#40](https://github.com/gajo357/dsharplang/issues/40) |
 | P04 | Async, services and scoped resources | [#17](https://github.com/gajo357/dsharplang/issues/17) → [#41](https://github.com/gajo357/dsharplang/issues/41) → [#42](https://github.com/gajo357/dsharplang/issues/42) → [#43](https://github.com/gajo357/dsharplang/issues/43) → [#44](https://github.com/gajo357/dsharplang/issues/44) → [#45](https://github.com/gajo357/dsharplang/issues/45) → [#46](https://github.com/gajo357/dsharplang/issues/46) |
 | P05 | Freeze runtime boundaries and add runtime projects | [#13](https://github.com/gajo357/dsharplang/issues/13) → [#14](https://github.com/gajo357/dsharplang/issues/14) → [#15](https://github.com/gajo357/dsharplang/issues/15) → [#16](https://github.com/gajo357/dsharplang/issues/16) → [#18](https://github.com/gajo357/dsharplang/issues/18) → [#9](https://github.com/gajo357/dsharplang/issues/9) |
-| P06 | First callable worker | [#51](https://github.com/gajo357/dsharplang/issues/51) → [#56](https://github.com/gajo357/dsharplang/issues/56) → [#57](https://github.com/gajo357/dsharplang/issues/57) |
-| P07 | Agent contracts and explicit application hosting | [#52](https://github.com/gajo357/dsharplang/issues/52) → [#53](https://github.com/gajo357/dsharplang/issues/53) → [#54](https://github.com/gajo357/dsharplang/issues/54) → [#58](https://github.com/gajo357/dsharplang/issues/58) → [#96](https://github.com/gajo357/dsharplang/issues/96) → [#100](https://github.com/gajo357/dsharplang/issues/100) → [#10](https://github.com/gajo357/dsharplang/issues/10) |
-| P08 | First durable SQLite queue | [#59](https://github.com/gajo357/dsharplang/issues/59) → [#60](https://github.com/gajo357/dsharplang/issues/60) → [#78](https://github.com/gajo357/dsharplang/issues/78) → [#61](https://github.com/gajo357/dsharplang/issues/61) → [#62](https://github.com/gajo357/dsharplang/issues/62) → [#63](https://github.com/gajo357/dsharplang/issues/63) → [#64](https://github.com/gajo357/dsharplang/issues/64) |
-| P09 | Reliable queue policies and operations | [#65](https://github.com/gajo357/dsharplang/issues/65) → [#66](https://github.com/gajo357/dsharplang/issues/66) → [#67](https://github.com/gajo357/dsharplang/issues/67) → [#68](https://github.com/gajo357/dsharplang/issues/68) → [#71](https://github.com/gajo357/dsharplang/issues/71) |
+| P06 | Checked actor contracts and registration | #51 → #52 → #53 → #54; #241 binds dispatch; #240 migrates service fixtures once replacements exist |
+| P07 | Host registry and selection | #58 → #242; #96, #100 and #10 as dependencies allow |
+| P08 | Durable actor acceptance and execution | #59 → #60 → #78 → #61 → #62 → #63; #56 executor → #64 |
+| P09 | Policies, waits and inspection | #65 → #66 → #67 → #57 → #68 → #243 → #71 |
 | P10 | Events, schedules and application configuration | [#79](https://github.com/gajo357/dsharplang/issues/79) → [#69](https://github.com/gajo357/dsharplang/issues/69) → [#70](https://github.com/gajo357/dsharplang/issues/70) → [#74](https://github.com/gajo357/dsharplang/issues/74) → [#75](https://github.com/gajo357/dsharplang/issues/75) → [#76](https://github.com/gajo357/dsharplang/issues/76) |
 | P11 | Typed HTTP and authentication | [#81](https://github.com/gajo357/dsharplang/issues/81) → [#82](https://github.com/gajo357/dsharplang/issues/82) → [#83](https://github.com/gajo357/dsharplang/issues/83) → [#84](https://github.com/gajo357/dsharplang/issues/84) → [#85](https://github.com/gajo357/dsharplang/issues/85) → [#93](https://github.com/gajo357/dsharplang/issues/93) |
 | P12 | Observability, testing and the observer | [#91](https://github.com/gajo357/dsharplang/issues/91) → [#94](https://github.com/gajo357/dsharplang/issues/94) → [#92](https://github.com/gajo357/dsharplang/issues/92) |
@@ -112,7 +114,7 @@ The main demonstration points are:
 
 - **After P01:** a small program computes and branches.
 - **After P02:** domain data, nullable values and Result execute correctly.
-- **After P06:** a caller awaits an isolated worker.
+- **After P06:** checked actor contracts and explicit registration are specified; public completion waits require the durable execution and policy work in P08–P09.
 - **After P09:** a durable queue recovers and enforces retries/order/limits.
 - **After P11:** a protected HTTP route reaches its exact typed handler.
 - **After P12:** the sample app can be inspected and tested operationally.
@@ -202,8 +204,8 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 
 **Outcome:** Runtime implementation has approved public contracts, project boundaries and executable test infrastructure.
 
-1. Resolve worker-call outcomes (#13), durable queue/store transitions (#14), HTTP composition/authorization (#15), safe interop boundaries (#16), and cron/WebSocket lifecycle sections (#18). Each design issue produces a focused decision-record PR.
-2. Record exact types/state transitions and representative positive/negative cases. Separate application Error from runtime fault, cancellation and timeout; settle the provisional CallError shape before code depends on it.
+1. Resolve actor dispatch/fault outcomes (#13), durable acceptance/store transitions (#14), HTTP composition/authorization (#15), safe interop boundaries (#16), and cron/WebSocket lifecycle sections (#18). Each design issue produces a focused decision-record PR.
+2. Record exact types/state transitions and representative positive/negative cases. Separate application Error from runtime fault, cancellation and timeout; review the runtime fault surface under #13 without reinstating the superseded CallError wrapper.
 3. Use #9 to add the approved runtime projects, references, pinned dependencies and trusted tests. Include controlled time/randomness. Prove a deliberately failing test fails verification before removing the deliberate failure.
 4. Keep infrastructure changes scoped to #9. Normal runtime features consume the resulting contracts and commands instead of changing project policy as a side effect.
 
@@ -211,65 +213,11 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 
 **Parallel work:** Draft at most two decision records concurrently if their assumptions are explicit. Reconcile cross-cutting contracts before merging. Make #9 the only writer of project files/locks/test infrastructure.
 
-### P06 — First callable worker
+### P06–P09 — Actor contracts through durable execution
 
-**Order:** [#51](https://github.com/gajo357/dsharplang/issues/51) (LANG-34) → [#56](https://github.com/gajo357/dsharplang/issues/56) (RUN-01) → [#57](https://github.com/gajo357/dsharplang/issues/57) (RUN-02).
+After #239 and reviewed #13/#14 contracts, #9 enables the runtime harness. #51–#54 define checked actors, messages, policies and registration; #58 freezes the registry, #242 selects implementations, and #241 binds the three dispatcher operations. #240 removes services only when replacement forms preserve the existing fixtures.
 
-**Outcome:** The first end-to-end callable worker works.
-
-1. Implement checked worker declarations and the shared semantic contract in #51.
-2. Connect compiled worker references/call lowering to fresh runtime invocations in #56. Include the necessary compiler-to-runtime bridge in the issue plan; declaration parsing alone is insufficient.
-3. Add fault, timeout and cancellation behavior in #57, using the approved #13 contract. Test concurrent calls and late completions.
-4. Use a minimal explicit test host to exercise a worker with a fake service dependency. The full app declaration/hosting flow follows in P07.
-
-**Completion check:** A generated D# caller awaits a worker and receives its typed outcome. Concurrent invocations do not share mutable per-request state, and one ordinary handler failure does not terminate unrelated invocations.
-
-**Parallel work:** Sequence #51, #56, #57. No queue execution or persistent actor state is required for this milestone.
-
-### P07 — Agent contracts and explicit application hosting
-
-**Order:** [#52](https://github.com/gajo357/dsharplang/issues/52) (LANG-35) → [#53](https://github.com/gajo357/dsharplang/issues/53) (LANG-36) → [#54](https://github.com/gajo357/dsharplang/issues/54) (LANG-37) → [#58](https://github.com/gajo357/dsharplang/issues/58) (RUN-03) → [#96](https://github.com/gajo357/dsharplang/issues/96) (TOOL-01) → [#100](https://github.com/gajo357/dsharplang/issues/100) (TOOL-05) → [#10](https://github.com/gajo357/dsharplang/issues/10) (SET-03).
-
-**Outcome:** Explicit application registration can validate and start a host without executing business logic during registration.
-
-1. Split #52 into trigger-specific child issues: Queue, Event, Cron and HTTP. Each shares one compiler contract model but has its own plan/PR and the appropriate approved decision dependencies.
-2. Complete the applicable trigger-contract children before policy validation (#53), code-based composition (#54) and host startup/shutdown (#58). For the conservative default sequence, finish all four children before #54; an earlier queue-only composition requires an explicitly narrowed child issue.
-3. Add consistent contract diagnostics (#96) and an application inventory generated from metadata (#100). Unknown members/policies are errors; tooling must not invent an error type.
-4. Use #10 for a project/setup map and concrete optional-subsystem setup child issues. Merge each setup child immediately before its subsystem starts; do not install every future dependency now.
-
-**Completion check:** An explicit app can register definitions, validate dependencies and identities, initialize resources, invoke a worker and shut down. A queue reference cannot be called or expose .handle as a callback. Inventory generation does not run handlers.
-
-**Parallel work:** Keep contract, policy and composition compiler edits sequential. Runtime host work can overlap a read-only review. Do not run optional setup children concurrently if they edit common solution/lock/CI files.
-
-### P08 — First durable SQLite queue
-
-**Order:** [#59](https://github.com/gajo357/dsharplang/issues/59) (RUN-04) → [#60](https://github.com/gajo357/dsharplang/issues/60) (RUN-05) → [#78](https://github.com/gajo357/dsharplang/issues/78) (LIB-01) → [#61](https://github.com/gajo357/dsharplang/issues/61) (RUN-06) → [#62](https://github.com/gajo357/dsharplang/issues/62) (RUN-07) → [#63](https://github.com/gajo357/dsharplang/issues/63) (RUN-08) → [#64](https://github.com/gajo357/dsharplang/issues/64) (RUN-09).
-
-**Outcome:** A typed message survives a restart and is executed through an ownership-checked durable queue.
-
-1. Define atomic RuntimeStore operations and the provider conformance harness (#59), then SQLite schema/migrations (#60). Implement typed JSON/contract encoding (#78).
-2. Add committed enqueue acceptance (#61), atomic claims/lease tokens (#62), and owned completion/rescheduling with stale-ack rejection (#63).
-3. Connect messages to fresh handler execution and supervisor outcomes (#64). Execute handlers outside claim transactions.
-4. Test persistence and recovery at each transaction boundary. Include malformed/unsupported payloads and crashes before/after commit. Never equate a returned enqueue receipt with successful handler completion.
-
-**Completion check:** Enqueue a declared immutable data message, restart the host, execute the handler and record its outcome. An expired owner cannot acknowledge a newer attempt. No exactly-once external-effect guarantee is claimed.
-
-**Parallel work:** After #59's shared contract is merged, #60 and #78 may run concurrently only with disjoint implementation/test ownership and established project references. Otherwise run the listed order.
-
-### P09 — Reliable queue policies and operations
-
-**Order:** [#65](https://github.com/gajo357/dsharplang/issues/65) (RUN-10) → [#66](https://github.com/gajo357/dsharplang/issues/66) (RUN-11) → [#67](https://github.com/gajo357/dsharplang/issues/67) (RUN-12) → [#68](https://github.com/gajo357/dsharplang/issues/68) (RUN-13) → [#71](https://github.com/gajo357/dsharplang/issues/71) (RUN-16).
-
-**Outcome:** Queue processing has enforceable retries, ordering, limits and operator controls.
-
-1. Add retry/delay/retained failures (#65), then per-key completion ordering and concurrency (#66), then capacity/cancellation (#67).
-2. Add atomic completion with same-store follow-up enqueue (#68), then typed inspection/pause/resume/retry/abandon controls (#71).
-3. Keep a delayed or retried head blocking its sequential key until an approved terminal/skip outcome. Other keys may progress.
-4. Require explicit provider capability checks and test restart/ownership races. Operator controls need the approved access policy; no public admin endpoint is enabled merely because control methods exist.
-
-**Completion check:** Controlled-time tests prove attempts, backoff, failure retention and per-key order across retries/recovery. Capacity is bounded and stale controls cannot corrupt current ownership. Follow-up work commits atomically within the same RuntimeStore.
-
-**Parallel work:** Sequence store transition/claim changes. Documentation or read-only review can overlap. Do not parallelize two tickets that change the same eligibility/ownership invariants.
+#59 → #60 and #78 feed durable intake #61 with #242; #62 → #63 provide ownership and completion, #56 provides the isolated executor, and #64 joins execution to durable claims. #65 → #66 → #67 provide retries, ordering and cancellation before #57 adds public Invoke waiting. #68 supplies same-store follow-ups. #69 supplies recoverable publication; #243, #71 and #92 expose diagnostic chains. Test crash recovery, stable identity, stale ownership, selection pinning and original fault attribution; no restored continuation or exactly-once effects are claimed. See [#101](https://github.com/gajo357/dsharplang/issues/101) for the complete order and verification owners.
 
 ### P10 — Events, schedules and application configuration
 
@@ -307,8 +255,8 @@ P13 and P14 are expansion tracks. They need not block the earlier demonstrations
 
 **Outcome:** The application is observable and testable, with protected operational controls.
 
-1. Implement LOG-01/02 before the #91 instrumentation slices. Reuse their LogEvent, scopes, Logger actor and output contract; #91 adds bounded metric/trace definitions and request/worker/queue correlation rather than another logger. Console is the default, database/cloud output is opt-in, and internal delivery diagnostics bypass the failed Logger path.
-2. Split #94 into a public testing API decision, worker/queue helpers and HTTP helpers. Reuse the existing deterministic runtime test primitives.
+1. Implement LOG-01/02 before the #91 instrumentation slices. Reuse their LogEvent, scopes, Logger actor and output contract; #91 adds bounded metric/trace definitions and request/actor/queue correlation rather than another logger. Console is the default, database/cloud output is opt-in, and internal delivery diagnostics bypass the failed Logger path.
+2. Split #94 into a public testing API decision, actor/queue helpers and HTTP helpers. Reuse the existing deterministic runtime test primitives.
 3. Split #92 into the observer contract, read-only views and authorized control views. Reuse #71 APIs; do not write store tables directly from the dashboard.
 4. LOG-03 adds opt-in database logging to the existing RuntimeStore, with separate schema, deduplication, bounded retention and queue-contention tests. After the core observer #92 and LOG-03, LOG-04 adds typed LogReader search with protected reads, cursor/missing/null/numeric semantics and explicit no-store/timeout states. Do not make #92 depend on its later LOG-04 integration.
 5. Keep the observer and exporters optional. Their failures must not redefine business outcomes. Transient log admission is not durable auditing; database output succeeds after its own commit, outside business transactions.
@@ -538,7 +486,7 @@ Passing CI plus a readable PR is the completion boundary for review; merge remai
 - Enforce D# semantics before emitting C#; successful CLR compilation alone does not prove immutability or legal agent invocation.
 - Public-only source declarations do not mean runtime-owned handles are freely constructible/callable. Generated implementation details may use CLR mechanics without adding source-language visibility keywords.
 - Data type fields and nested collections remain immutable. Builders are method-local; freeze snapshots cannot alias later mutation.
-- Only workers provide awaited handler results. Queued handlers report outcomes to the supervisor; enqueue completion reports durable acceptance.
+- Invoke waits for the declared Handle result through durable scheduling; both Dispatch forms acknowledge acceptance without waiting for recipients.
 - Queue/event/scheduled payload roots are declared data types or Unit, with recursively immutable serializable data.
 - RuntimeStore owns atomic runtime operations. Business databases are separate unless a specific approved transaction protocol connects them.
 - Start with one SQLite runtime file per application and honest single-host guarantees.
@@ -546,7 +494,9 @@ Passing CI plus a readable PR is the completion boundary for review; merge remai
 - Default interface bodies implement individual methods. Service selection remains explicit in application composition.
 - gRPC, persistent actor/cache semantics, general streaming, Native AOT and blanket NuGet compatibility remain outside the current milestones.
 
-## 12. Complete issue-to-phase and dependency index
+## 12. Historical issue-to-phase and dependency index
+
+The table below preserves the original snapshot; use current issue bodies and [#101](https://github.com/gajo357/dsharplang/issues/101) for actor dependencies and #239 cutover order.
 
 Dependencies below are translated from the current issue bodies into actual GitHub issue numbers. They are not live edits to those issues. Parent issues additionally require the relevant child implementation/setup work described above.
 
@@ -587,34 +537,16 @@ Dependencies below are translated from the current issue bodies into actual GitH
 | P04 | [#44](https://github.com/gajo357/dsharplang/issues/44) · LANG-27 | Implement default interface method bodies | [#43](https://github.com/gajo357/dsharplang/issues/43) |
 | P04 | [#45](https://github.com/gajo357/dsharplang/issues/45) · LANG-28 | Implement scoped using and resource non-escape | [#41](https://github.com/gajo357/dsharplang/issues/41), [#43](https://github.com/gajo357/dsharplang/issues/43), [#17](https://github.com/gajo357/dsharplang/issues/17) |
 | P04 | [#46](https://github.com/gajo357/dsharplang/issues/46) · LANG-29 | Implement multi-file modules and imports | [#20](https://github.com/gajo357/dsharplang/issues/20), [#12](https://github.com/gajo357/dsharplang/issues/12) |
-| P05 | [#13](https://github.com/gajo357/dsharplang/issues/13) · DEC-03 | Freeze worker invocation and failure contracts | Bootstrap |
-| P05 | [#14](https://github.com/gajo357/dsharplang/issues/14) · DEC-04 | Freeze durable queue and store protocols | Bootstrap |
+| P05 | [#13](https://github.com/gajo357/dsharplang/issues/13) · DEC-03 | Freeze actor invocation and failure contracts | #239 |
+| P05 | [#14](https://github.com/gajo357/dsharplang/issues/14) · DEC-04 | Freeze durable invocation, publication and store protocols | #239 |
 | P05 | [#15](https://github.com/gajo357/dsharplang/issues/15) · DEC-05 | Freeze HTTP composition and authorization contracts | Bootstrap |
 | P05 | [#16](https://github.com/gajo357/dsharplang/issues/16) · DEC-06 | Freeze safe CLR and NuGet interoperability | Bootstrap |
 | P05 | [#18](https://github.com/gajo357/dsharplang/issues/18) · DEC-08 | Freeze scheduling and WebSocket lifecycle contracts | Bootstrap |
 | P05 | [#9](https://github.com/gajo357/dsharplang/issues/9) · SET-02 | Enable bounded runtime projects and trusted runtime tests | [#13](https://github.com/gajo357/dsharplang/issues/13), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P06 | [#51](https://github.com/gajo357/dsharplang/issues/51) · LANG-34 | Implement worker declaration contracts | [#43](https://github.com/gajo357/dsharplang/issues/43), [#31](https://github.com/gajo357/dsharplang/issues/31), [#41](https://github.com/gajo357/dsharplang/issues/41), [#13](https://github.com/gajo357/dsharplang/issues/13) |
-| P06 | [#56](https://github.com/gajo357/dsharplang/issues/56) · RUN-01 | Execute isolated callable worker invocations | [#9](https://github.com/gajo357/dsharplang/issues/9), [#51](https://github.com/gajo357/dsharplang/issues/51) |
-| P06 | [#57](https://github.com/gajo357/dsharplang/issues/57) · RUN-02 | Handle worker faults, deadlines and cancellation | [#56](https://github.com/gajo357/dsharplang/issues/56), [#13](https://github.com/gajo357/dsharplang/issues/13) |
-| P07 | [#52](https://github.com/gajo357/dsharplang/issues/52) · LANG-35 | Implement triggered-agent contracts and message restrictions | [#51](https://github.com/gajo357/dsharplang/issues/51), [#40](https://github.com/gajo357/dsharplang/issues/40), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P07 | [#53](https://github.com/gajo357/dsharplang/issues/53) · LANG-36 | Implement typed execution-policy declarations | [#52](https://github.com/gajo357/dsharplang/issues/52), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P07 | [#54](https://github.com/gajo357/dsharplang/issues/54) · LANG-37 | Implement code-based application composition | [#46](https://github.com/gajo357/dsharplang/issues/46), [#52](https://github.com/gajo357/dsharplang/issues/52), [#53](https://github.com/gajo357/dsharplang/issues/53), [#17](https://github.com/gajo357/dsharplang/issues/17) |
-| P07 | [#58](https://github.com/gajo357/dsharplang/issues/58) · RUN-03 | Start and stop explicitly registered applications | [#9](https://github.com/gajo357/dsharplang/issues/9), [#54](https://github.com/gajo357/dsharplang/issues/54), [#17](https://github.com/gajo357/dsharplang/issues/17) |
-| P07 | [#96](https://github.com/gajo357/dsharplang/issues/96) · TOOL-01 | Expose consistent compiler diagnostics and status | [#52](https://github.com/gajo357/dsharplang/issues/52) |
-| P07 | [#100](https://github.com/gajo357/dsharplang/issues/100) · TOOL-05 | Generate application inventory from registration metadata | [#54](https://github.com/gajo357/dsharplang/issues/54), [#58](https://github.com/gajo357/dsharplang/issues/58) |
-| P07 | [#10](https://github.com/gajo357/dsharplang/issues/10) · SET-03 | Enable optional package and language-server test projects | [#9](https://github.com/gajo357/dsharplang/issues/9) |
-| P08 | [#59](https://github.com/gajo357/dsharplang/issues/59) · RUN-04 | Implement RuntimeStore contracts and conformance harness | [#9](https://github.com/gajo357/dsharplang/issues/9), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P08 | [#60](https://github.com/gajo357/dsharplang/issues/60) · RUN-05 | Implement SQLite runtime schema and migrations | [#59](https://github.com/gajo357/dsharplang/issues/59) |
-| P08 | [#78](https://github.com/gajo357/dsharplang/issues/78) · LIB-01 | Implement typed JSON encoding and decoding | [#9](https://github.com/gajo357/dsharplang/issues/9), [#38](https://github.com/gajo357/dsharplang/issues/38), [#28](https://github.com/gajo357/dsharplang/issues/28), [#31](https://github.com/gajo357/dsharplang/issues/31), [#14](https://github.com/gajo357/dsharplang/issues/14) |
-| P08 | [#61](https://github.com/gajo357/dsharplang/issues/61) · RUN-06 | Implement durable enqueue and acceptance receipts | [#60](https://github.com/gajo357/dsharplang/issues/60), [#78](https://github.com/gajo357/dsharplang/issues/78), [#52](https://github.com/gajo357/dsharplang/issues/52) |
-| P08 | [#62](https://github.com/gajo357/dsharplang/issues/62) · RUN-07 | Implement atomic claims and expiring ownership | [#61](https://github.com/gajo357/dsharplang/issues/61) |
-| P08 | [#63](https://github.com/gajo357/dsharplang/issues/63) · RUN-08 | Implement completion and stale-ack rejection | [#62](https://github.com/gajo357/dsharplang/issues/62) |
-| P08 | [#64](https://github.com/gajo357/dsharplang/issues/64) · RUN-09 | Connect queue execution to typed handler outcomes | [#63](https://github.com/gajo357/dsharplang/issues/63), [#56](https://github.com/gajo357/dsharplang/issues/56), [#53](https://github.com/gajo357/dsharplang/issues/53) |
-| P09 | [#65](https://github.com/gajo357/dsharplang/issues/65) · RUN-10 | Implement retries, delays and retained failures | [#64](https://github.com/gajo357/dsharplang/issues/64) |
-| P09 | [#66](https://github.com/gajo357/dsharplang/issues/66) · RUN-11 | Implement per-key sequential ordering and concurrency | [#65](https://github.com/gajo357/dsharplang/issues/65) |
-| P09 | [#67](https://github.com/gajo357/dsharplang/issues/67) · RUN-12 | Implement queue capacity and cooperative cancellation | [#66](https://github.com/gajo357/dsharplang/issues/66) |
-| P09 | [#68](https://github.com/gajo357/dsharplang/issues/68) · RUN-13 | Implement atomic completion with follow-up enqueue | [#63](https://github.com/gajo357/dsharplang/issues/63) |
-| P09 | [#71](https://github.com/gajo357/dsharplang/issues/71) · RUN-16 | Implement queue inspection and operator controls | [#67](https://github.com/gajo357/dsharplang/issues/67), [#15](https://github.com/gajo357/dsharplang/issues/15) |
+| P06 | #51–#54, #240, #241 | Checked actor contracts, registration, fixture cutover and dispatcher typing | #239 and reviewed #13/#14; #240 waits for replacement forms |
+| P07 | #58, #242, #96, #100, #10 | Host registry, selection and tooling | #58 freezes registration before #242 selects; see #101 for remaining gates |
+| P08 | #59, #60, #78, #61–#64, #56 | Durable acceptance and execution | #59 → #60 and #78 with #242 feed #61; #62 → #63; #56 supplies the executor joined by #64 |
+| P09 | #65–#68, #57, #243, #71 | Policies, waits and inspection | #65 → #66 → #67 precede #57; #68 adds follow-ups and #243/#71 use admission metadata |
 | P10 | [#79](https://github.com/gajo357/dsharplang/issues/79) · LIB-02 | Implement standard immutable time, identity and binary values | [#9](https://github.com/gajo357/dsharplang/issues/9), [#11](https://github.com/gajo357/dsharplang/issues/11), [#78](https://github.com/gajo357/dsharplang/issues/78) |
 | P10 | [#69](https://github.com/gajo357/dsharplang/issues/69) · RUN-14 | Implement recoverable event fan-out | [#64](https://github.com/gajo357/dsharplang/issues/64), [#68](https://github.com/gajo357/dsharplang/issues/68), [#52](https://github.com/gajo357/dsharplang/issues/52) |
 | P10 | [#70](https://github.com/gajo357/dsharplang/issues/70) · RUN-15 | Implement durable cron occurrence creation | [#68](https://github.com/gajo357/dsharplang/issues/68), [#18](https://github.com/gajo357/dsharplang/issues/18), [#79](https://github.com/gajo357/dsharplang/issues/79) |

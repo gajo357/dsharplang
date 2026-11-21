@@ -5,7 +5,7 @@ A strongly typed, actor-first language for APIs, events, and background jobs on
 
 **Status:** a minimal executable compiler prototype plus language/runtime design.
 Implemented compiler features are listed in the [implementation status](docs/features/DSharp_Implementation_Status.md).
-No agent runtime exists. The [pipes and logging specification](docs/features/DSharp_Pipes_and_Logging.md)
+No actor runtime exists. The [actor handoff](docs/features/DSharp_Actor_Runtime_Instructions.md) defines the planned cutover. The [pipes and logging specification](docs/features/DSharp_Pipes_and_Logging.md)
 adds future targets, not implemented runtime behavior. DSharp is the working
 name; final language naming remains open.
 
@@ -17,7 +17,7 @@ those parts: who owns state, when work is durable, how failures reach callers,
 and what happens when a process stops halfway through an operation.
 
 DSharp aims to make those boundaries explicit. Immutable typed data describes
-what crosses them. Isolated service invocations own their state. Typed pipelines
+what crosses them. Isolated actor invocations own their state. Typed pipelines
 connect operations, while application code declares dependencies and enables
 handlers. Durable execution provides retries and recovery with explicit limits.
 
@@ -27,8 +27,7 @@ runtime failures, and retries do not undo external effects.
 
 ## Inspirations
 
-- **Actor-style isolation:** services communicate through typed messages and
-  references instead of accessing one another's private state. The default is a
+- **Actor-style isolation:** actors communicate through the dispatcher and typed messages instead of accessing one another's private state. The default is a
   fresh invocation per trigger; persistent actors remain an open design.
 - **Immutable data and typed functional composition:** records, unions,
   exhaustive matching, and typed results make data flow and alternatives
