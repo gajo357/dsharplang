@@ -762,6 +762,13 @@ when the method name does not collide with a built-in collection operation.
 The existing exact-input, unique-target, dependency and lifetime checks remain
 in force. See the [D# example](../../examples/collection_extension_pipe_inference.ds)
 and [implementation plan](implementation/issue-235-plan.md).
+[Issue #237](https://github.com/gajo357/dsharplang/issues/237) extends that
+inference to a proven unary async extension with an explicitly declared
+immutable data result. An ordinary function can infer and return its `Task`
+without implicitly awaiting it. Existing dependency, collection precedence and
+task-storage restrictions remain in force. See the
+[D# example](../../examples/async_extension_pipe_inference.ds) and
+[implementation plan](implementation/issue-237-plan.md).
 [Issue #55](https://github.com/gajo357/dsharplang/issues/55) adds non-nested
 block comments and contiguous `///` documentation attached to module and function
 declarations. Unterminated or nested block comments and unattached documentation

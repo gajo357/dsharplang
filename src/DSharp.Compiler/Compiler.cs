@@ -2936,8 +2936,12 @@ public static class Binder
                     signatures[extension.Id].Parameters[0].Type.Text == receiver).ToArray();
                 if (candidates.Length != 1) return null;
                 var method = signatures[candidates[0].Id];
-                if (method.IsAsync || method.Parameters.Count != 2 || method.Parameters[1].Type.Text != input) return null;
-                var result = CallableResult(method);
+                if (method.Parameters.Count != 2 || method.Parameters[1].Type.Text != input) return null;
+                // An async extension's logical result must still be safe data.
+                // Binding its invocation produces Task<result>, as for an
+                // ordinary async call; this proof does not admit tasks into
+                // immutable data or infer an async function's own annotation.
+                var result = method.ReturnType.Text;
                 if (!SupportedType(result, parameters) || !DataType(result) ||
                     !GenericTypes.TryParse(result, out var resultShape) || resultShape.IsFunction) return null;
                 return (access, candidates[0].Id);
