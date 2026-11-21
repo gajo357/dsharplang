@@ -733,7 +733,7 @@ service SqlInvoiceStore(db: Database): InvoiceStore {
 }
 ```
 
-This currently executable service example is historical and will be migrated by #240. The service implements `find` and uses the default `exists`. Calls to `find` from the default body dispatch to that service's implementation. A service may replace `exists` by defining a matching method, for example using a database existence query.
+This snippet illustrates historical service syntax; its invoice and database types are not defined here. The executable [default-interface-methods example](../../examples/default-interface-methods.ds) demonstrates the supported interface-default behavior through a service, and #240 will migrate service-dependent fixtures. In the illustration, the service implements `find` and uses the default `exists`. Calls to `find` from the default body dispatch to that service's implementation. A service may replace `exists` by defining a matching method, for example using a database existence query.
 
 Rules:
 
