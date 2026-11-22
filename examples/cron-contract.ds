@@ -1,0 +1,16 @@
+module CronContract
+
+// The expression is opaque compiler metadata, not an activated schedule or a
+// validated cron dialect. Registration, payload provision and execution remain
+// future work.
+type DailyRequest { reportId: int }
+
+actor DailyReport {
+    trigger Cron<DailyRequest>("daily", "0 0 * * *")
+    Handle(message: DailyRequest): Result<int, string> { Success(message.reportId) }
+}
+
+actor Pulse {
+    trigger Cron<Unit>("pulse", "0 12 * * *")
+    Handle(message: Unit): Unit { () }
+}

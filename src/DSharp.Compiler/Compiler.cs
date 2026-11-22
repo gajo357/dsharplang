@@ -130,11 +130,16 @@ public sealed record ActorEventBindingSyntax(Token Keyword, Token MessageType)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
+public sealed record ActorCronBindingSyntax(Token Keyword, Token MessageType, Token ScheduleName, Token Expression)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
 public sealed record ActorDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ActorMethodSyntax> Methods)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<ActorQueueBindingSyntax> QueueBindings { get; init; } = Array.Empty<ActorQueueBindingSyntax>();
     public IReadOnlyList<ActorEventBindingSyntax> EventBindings { get; init; } = Array.Empty<ActorEventBindingSyntax>();
+    public IReadOnlyList<ActorCronBindingSyntax> CronBindings { get; init; } = Array.Empty<ActorCronBindingSyntax>();
 }
 public sealed record ExtensionMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync, BlockSyntax Body)
 {
@@ -358,12 +363,19 @@ public sealed record BoundEventBinding(string MessageType, string SourcePath, So
     // This identity is scoped to the compilation; it is not a subscription or wire schema.
     internal string TypeIdentity { get; init; } = "";
 }
+public sealed record BoundCronBinding(string ScheduleName, string Expression, string MessageType, string SourcePath,
+    SourceSpan TriggerSpan, SourceSpan TypeSpan, SourceSpan NameSpan, SourceSpan ExpressionSpan)
+{
+    // This compile-local identity is neither a registration nor a wire schema.
+    internal string TypeIdentity { get; init; } = "";
+}
 public sealed record BoundActorDeclaration(string Name, string InputType, string ResultType,
     IReadOnlyList<BoundActorDependency> Dependencies, string SourcePath, SourceSpan NameSpan,
     SourceSpan HandleSpan, string ImplementationName)
 {
     public IReadOnlyList<BoundQueueBinding> QueueBindings { get; init; } = Array.Empty<BoundQueueBinding>();
     public IReadOnlyList<BoundEventBinding> EventBindings { get; init; } = Array.Empty<BoundEventBinding>();
+    public IReadOnlyList<BoundCronBinding> CronBindings { get; init; } = Array.Empty<BoundCronBinding>();
 }
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
@@ -1506,16 +1518,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 var methods = new List<ActorMethodSyntax>();
                 var queueBindings = new List<ActorQueueBindingSyntax>();
                 var eventBindings = new List<ActorEventBindingSyntax>();
+                var cronBindings = new List<ActorCronBindingSyntax>();
                 while (Current.Text is not ("}" or ""))
                 {
                     var methodDocs = Documentation("async", "<method>");
                     // `trigger()` remains an ordinary helper; only the actor member
-                    // forms beginning with `trigger Queue` or `trigger Event` have binding meaning.
+                    // forms beginning with `trigger Queue`, `Event` or `Cron` have binding meaning.
                     if (Current.Text == "trigger" && position + 1 < tokens.Count && tokens[position + 1].Text != "(")
                     {
                         var keyword = Take();
                         var isEvent = Current.Text == "Event";
-                        Expect(isEvent ? "Event" : "Queue");
+                        var isCron = Current.Text == "Cron";
+                        Expect(isEvent ? "Event" : isCron ? "Cron" : "Queue");
                         Expect("<");
                         var messageType = TypeToken();
                         Expect(">");
@@ -1524,6 +1538,18 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                         {
                             Expect(")");
                             eventBindings.Add(new(keyword, messageType) { DocumentationComments = methodDocs });
+                        }
+                        else if (isCron)
+                        {
+                            if (!Current.Text.StartsWith('"') || !Current.Text.EndsWith('"') || Current.Text.Length < 2)
+                                throw Error("A cron binding requires a string-literal schedule name.");
+                            var scheduleName = Take();
+                            Expect(",");
+                            if (!Current.Text.StartsWith('"') || !Current.Text.EndsWith('"') || Current.Text.Length < 2)
+                                throw Error("A cron binding requires a string-literal expression.");
+                            var expression = Take();
+                            Expect(")");
+                            cronBindings.Add(new(keyword, messageType, scheduleName, expression) { DocumentationComments = methodDocs });
                         }
                         else
                         {
@@ -1544,7 +1570,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     methods.Add(new(methodName, actorParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
                 }
                 Expect("}");
-                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings, EventBindings = eventBindings });
+                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings, EventBindings = eventBindings, CronBindings = cronBindings });
                 continue;
             }
             if (Current.Text == "extend")
@@ -1981,6 +2007,7 @@ public static class Binder
             Dependencies = item.Dependencies.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
             QueueBindings = item.QueueBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
             EventBindings = item.EventBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
+            CronBindings = item.CronBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
             Methods = item.Methods.Select(method => method with
             {
                 Parameters = method.Parameters.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
@@ -2406,26 +2433,32 @@ public static class Binder
                     Fail(diagnostic, messageType, $"{kind} input must match Handle. {expectedHandle}");
                 return identity;
             }
-            var queueBindings = new List<BoundQueueBinding>();
-            var queueNames = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var binding in actor.QueueBindings)
+            string DecodeTriggerLiteral(Token token, string diagnostic, string invalidMessage, bool preserveDecodeCode)
             {
-                // Bind can also be called with a manually constructed syntax tree.
-                // Require one complete ordinary literal before decoding its text.
-                var literal = binding.QueueName.Text;
+                // Public Bind callers can supply a syntax tree without parsing it.
+                var literal = token.Text;
                 var validLiteral = literal.Length >= 2 && literal[0] == '"' && literal[^1] == '"';
                 for (var i = 1; validLiteral && i < literal.Length - 1; i++)
                 {
                     if (literal[i] is '"' or '\n' or '\r') validLiteral = false;
                     else if (literal[i] == '\\' && (++i >= literal.Length - 1 || literal[i] is '\n' or '\r')) validLiteral = false;
                 }
-                if (!validLiteral) Fail("DS2043", binding.QueueName, $"Queue names require an ordinary string literal. {expectedHandle}");
-                string queueName;
-                try { queueName = DecodeText(binding.QueueName, binding.QueueName.OriginPath ?? path); }
+                if (!validLiteral) Fail(diagnostic, token, $"{invalidMessage} {expectedHandle}");
+                try { return DecodeText(token, token.OriginPath ?? path); }
                 catch (SourceError error)
                 {
-                    throw new SourceError(error.Diagnostic with { Message = $"{error.Diagnostic.Message} {expectedHandle}" });
+                    throw new SourceError(error.Diagnostic with
+                    {
+                        Code = preserveDecodeCode ? error.Diagnostic.Code : diagnostic,
+                        Message = $"{error.Diagnostic.Message} {expectedHandle}"
+                    });
                 }
+            }
+            var queueBindings = new List<BoundQueueBinding>();
+            var queueNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var binding in actor.QueueBindings)
+            {
+                var queueName = DecodeTriggerLiteral(binding.QueueName, "DS2043", "Queue names require an ordinary string literal.", true);
                 if (queueName.Length == 0 || !queueNames.Add(queueName))
                     Fail("DS2043", binding.QueueName, $"Queue names must be nonempty and unique within an actor. {expectedHandle}");
                 var identity = ValidateTriggerType(binding.MessageType, "Queue", "DS2043");
@@ -2441,6 +2474,20 @@ public static class Binder
                     Fail("DS2044", binding.MessageType, $"An event message contract cannot be duplicated within an actor. {expectedHandle}");
                 eventBindings.Add(new BoundEventBinding(ActorDisplayType(identity), binding.Keyword.OriginPath ?? path,
                     binding.Keyword.Span, binding.MessageType.Span) { TypeIdentity = identity });
+            }
+            var cronBindings = new List<BoundCronBinding>();
+            var cronNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var binding in actor.CronBindings)
+            {
+                var scheduleName = DecodeTriggerLiteral(binding.ScheduleName, "DS2045", "Cron names require an ordinary string literal.", false);
+                var expression = DecodeTriggerLiteral(binding.Expression, "DS2045", "Cron expressions require an ordinary string literal.", false);
+                if (scheduleName.Length == 0 || !cronNames.Add(scheduleName))
+                    Fail("DS2045", binding.ScheduleName, $"Cron names must be nonempty and unique within an actor. {expectedHandle}");
+                if (expression.Length == 0)
+                    Fail("DS2045", binding.Expression, $"Cron expressions must be nonempty. {expectedHandle}");
+                var identity = ValidateTriggerType(binding.MessageType, "Cron", "DS2045");
+                cronBindings.Add(new BoundCronBinding(scheduleName, expression, ActorDisplayType(identity), binding.Keyword.OriginPath ?? path,
+                    binding.Keyword.Span, binding.MessageType.Span, binding.ScheduleName.Span, binding.Expression.Span) { TypeIdentity = identity });
             }
             var dependencies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var dependency in actor.Dependencies)
@@ -2482,7 +2529,7 @@ public static class Binder
                 ActorDisplayType(handle.Method.ReturnType.Text), actor.Dependencies.Select(dependency =>
                     new BoundActorDependency(dependency.Name.Text, ActorDisplayType(dependency.Type.Text))).ToArray(),
                 actor.Name.OriginPath ?? path, actor.Name.Span, handle.Method.Name.Span, handle.Id)
-                { QueueBindings = queueBindings, EventBindings = eventBindings });
+                { QueueBindings = queueBindings, EventBindings = eventBindings, CronBindings = cronBindings });
         }
         syntax = syntax with { Functions = syntax.Functions.Concat(syntheticFunctions).ToArray() };
         var signatures = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
