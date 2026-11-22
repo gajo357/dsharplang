@@ -1,0 +1,16 @@
+module HttpPlainContract
+
+// These functions form a checked candidate only. They do not register a route,
+// select an HTTP status, encode a response or invoke an actor.
+type RawInput { value: int }
+type Request { value: int }
+type Response { code: int }
+
+fn decode(input: RawInput): Result<Request, string> { Success(Request { value = input.value }) }
+fn mapBinding(error: string): Response { Response { code = 400 } }
+fn mapValue(value: int): Response { Response { code = value } }
+
+actor Worker {
+    trigger Http<Response>(decode, mapBinding, mapValue)
+    Handle(message: Request): int { message.value }
+}

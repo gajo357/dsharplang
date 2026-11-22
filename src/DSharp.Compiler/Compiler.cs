@@ -143,6 +143,14 @@ public sealed record ActorHttpBindingSyntax(Token Keyword, Token ResponseType, T
     internal string? BusinessMapperIdentity { get; init; }
     internal bool ReferencesResolved { get; init; }
 }
+public sealed record ActorHttpPlainBindingSyntax(Token Keyword, Token ResponseType, Token Binder, Token BindingMapper, Token SuccessMapper)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+    internal string? BinderIdentity { get; init; }
+    internal string? BindingMapperIdentity { get; init; }
+    internal string? SuccessMapperIdentity { get; init; }
+    internal bool ReferencesResolved { get; init; }
+}
 public sealed record ActorDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ActorMethodSyntax> Methods)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
@@ -150,6 +158,7 @@ public sealed record ActorDeclarationSyntax(Token Name, IReadOnlyList<ParameterS
     public IReadOnlyList<ActorEventBindingSyntax> EventBindings { get; init; } = Array.Empty<ActorEventBindingSyntax>();
     public IReadOnlyList<ActorCronBindingSyntax> CronBindings { get; init; } = Array.Empty<ActorCronBindingSyntax>();
     public IReadOnlyList<ActorHttpBindingSyntax> HttpBindings { get; init; } = Array.Empty<ActorHttpBindingSyntax>();
+    public IReadOnlyList<ActorHttpPlainBindingSyntax> HttpPlainBindings { get; init; } = Array.Empty<ActorHttpPlainBindingSyntax>();
 }
 public sealed record ExtensionMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync, BlockSyntax Body)
 {
@@ -389,6 +398,14 @@ public sealed record BoundHttpBinding(string ResponseType, string Binder, string
     internal string SuccessMapperIdentity { get; init; } = "";
     internal string BusinessMapperIdentity { get; init; } = "";
 }
+public sealed record BoundHttpPlainBinding(string ResponseType, string Binder, string BindingMapper, string SuccessMapper,
+    string BindingErrorType, string ValueType, bool IsAsyncBinder, string SourcePath,
+    SourceSpan TriggerSpan, SourceSpan ResponseSpan, SourceSpan BinderSpan, SourceSpan BindingMapperSpan, SourceSpan SuccessMapperSpan)
+{
+    internal string BinderIdentity { get; init; } = "";
+    internal string BindingMapperIdentity { get; init; } = "";
+    internal string SuccessMapperIdentity { get; init; } = "";
+}
 public sealed record BoundActorDeclaration(string Name, string InputType, string ResultType,
     IReadOnlyList<BoundActorDependency> Dependencies, string SourcePath, SourceSpan NameSpan,
     SourceSpan HandleSpan, string ImplementationName)
@@ -397,6 +414,7 @@ public sealed record BoundActorDeclaration(string Name, string InputType, string
     public IReadOnlyList<BoundEventBinding> EventBindings { get; init; } = Array.Empty<BoundEventBinding>();
     public IReadOnlyList<BoundCronBinding> CronBindings { get; init; } = Array.Empty<BoundCronBinding>();
     public IReadOnlyList<BoundHttpBinding> HttpBindings { get; init; } = Array.Empty<BoundHttpBinding>();
+    public IReadOnlyList<BoundHttpPlainBinding> HttpPlainBindings { get; init; } = Array.Empty<BoundHttpPlainBinding>();
 }
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
@@ -1556,6 +1574,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 var eventBindings = new List<ActorEventBindingSyntax>();
                 var cronBindings = new List<ActorCronBindingSyntax>();
                 var httpBindings = new List<ActorHttpBindingSyntax>();
+                var httpPlainBindings = new List<ActorHttpPlainBindingSyntax>();
                 while (Current.Text is not ("}" or ""))
                 {
                     var methodDocs = Documentation("async", "<method>");
@@ -1576,9 +1595,14 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                         {
                             var binder = QualifiedIdentifier(); Expect(",");
                             var bindingMapper = QualifiedIdentifier(); Expect(",");
-                            var successMapper = QualifiedIdentifier(); Expect(",");
-                            var businessMapper = QualifiedIdentifier(); Expect(")");
-                            httpBindings.Add(new(keyword, messageType, binder, bindingMapper, successMapper, businessMapper) { DocumentationComments = methodDocs });
+                            var successMapper = QualifiedIdentifier();
+                            Token? businessMapper = null;
+                            if (Current.Text == ",") { Take(); businessMapper = QualifiedIdentifier(); }
+                            Expect(")");
+                            if (businessMapper is not null)
+                                httpBindings.Add(new(keyword, messageType, binder, bindingMapper, successMapper, businessMapper) { DocumentationComments = methodDocs });
+                            else
+                                httpPlainBindings.Add(new(keyword, messageType, binder, bindingMapper, successMapper) { DocumentationComments = methodDocs });
                         }
                         else if (isEvent)
                         {
@@ -1616,7 +1640,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     methods.Add(new(methodName, actorParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
                 }
                 Expect("}");
-                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings, EventBindings = eventBindings, CronBindings = cronBindings, HttpBindings = httpBindings });
+                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings, EventBindings = eventBindings, CronBindings = cronBindings, HttpBindings = httpBindings, HttpPlainBindings = httpPlainBindings });
                 continue;
             }
             if (Current.Text == "extend")
@@ -2056,6 +2080,7 @@ public static class Binder
             EventBindings = item.EventBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
             CronBindings = item.CronBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
             HttpBindings = item.HttpBindings.Select(binding => binding with { ResponseType = ScopedType(binding.ResponseType, noTypeScope) }).ToArray(),
+            HttpPlainBindings = item.HttpPlainBindings.Select(binding => binding with { ResponseType = ScopedType(binding.ResponseType, noTypeScope) }).ToArray(),
             Methods = item.Methods.Select(method => method with
             {
                 Parameters = method.Parameters.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
@@ -2469,8 +2494,10 @@ public static class Binder
                 Fail("DS2042", actor.Name, "An actor requires exactly one Handle with one typed message parameter.");
             var expected = handle.Method.Parameters[0].Type.Text;
             var expectedHandle = $"Expected Handle({ActorDisplayType(expected)}): {ActorDisplayType(handle.Method.ReturnType.Text)} declared at {handle.Method.Name.OriginPath ?? path}({handle.Method.Name.Span.Line},{handle.Method.Name.Span.Column}).";
-            if (actor.HttpBindings.Count > 1)
-                Fail("DS2046", actor.HttpBindings[1].Keyword, $"Only one HTTP descriptor is allowed per actor. {expectedHandle}");
+            var httpKeywords = actor.HttpBindings.Select(binding => binding.Keyword)
+                .Concat(actor.HttpPlainBindings.Select(binding => binding.Keyword)).OrderBy(token => token.Span.Start).ToArray();
+            if (httpKeywords.Length > 1)
+                Fail("DS2046", httpKeywords[1], $"Only one HTTP descriptor is allowed per actor. {expectedHandle}");
             string ValidateTriggerType(Token messageType, string kind, string diagnostic)
             {
                 var identity = messageType.Text;
@@ -2615,20 +2642,36 @@ public static class Binder
         for (var actorIndex = 0; actorIndex < syntax.Actors.Count; actorIndex++)
         {
             var actor = syntax.Actors[actorIndex];
-            if (actor.HttpBindings.Count == 0) continue;
-            var binding = actor.HttpBindings[0];
+            if (actor.HttpBindings.Count == 0 && actor.HttpPlainBindings.Count == 0) continue;
+            var binding = actor.HttpBindings.FirstOrDefault();
+            var plain = actor.HttpPlainBindings.FirstOrDefault();
+            var keyword = binding?.Keyword ?? plain!.Keyword;
+            var responseToken = binding?.ResponseType ?? plain!.ResponseType;
+            var binderToken = binding?.Binder ?? plain!.Binder;
+            var bindingMapperToken = binding?.BindingMapper ?? plain!.BindingMapper;
+            var successMapperToken = binding?.SuccessMapper ?? plain!.SuccessMapper;
+            var binderIdentity = binding?.BinderIdentity ?? plain?.BinderIdentity;
+            var bindingMapperIdentity = binding?.BindingMapperIdentity ?? plain?.BindingMapperIdentity;
+            var successMapperIdentity = binding?.SuccessMapperIdentity ?? plain?.SuccessMapperIdentity;
+            var referencesResolved = binding?.ReferencesResolved ?? plain!.ReferencesResolved;
             var handle = actor.Methods.Single(method => method.Name.Text == "Handle");
             var input = handle.Parameters[0].Type.Text;
             var expectedHandle = $"Expected Handle({ActorDisplayType(input)}): {ActorDisplayType(handle.ReturnType.Text)} declared at {handle.Name.OriginPath ?? path}({handle.Name.Span.Line},{handle.Name.Span.Column}).";
             void HttpError(Token token, string message) => Fail("DS2046", token, $"{message} {expectedHandle}");
             bool ImmutableData(string type) => SupportedType(type) && DataType(type);
-            var response = binding.ResponseType.Text;
-            if (!ImmutableData(response)) HttpError(binding.ResponseType, "HTTP response type must be supported immutable data.");
-            if (!GenericTypes.TryParse(handle.ReturnType.Text, out var resultShape) || resultShape.IsNullable ||
-                resultShape.Name != resultSymbol || resultShape.Arguments.Count != 2)
-                HttpError(binding.Keyword, "HTTP Invoke requires Handle to return an intrinsic Result.");
-            var valueType = resultShape.Arguments[0].ToString();
-            var businessErrorType = resultShape.Arguments[1].ToString();
+            var response = responseToken.Text;
+            if (!ImmutableData(response)) HttpError(responseToken, "HTTP response type must be supported immutable data.");
+            if (!GenericTypes.TryParse(handle.ReturnType.Text, out var resultShape))
+                HttpError(keyword, "HTTP Invoke requires a supported Handle result.");
+            var isResult = resultShape.Name == resultSymbol;
+            if (isResult && (resultShape.IsNullable || resultShape.Arguments.Count != 2))
+                HttpError(keyword, "HTTP Invoke requires a nonnullable intrinsic Result.");
+            if (isResult && binding is null)
+                HttpError(keyword, "HTTP Invoke requires a business-error mapper for an intrinsic Result.");
+            if (!isResult && binding is not null)
+                HttpError(binding.BusinessMapper, "HTTP Invoke cannot have a business-error mapper for a plain Handle result.");
+            var valueType = isResult ? resultShape.Arguments[0].ToString() : handle.ReturnType.Text;
+            var businessErrorType = isResult ? resultShape.Arguments[1].ToString() : null;
             FunctionSyntax SourceFunction(Token token, string? resolved, bool mapper)
             {
                 // Actor-local names take precedence over module functions in
@@ -2639,7 +2682,7 @@ public static class Binder
                 if (actor.Methods.Any(method => method.Name.Text == rootName) ||
                     actor.Dependencies.Any(dependency => dependency.Name.Text == rootName))
                     HttpError(token, "HTTP functions cannot name an actor-local helper or dependency.");
-                var identity = binding.ReferencesResolved ? resolved : token.Text;
+                var identity = referencesResolved ? resolved : token.Text;
                 if (identity is null || !sourceHttpFunctions.Contains(identity) || !signatures.TryGetValue(identity, out var function))
                 {
                     HttpError(token, "HTTP descriptors require a visible ordinary module function.");
@@ -2650,10 +2693,10 @@ public static class Binder
                     HttpError(token, "HTTP functions require an explicit, non-generic, one-argument immutable-data signature; mappers must be synchronous.");
                 return function;
             }
-            var decoder = SourceFunction(binding.Binder, binding.BinderIdentity, false);
+            var decoder = SourceFunction(binderToken, binderIdentity, false);
             if (!GenericTypes.TryParse(decoder.ReturnType.Text, out var decoded) || decoded.IsNullable ||
                 decoded.Name != resultSymbol || decoded.Arguments.Count != 2 || decoded.Arguments[0].ToString() != input)
-                HttpError(binding.Binder, "HTTP binder must return intrinsic Result<HandleInput, BindingError>.");
+                HttpError(binderToken, "HTTP binder must return intrinsic Result<HandleInput, BindingError>.");
             var bindingErrorType = decoded.Arguments[1].ToString();
             void CheckMapper(Token token, string? identity, string argumentType)
             {
@@ -2661,22 +2704,37 @@ public static class Binder
                 if (mapper.Parameters[0].Type.Text != argumentType || mapper.ReturnType.Text != response)
                     HttpError(token, $"HTTP mapper must accept {ActorDisplayType(argumentType)} and return {ActorDisplayType(response)}.");
             }
-            CheckMapper(binding.BindingMapper, binding.BindingMapperIdentity, bindingErrorType);
-            CheckMapper(binding.SuccessMapper, binding.SuccessMapperIdentity, valueType);
-            CheckMapper(binding.BusinessMapper, binding.BusinessMapperIdentity, businessErrorType);
-            string Identity(Token token, string? resolved) => binding.ReferencesResolved ? resolved! : token.Text;
-            var http = new BoundHttpBinding(ActorDisplayType(response), binding.Binder.Text, binding.BindingMapper.Text,
-                binding.SuccessMapper.Text, binding.BusinessMapper.Text, ActorDisplayType(bindingErrorType),
-                ActorDisplayType(valueType), ActorDisplayType(businessErrorType), decoder.IsAsync, binding.Keyword.OriginPath ?? path,
-                binding.Keyword.Span, binding.ResponseType.Span, binding.Binder.Span, binding.BindingMapper.Span,
-                binding.SuccessMapper.Span, binding.BusinessMapper.Span)
+            CheckMapper(bindingMapperToken, bindingMapperIdentity, bindingErrorType);
+            CheckMapper(successMapperToken, successMapperIdentity, valueType);
+            string Identity(Token token, string? resolved) => referencesResolved ? resolved! : token.Text;
+            if (binding is not null && businessErrorType is not null)
             {
-                BinderIdentity = Identity(binding.Binder, binding.BinderIdentity),
-                BindingMapperIdentity = Identity(binding.BindingMapper, binding.BindingMapperIdentity),
-                SuccessMapperIdentity = Identity(binding.SuccessMapper, binding.SuccessMapperIdentity),
-                BusinessMapperIdentity = Identity(binding.BusinessMapper, binding.BusinessMapperIdentity)
-            };
-            boundActors[actorIndex] = boundActors[actorIndex] with { HttpBindings = new[] { http } };
+                CheckMapper(binding.BusinessMapper, binding.BusinessMapperIdentity, businessErrorType);
+                var http = new BoundHttpBinding(ActorDisplayType(response), binderToken.Text, bindingMapperToken.Text,
+                    successMapperToken.Text, binding.BusinessMapper.Text, ActorDisplayType(bindingErrorType),
+                    ActorDisplayType(valueType), ActorDisplayType(businessErrorType), decoder.IsAsync, keyword.OriginPath ?? path,
+                    keyword.Span, responseToken.Span, binderToken.Span, bindingMapperToken.Span,
+                    successMapperToken.Span, binding.BusinessMapper.Span)
+                {
+                    BinderIdentity = Identity(binderToken, binderIdentity),
+                    BindingMapperIdentity = Identity(bindingMapperToken, bindingMapperIdentity),
+                    SuccessMapperIdentity = Identity(successMapperToken, successMapperIdentity),
+                    BusinessMapperIdentity = Identity(binding.BusinessMapper, binding.BusinessMapperIdentity)
+                };
+                boundActors[actorIndex] = boundActors[actorIndex] with { HttpBindings = new[] { http } };
+            }
+            else
+            {
+                var http = new BoundHttpPlainBinding(ActorDisplayType(response), binderToken.Text, bindingMapperToken.Text,
+                    successMapperToken.Text, ActorDisplayType(bindingErrorType), ActorDisplayType(valueType), decoder.IsAsync,
+                    keyword.OriginPath ?? path, keyword.Span, responseToken.Span, binderToken.Span, bindingMapperToken.Span, successMapperToken.Span)
+                {
+                    BinderIdentity = Identity(binderToken, binderIdentity),
+                    BindingMapperIdentity = Identity(bindingMapperToken, bindingMapperIdentity),
+                    SuccessMapperIdentity = Identity(successMapperToken, successMapperIdentity)
+                };
+                boundActors[actorIndex] = boundActors[actorIndex] with { HttpPlainBindings = new[] { http } };
+            }
         }
         foreach (var unionCase in standardResult.Cases)
             if (!cases.ContainsKey(unionCase.Name.Text) && !signatures.ContainsKey(unionCase.Name.Text) && !records.ContainsKey(unionCase.Name.Text) && !services.ContainsKey(unionCase.Name.Text))

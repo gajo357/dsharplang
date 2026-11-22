@@ -48,11 +48,11 @@ using those same structural rules. The expression is not parsed or validated;
 schedule registration, calendars, payload provision and execution remain
 future work.
 
-The first HTTP candidate checks a named direct binder and explicit response
-mapper function signatures against a Result-valued actor Handle. It retains
-inert compiler metadata only; plain/Unit results, Dispatch receipts, general
-callable preprocessing, transport response validation and registration remain
-future work. The selected response type is application data, not an HTTP API.
+The bounded HTTP candidates check a named direct binder and explicit response
+mapper signatures against a plain, Unit or Result-valued actor Handle. They retain
+inert compiler metadata only; Dispatch receipts, general callable preprocessing,
+transport response validation and registration remain future work. The selected
+response type is application data, not an HTTP API.
 
 The Result helper bodies are authored as D# in
 [`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
@@ -75,7 +75,7 @@ external interoperability guarantee follows from this lowering. See the
 | Checked queue bindings | Explicit actor-local Queue metadata, matching Handle input, source locations, conservative recursive data checks and mismatch/duplicate diagnostics | Compiler and CLI checks only; no registration, serialization or queue delivery |
 | Checked event candidates | Explicit actor-local Event metadata, matching Handle input, source locations and shared conservative data checks | Compiler and CLI checks only; no subscription registration or publication |
 | Checked Cron candidates | Explicit actor-local name, opaque expression, matching Handle input and source locations | Compiler and CLI checks only; no cron validation or scheduling |
-| Checked HTTP candidates | Named direct binder and typed error/success mappers for Result-valued Handle; source locations and nominal identities | Compiler and CLI checks only; no HTTP host, registration or mapper execution |
+| Checked HTTP candidates | Named direct binder and typed response mappers for plain, Unit and Result-valued Handle; source locations and nominal identities | Compiler and CLI checks only; no HTTP host, registration or mapper execution |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Multiple source files and modules | Dotted module names, file-scoped imports, qualified lookup and duplicate/ambiguity diagnostics | Split modules and cross-module D# calls execute from multiple files |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
