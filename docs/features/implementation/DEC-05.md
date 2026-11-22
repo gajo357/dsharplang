@@ -1,10 +1,10 @@
 # DEC-05: HTTP composition and authorization contract
 
-**Status:** Draft proposal for review; not adopted or implemented.
+**Status:** Proposed decision; effective when reviewed and merged, not implemented.
 
 **Issue:** [#15](https://github.com/gajo357/dsharplang/issues/15).
 
-**Base:** `0041139ab2e2c4fc7660ac9f33fb291f7f1efe53`.
+**Base:** `d6d2ad277caa717639971deb00c7e72aac98c289`.
 
 ## Work plan
 
@@ -16,10 +16,8 @@ compiler or runtime behavior.
 
 ## Scope and existing decisions
 
-This is a **proposal for review**, not adoption, an implemented API, or permission
-for dependent implementation. Merging it does not adopt it. A maintainer must
-explicitly adopt a reviewed version before #83/#84 or other work depending on
-this contract implements it. Names and signatures for HTTP, authentication,
+This decision takes effect when reviewed and merged; it is not an implemented
+API or evidence of runtime behavior. Names and signatures for HTTP, authentication,
 authorization, binding, wrappers and mappings below are provisional. The D#
 examples are illustrative target code, not tested current compiler support.
 
@@ -27,16 +25,16 @@ The [syntax reference](../DSharp_Syntax_Reference.md) §16 and
 [pipes and logging specification](../DSharp_Pipes_and_Logging.md) §§4–8 settle
 these constraints:
 
-- An explicitly registered HTTP agent declares its route; `pipeline = expression`
+- An explicitly registered HTTP route targets an actor; `pipeline = expression`
   holds one ordinary typed callable. There is no `pipeline {}` step list. The host
-  invokes preprocessing once, invokes the handler only on success, and otherwise
-  directly binds the handler input when no preprocessing is declared.
+  invokes preprocessing once per HTTP request, submits to the actor only on
+  success, and otherwise directly binds the actor input when no preprocessing is declared.
 - `|>` is ordinary value piping. `andThen` composes Result-returning steps with
   a common error type; different errors need explicit `mapError`. Its supported
   synchronous and asynchronous combinations preserve typed errors and invoke a
   subsequent callback at most once. Exceptions and cancellation propagate; Result
   helpers do not silently catch, flatten or retry them.
-- The handler receives precisely the successful pipeline output type. HTTP
+- The actor receives precisely the successful pipeline output type. HTTP
   error mappings are explicit. Wrapping middleware is distinct from preprocessing
   and must clean up on failure and cancellation.
 - A public record named `Authorized` is an envelope, not proof of permission.
@@ -44,12 +42,11 @@ these constraints:
   operations enforce their own policy. Logging context is diagnostic, never
   authority.
 
-The [worker](DEC-03.md) and [queue](DEC-04.md) proposals are independently
-unadopted; this document does not adopt their contracts or defaults. Route and
-query syntax, HTTP encoding, response customization, evidence representation and
-wrapper APIs need review here or in their separately gated work.
+The [actor invocation](DEC-03.md) and [durable acceptance](DEC-04.md) boundaries
+govern dispatch. Route and query syntax, HTTP encoding, response customization,
+evidence representation and wrapper API spelling belong to their bounded owners.
 
-## Proposed transport and typed composition
+## Transport and typed composition
 
 `HttpRequest`, `RouteValues`, `QueryValues`, `Headers`, `HttpResponse`, and the
 error names below describe contracts, not finalized D# library declarations.
@@ -79,38 +76,48 @@ syntax and detailed public error bodies remain review decisions.
 
 A binding/decoder is a typed function from the request or an intermediate value
 to `Result<T, E>` or `Task<Result<T, E>>`. A route declares a binding to the
-handler's exact input type. With preprocessing, the host supplies its declared
-raw request input, awaits its result once and supplies only `Success(T)` to a
-handler whose parameter is exactly `T`; it never invents a default value for
+actor's exact input type. With preprocessing, the host supplies its declared
+raw request input, awaits its result once and supplies only `Success(T)` to an
+actor whose checked Handle input is exactly `T`; it never invents a default value for
 failure. Without preprocessing, a declared direct binder supplies exactly the
-handler input under the same error/mapping rules. Registration rejects a missing
+actor input under the same error/mapping rules. Registration rejects a missing
 binder, incompatible type, unsupported binding, conflicting method/route, or
 missing policy before accepting traffic; report statically knowable errors at
 compile time. Matching a route does not itself authenticate or authorize it.
 Registration is explicit, and importing a package does not enable a route.
+The host submits through the durable dispatcher after validation and policy
+checks, never by constructing an actor or directly calling Handle. `Invoke`
+awaits the exact Handle result; targeted `Dispatch` acknowledges durable
+acceptance only. A receipt is not evidence that the actor completed. A single
+accepted logical invocation can have several attempts; once-only HTTP
+preprocessing does not promise once-only actor execution. On an uncertain
+acknowledgement, use the same submission identity for authorized lookup or
+deduplicated retry rather than submitting a new logical operation.
 
 Each decoding, authentication, authorization and application error is retained
 as a distinct tagged case in an explicitly chosen endpoint error union. Adapt a
 step's `Result<A, SpecificError>` with `mapError` into that union **before**
 `andThen`; avoid stringification, a catch-all universal error, implicit
 conversion or treating `Error` as a successful payload. The same rules apply to
-the handler's result: preserve its declared error until its explicit response
+the Handle result: preserve its declared error until its explicit response
 mapping. Each supported failure case must map to a response; registration rejects
 an absent or ambiguous mapping. Separate exception and cancellation handling from
 typed errors. An exception is not an application `Error`, and cancellation is
 not an authentication or validation failure.
 
-## Proposed responses and failure boundaries
+## Responses and failure boundaries
 
-An endpoint explicitly maps each successful handler result and each declared
-pipeline/handler error case to an `HttpResponse` with a legal status, headers and
-body encoder. No mapping silently returns `default(T)`, relies on exception
-text, or turns an unmapped case into success. The following are proposed defaults
+An Invoke endpoint explicitly maps each Handle value and business error; a
+Dispatch endpoint maps the durable acceptance receipt and admission failures,
+not a later Handle result. Both map their applicable pipeline, authentication,
+authorization, binding and runtime failure categories to an `HttpResponse` with
+a legal status, headers and body encoder. No mapping silently returns `default(T)`, relies on exception
+text, or turns an unmapped case into success. The following are standard mappings
 for the *named transport failure categories*, not inferred meanings for arbitrary
 application errors; application cases require explicit mappings and the API
 shape remains open:
 
-| Condition | Proposed response before headers commit |
+| Condition | Response before headers commit |
 | --- | --- |
 | Missing or invalid authentication | `401` with the applicable authentication challenge |
 | Authenticated principal denied permission | `403` |
@@ -121,12 +128,12 @@ shape remains open:
 
 An unavailable or faulty authentication provider is a server failure, not proof
 of invalid credentials and never a reason to grant access. Its exact availability
-status mapping needs explicit configuration and review; it must not be reported
+status mapping needs explicit configuration; it must not be reported
 as `401` merely because the provider failed.
 
 An application can deliberately map its own cases, such as a known missing
 resource to `404` or a conflict to `409`; it cannot use mapping to bypass the
-runtime authorization guard. A handler with no representation may explicitly
+runtime authorization guard. An operation with no representation may explicitly
 return `204`, with no body. Validate illegal status/body combinations, headers
 and encoders before commit when possible. HEAD response handling must not write a
 body. A 401 challenge must match the configured authentication scheme; this
@@ -136,13 +143,14 @@ The host writes at most one response. A typed failure or unexpected fault before
 commit can be mapped as above. Once headers or body are committed, no second
 status or replacement response can be sent: terminate/abort the response according
 to the transport and report the fault to supervision. Client disconnect or
-request cancellation signals cooperative cancellation and normally aborts rather
-than inventing a response. Cancellation does not guarantee that previously
-performed external effects were rolled back. If the transport is still writable
+request cancellation normally aborts rather than inventing a response. Timeout or
+disconnect of the HTTP wait does not itself cancel accepted actor work. Explicit
+actor cancellation is a separate cooperative request and does not roll back
+previously performed external effects. If the transport is still writable
 and a separately adopted timeout policy wants a response, it must specify that
 case explicitly; this proposal does not select a timeout status or deadline.
 
-## Proposed authentication and authorization evidence
+## Authentication and authorization evidence
 
 Authentication verifies credentials through a configured trusted adapter and
 establishes a principal or fails. Authorization checks a concrete action and,
@@ -154,13 +162,15 @@ convenience, but anyone can construct or copy such a public record. Its fields,
 type name, a log scope, caller-supplied claims or a fabricated principal are never
 accepted as proof.
 
-Proposed proof is a runtime-owned opaque capability issued only after successful
+Proof is a runtime-owned opaque capability issued only after successful
 trusted checks, backed by host-private state or an equivalent unforgeable
 runtime validation mechanism, not by the visibility of a D# record or by a
 caller-controlled boolean. Its validation binds the issuing host, active request
 invocation, verified principal, tenant, action and applicable resource, policy
-and validity period. The host validates it immediately before dispatch to a
-protected handler; sensitive service operations independently validate authority
+and validity period. After decoding, the host validates it immediately before
+admission against the actual actor target and concrete action, tenant and
+resource the message will request. A mismatch requires a fresh successful check;
+proof for one operation cannot be carried over to another. Sensitive operations independently validate authority
 for their actual action and resource, including current policy/revocation as
 required by that operation. A request check for one resource must not authorize
 another; a check on a resource before a change must not automatically authorize a
@@ -177,17 +187,31 @@ the same active invocation does not create additional authority; it remains
 subject to the same validation and expires when that invocation ends. It cannot
 be replayed into another invocation or host. The runtime controls its issuance,
 validation and lifetime even when all user declarations are public. This is a
-proposed runtime boundary, not a claim that D# visibility alone prevents hostile
+runtime boundary, not a claim that D# visibility alone prevents hostile
 code or that an in-process language sandbox exists. Trusted host/adapters and
 security of their implementation remain required; exact storage, revocation,
-policy and public API need explicit review.
+policy and public API belong to their implementation owners.
 
-Queue and scheduled entry points have their own authorization policies; an HTTP
-principal or capability stored with a message is not permanent authority and
-must not be replayed as a live HTTP capability. Passing a diagnostic correlation
-identifier across such a boundary does not authenticate the later invocation.
+The live proof and request, response, body stream or other scoped capability must
+never be serialized into the durable actor message or replayed after request end.
+Admission authorization establishes only that the route may submit the checked
+message at that boundary; it does not promise that permission remains valid at a
+later attempt or protected write. Every sensitive execution-time operation must
+independently authorize its actual action, tenant and resource against current
+policy and revocation. If the host cannot establish valid execution-time authority,
+it fails closed; admission, public records, diagnostic correlation or a copied
+subject ID alone do not grant authority. Trusted infrastructure may use a durable
+delegation only when a separately specified integrity-protected, scoped, expiring
+and revocable contract can establish that authority; this decision does not invent
+such a credential, token format or mechanism. Where a policy change must be
+atomic with a write, enforce it at that resource's transactional boundary; a
+separate recheck cannot undo an already committed effect. Queue and scheduled
+entry points use their own explicit policies, not replayed HTTP evidence.
+Authorized status lookup and deduplicated retries must enforce the caller's
+applicable policy before returning receipt or result; knowing a submission ID is
+not authority to inspect it.
 
-## Proposed wrapping, async and context
+## Wrapping, async and context
 
 A wrapper is a separate host-registered typed callable surrounding a continuation
 for the rest of the request. It can perform work before and after awaiting that
@@ -195,15 +219,15 @@ continuation. Registration declares deterministic outer-to-inner order; entry
 runs in that order and cleanup runs inner-to-outer. Each continuation is
 single-use: a wrapper may invoke it once or deliberately short-circuit with an
 explicit response, but a second invocation is an error and must not rerun the
-handler. If it does not invoke the continuation, downstream wrappers,
-preprocessing and the handler are not invoked. A wrapper must not detach the
+actor submission. If it does not invoke the continuation, downstream wrappers,
+preprocessing and actor submission are not invoked. A wrapper must not detach the
 continuation, race it against itself, or return before its owned downstream work
 has completed. Retrying business work is not implicit middleware behavior.
 Calling a continuation after its owning wrapper scope ends is invalid.
 Short-circuiting cannot bypass authorization: wrappers that produce protected
 data or perform sensitive operations must satisfy the applicable policy at those
 boundaries. A wrapper may return an unauthenticated challenge or another safe
-failure without running the protected handler. Registration treats wrappers as
+failure without submitting protected work. Registration treats wrappers as
 trusted host components, not as a means for arbitrary code to waive policy.
 
 Every acquired wrapper resource is released exactly once in a `finally`/scope
@@ -220,9 +244,10 @@ capability. Transaction wrappers make no general promise of rolling back effects
 outside their explicitly controlled resource.
 
 Request cancellation, host-owned authority and immutable diagnostic correlation
-flow across awaited callbacks and wrapper boundaries, isolated by invocation and
-host. Explicitly transfer allowed context at runtime boundaries rather than
-assuming thread-local flow. Context is released at invocation end, including on
+flow across awaited callbacks and wrapper boundaries within the HTTP request,
+isolated by invocation and host. Transfer only explicitly allowed immutable
+diagnostic context to durable actor work, not live request authority or scope.
+Do not assume thread-local flow. Context is released at invocation end, including on
 fault or cancellation. Logger remains the host-scoped system actor: submission is
 non-waiting and transient, scope snapshots are diagnostic only, and output
 failure cannot change the response, authorization or transaction result. Avoid
@@ -231,12 +256,10 @@ safe fields explicitly. These proposals do not make logging a durable audit.
 
 ## Illustrative protected D# route
 
-The names, constructor forms, type signatures, registration and mapping syntax
-below are design sketches; neither the syntax nor these APIs are implemented by
-this proposal. The functions `authenticate`, `authorizeCreate`, and `decode`
-are adapter/application functions that explicitly map their distinct failures
-into the same tagged `CreateError`. The opaque capability shown as `proof` is
-issued and checked by the trusted runtime, never constructed by application code.
+The registration, fault handling and adapter names below are sketches, not
+implemented APIs or settled grammar. The HTTP route and actor are explicitly
+registered. The route validates host-issued proof for admission; the actor
+message contains immutable data, never the live proof or request object.
 
 ```text
 type CreateError {
@@ -246,9 +269,8 @@ type CreateError {
     | InvoiceFailed(InvoiceError)
 }
 
-agent CreateInvoice(invoices: InvoiceService) {
-    trigger Http.post("/invoices")
-
+httpRoute CreateInvoiceRoute {
+    post("/invoices")
     pipeline = async raw => {
         await (
             raw
@@ -258,43 +280,50 @@ agent CreateInvoice(invoices: InvoiceService) {
             |> andThen(decodeCreateInvoice)
         )
     }
+    target = InvoiceActor
+}
 
-    handle(request: Authorized<CreateInvoiceRequest, CreateInvoices>)
-        : Task<Result<Invoice, CreateError>> {
-        await (
-            invoices.create(request.body, request.identity, request.proof)
-            |> mapError(error => InvoiceFailed(error))
-        )
+actor InvoiceActor(invoices: InvoiceResource) {
+    Handle(request: CreateInvoiceRequest): Result<Invoice, InvoiceError> {
+        // The resource enforces its own execution-time policy.
+        invoices.create(request)
     }
 }
 ```
 
-Conceptual signatures make the error conversions and exact boundary visible:
+Conceptual adapter signatures explain the boundary:
 
 ```text
 authenticate : HttpRequest -> Task<Result<Authenticated<HttpRequest>, AuthError>>
 authorizeCreate : Authenticated<HttpRequest>
     -> Task<Result<Authorized<HttpRequest, CreateInvoices>, CreateError>>
 decodeCreateInvoice : Authorized<HttpRequest, CreateInvoices>
-    -> Result<Authorized<CreateInvoiceRequest, CreateInvoices>, CreateError>
+    -> Result<CreateInvoiceRequest, CreateError>
 ```
 
-The authorization and decode adapters explicitly wrap their own errors as
-`Forbidden(...)` and `InvalidRequest(...)`. The protected handler guard validates
-the runtime proof on dispatch, and `invoices.create` checks it again for the
-actual operation/resource. The application cannot turn a manually constructed
-envelope into valid proof. In this illustrative endpoint an explicit mapping
-returns `201` with an encoded invoice on success and maps `AuthenticationFailed`
-for missing or invalid credentials to `401` plus challenge, authentication
-provider failures to an explicitly configured server failure, `Forbidden` to
-`403`, and `InvalidRequest` to `400`,
-`413` or `415` by tagged binding case. Every `InvoiceFailed` case has an
-explicit declared mapping; the mapping mechanism and the domain's particular
-error cases are intentionally not invented here. The host configuration must
-explicitly register `CreateInvoice` and its binder, policy, wrapper chain,
-encoders and mappings before traffic is accepted.
+`Authorized` is an ordinary envelope, not proof. The host retains and validates
+its opaque request-scoped proof for the concrete admission immediately before
+submitting the decoded, immutable `CreateInvoiceRequest`. The proof does not
+enter that message. The trusted resource checks current authority for the actual
+write using a separately specified execution authority; if unavailable or invalid,
+it denies the operation. The runtime must not substitute a public envelope or
+log context for that authority. A deployment requiring durable user delegation
+must provide an approved mechanism before enabling the protected operation; this
+decision does not claim such a mechanism already exists.
 
-## Evidence required after adoption
+For this illustrative route, `Invoke` returns the exact declared
+`Result<Invoice, InvoiceError>`, which maps explicitly to `201` or the chosen
+mapping for each business error. An alternative targeted `Dispatch` route may
+map a receipt to an acceptance response but cannot claim invoice creation. The
+route maps missing/invalid credentials to `401` with the configured challenge,
+policy denial to `403`, and binding failures to `400`, `413` or `415`
+according to their tagged cases. Provider failures use an explicit server-failure
+mapping; all remaining domain errors require explicit mappings. The host
+registers the route, target, binder, policy, wrapper chain, encoders and mappings
+before accepting traffic. Authorization, decoding and error conversion signatures
+are illustrative; they do not settle D# actor or registration syntax.
+
+## Required implementation evidence
 
 Implementation must add D# source examples and executable tests, with generated
 C# and live transport tests where relevant. At minimum:
@@ -305,7 +334,7 @@ C# and live transport tests where relevant. At minimum:
    input/output types, missing direct binders, conflicting routes and incomplete
    error mappings before traffic.
 2. Verify sync/async success and typed failures at every preprocessing step and
-   handler, with each callback invoked at most once and later steps skipped on
+   Handle outcome, with each preprocessing callback invoked at most once and later steps skipped on
    failure. Mixed errors require `mapError`; erased or unmapped errors fail
    validation. Exceptions and cancellation propagate separately from `Error`.
 3. Verify exact status, challenge, safe headers and body for every mapped case;
@@ -317,8 +346,12 @@ C# and live transport tests where relevant. At minimum:
    forged claims, and log-scope impersonation. All must fail authorization
    where invalid, including after an await or a resource/policy change. A copied
    reference retains only its original validity; a valid capability works only
-   for its bound active invocation and checks at both the
-   handler and sensitive operation boundaries. Changing body fields that affect
+   for its bound active HTTP request and admission. Sensitive operations check
+   separate execution authority, including after delay, retry, restart or policy
+   revocation; without an approved delegation they fail closed. Exercise policy
+   change between the initial check and admission, provider outage, and retry or
+   status lookup by a different subject/action using the same submission ID;
+   an untrusted identity alone cannot disclose status or a receipt. Changing body fields that affect
    the authorized tenant, resource or action must fail validation or require a
    fresh check; an unrelated body change does not invalidate an action-scoped
    capability unless policy explicitly binds it to that field.
@@ -335,21 +368,12 @@ C# and live transport tests where relevant. At minimum:
    are automatically logged. Verify operation side effects are not claimed to
    roll back merely because the client cancelled.
 
-## Decisions and adoption gate
+## Implementation boundaries
 
-Review the proposed binding and encoding boundaries, explicit response mappings,
-capability issuance/validation/revocation and service enforcement, wrapper
-registration and single-use continuation, streaming lifetime, cancellation and
-fault boundaries. Select the actual public APIs and route/query syntax separately;
-this proposal does not choose a provider, wire encoding for Option, HTTP timeout,
-WebSockets or gRPC. An explicitly adopted contract is required before dependent
-implementation. Passing documentation checks or merging this file does not adopt
-it or establish that any HTTP behavior exists.
-
-## Verification of this proposal
-
-Bootstrap, documentation and link checks, and compiler verification passed
-(18 baseline and 362 feature tests). All 23 automation tests passed. The local
-isolated verifier could not download its pinned Docker image (`Forbidden`);
-GitHub Actions runs the unchanged verifier. These checks validate the repository,
-not HTTP runtime behavior or adoption.
+Implement the typed binding, mappings, runtime evidence, wrapper continuation
+and lifetime rules above. Select exact public APIs and route/query syntax in
+their owning issues. This decision does not choose an identity provider, a
+wire encoding for Option, a durable delegation mechanism, HTTP timeout,
+WebSockets or gRPC. A protected operation that needs unavailable delegation
+must fail closed. See the issue plan for documentation and compiler verification;
+those checks do not establish HTTP or authorization behavior.
