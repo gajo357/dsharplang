@@ -510,6 +510,8 @@ internal static class MultiFileResolver
                         { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
                     EventBindings = actor.EventBindings.Select(binding => binding with
                         { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
+                    CronBindings = actor.CronBindings.Select(binding => binding with
+                        { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported
