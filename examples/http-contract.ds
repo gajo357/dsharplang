@@ -1,0 +1,17 @@
+module HttpContract
+
+// These named functions are checked as a candidate contract only. No route,
+// request decoding, response encoding or application registration is performed.
+type RawInput { value: int }
+type Request { value: int }
+type Response { code: int }
+
+fn decode(input: RawInput): Result<Request, string> { Success(Request { value = input.value }) }
+fn mapBinding(error: string): Response { Response { code = 400 } }
+fn mapSuccess(value: int): Response { Response { code = value } }
+fn mapBusiness(error: bool): Response { Response { code = 500 } }
+
+actor Worker {
+    trigger Http<Response>(decode, mapBinding, mapSuccess, mapBusiness)
+    Handle(message: Request): Result<int, bool> { Success(message.value) }
+}
