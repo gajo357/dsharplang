@@ -58,10 +58,19 @@ jobs:
         run: bash candidate/.github/ai/bootstrap.sh && bash candidate/.github/ai/verify.sh
       - name: Exercise proposed compiler verifier pilots
         run: node candidate/.github/ai/pilot.mjs "${{ runner.temp }}/pilot-reports"
+      - name: Prove runtime verifier rejects a failing feature
+        run: node candidate/.github/ai/runtime-pilot.mjs "${{ runner.temp }}/runtime-pilot-reports"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: compiler-verifier-pilots
           path: ${{ runner.temp }}/pilot-reports/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-verifier-pilot
+          path: ${{ runner.temp }}/runtime-pilot-reports/
           if-no-files-found: error
           retention-days: 14

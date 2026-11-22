@@ -11,3 +11,4 @@ node --test --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=junit --test-reporter-destination="$reports/automation.xml" "$trusted/tests/"*.test.mjs
 node "$trusted/../../scripts/check-automation-results.mjs" "$reports/automation.xml"
 node "$trusted/verify-compiler.mjs" "$target" "$reports"
+node "$trusted/verify-runtime.mjs" "$target" "$reports"
