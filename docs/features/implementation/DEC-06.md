@@ -1,32 +1,32 @@
 # DEC-06: Safe CLR and NuGet interoperability
 
-**Status:** Draft proposal for review; not adopted or implemented.
+**Status:** Proposed decision; effective when reviewed and merged, not implemented.
 
 **Issue:** [#16](https://github.com/gajo357/dsharplang/issues/16).
 
-**Base:** `f22efb53fdedbb17339d798d61c9d25577497cd8` (the merged [HTTP proposal](DEC-05.md)); the compiler bootstrap is recorded in [COMPILER_BOOTSTRAP.md](../../COMPILER_BOOTSTRAP.md).
+**Base:** `0759d0b7778e3649ae8fef54c89891699f9d790e`; the compiler bootstrap is recorded in [COMPILER_BOOTSTRAP.md](../../COMPILER_BOOTSTRAP.md).
 
 ## Work plan and scope
 
 Reconcile the existing immutable-value, option, resource and package boundaries;
 propose a deliberately small, explicit C#/F# adapter surface, ownership and
 lifetime rules, build resolution, and checks for unsafe or unsupported cases.
-The only changed file is this decision proposal. The following sections and test
+This decision and the required issue plan are the only changed files. The following sections and test
 matrix cover issue #16's four acceptance criteria. No compiler, package, runtime,
 dependency or verifier changes are included.
 
-This is a **proposal for review**, not an implemented API or an adopted contract.
-Merging the proposal does not adopt it. A maintainer must explicitly adopt the
-reviewed version before dependent implementation proceeds. D# adapter names and
+This decision takes effect when reviewed and merged; it is not an implemented API
+or evidence of safe foreign execution. D# adapter names and
 code below are illustrative, not existing syntax or compiler support. The exact
 package declaration, adapter registration and generated C# API remain to be
 reviewed; this document specifies the first supported behaviors, not a package
-manifest grammar. [DEC-01](DEC-01.md) was subsequently adopted; [DEC-03](DEC-03.md),
-[DEC-04](DEC-04.md), and [DEC-05](DEC-05.md) remain separately gated proposals.
-This document does not adopt or depend on their provisional representations.
+manifest grammar. [DEC-01](DEC-01.md) and the merged actor invocation,
+[durability](DEC-04.md) and [HTTP](DEC-05.md) boundaries remain separate. This
+document does not select their public fault, actor registration or delegation
+representations.
 
 The settled requirements are that D# data is immutable, local builders do not
-cross foreign calls, and agents retain their isolation and message restrictions.
+cross foreign calls, and actors retain isolation and immutable message restrictions.
 `T?` means null or a value and is idempotent; the tagged `Option<T>` has distinct
 `None` and `Some(T)` cases, including `Some(null)` only when `T` admits null and
 without flattening nested options. No implicit conversion may erase these
@@ -34,7 +34,7 @@ distinctions. Those requirements and their implementation status are described
 in the [implementation instructions](../DSharp_Implementation_Instructions.md)
 and [syntax reference](../DSharp_Syntax_Reference.md). Generated C# details do
 not themselves define D# semantics. Serialization formats, resource lifetimes,
-generic constraints and agent protocols remain subject to their own decisions.
+generic constraints and actor protocols remain subject to their own decisions.
 
 ## Proposed explicit boundary and trust model
 
@@ -111,18 +111,24 @@ value. Adapters define finite depth and size limits and fail rather than return
 a truncated copy. An adapter must establish stable ownership or synchronization before
 copying; a check alone cannot make a concurrent foreign mutation safe. A foreign
 object with no complete, safe copy contract is not eligible as D# immutable data
-or an agent/queue message.
+or an actor message.
 
-A reviewed service/resource adapter may instead keep a foreign reference as a
+A reviewed resource adapter may instead keep a foreign reference as a
 host-owned opaque capability. It exposes only declared operations, is never
 stored as immutable message data, and observes the owning scope, host and
 concurrency policy. It cannot be turned into a public record to bypass checks.
 No foreign reference to a local builder, its view or backing storage may pass a
 foreign call; `freeze()` first creates an independent immutable snapshot. Scoped
-connections, transactions and resource handles likewise cannot escape in foreign
-objects, callbacks, tasks or data. These rules also apply through generics and
-nested collections. A trusted adapter cannot claim to permit a captured scoped
-value merely by labeling an API safe.
+connections, transactions and resource handles cannot escape their owning scope
+in foreign objects, callbacks, tasks or data. A reviewed resource adapter may
+lend its own scoped receiver or foreign handle to one declared operation while the
+host tracks its entire lifetime; it cannot transfer the handle into a message,
+callback or retained foreign object. These rules also apply through generics and
+nested collections. A trusted adapter cannot permit a captured scoped value merely
+by labeling an API safe. Transactions may contain ordinary awaited resource
+operations but must finish before a durable actor wait or cross-actor invocation.
+Adapters cannot inject actor instances, call Handle directly, serialize live HTTP
+proofs, or treat diagnostic context as authority.
 
 ## Proposed tasks, cancellation, disposal and callbacks
 
@@ -132,8 +138,12 @@ D# async result after applying the value and error mapping above; a void-returni
 custom schedulers and fire-and-forget methods are excluded from the first slice.
 If a foreign method throws before returning its Task, handle it at the same
 boundary as a faulted Task. A null Task is an interop fault, not a completed
-operation. A foreign task must not retain D# local builders or scoped resources;
-the adapter cannot pass them in the first place. Task completion is not proof
+operation. A foreign task must not retain local builders, capabilities or scoped
+resources beyond their owner. An explicitly bounded resource operation may borrow
+its own scoped foreign receiver or handle while its tracked Task runs; the host
+keeps it alive through actual completion and cleanup and rejects APIs whose
+declared retention cannot be confined to that scope. A D# local builder is never
+passed. Task completion is not proof
 that external effects can be rolled back.
 
 Cancellation is cooperative. When an explicitly selected operation accepts a
@@ -147,7 +157,9 @@ owning token is signalled. A mismatched token is never treated as the owning
 invocation's cancellation merely because it was observed while awaiting a Task.
 The host still observes the final task outcome and owns any
 resource until the foreign operation has actually stopped; a cancellation request
-alone does not prove that work or side effects stopped. There is no implicit
+alone does not prove that work or side effects stopped. A caller's wait timeout
+does not itself cancel an accepted actor attempt. Observe any eventual fault
+without delivering a second answer to that timed-out wait. There is no implicit
 retry, timeout, transaction rollback or exactly-once claim.
 
 A resource returned by a selected `IDisposable`/`IAsyncDisposable` factory may
@@ -194,10 +206,8 @@ Hashes establish repeatable bytes, not package trust or vulnerability status.
 The exact file/CLI syntax, source configuration and diagnostics remain open for
 [#87](https://github.com/gajo357/dsharplang/issues/87).
 
-Target the repository's pinned managed SDK and target framework. The proposed
-[.NET 11 upgrade](https://github.com/gajo357/dsharplang/issues/151) changes that
-baseline; select only NuGet-compatible managed assets for the actual pinned
-target. A package targeting another
+Target the repository's pinned managed SDK 11.0.100 and `net11.0` framework;
+select only NuGet-compatible managed assets for the actual pinned target. A package targeting another
 framework is accepted only when the SDK's compatibility rules select a usable
 managed asset, not merely because restore reports success. Diagnose incompatible
 frameworks and unsupported required runtime assets before generated code is run.
@@ -318,7 +328,9 @@ explicitly enabled by their own scoped issues first.
    with unknown provenance, cancellation before and during work,
    null Task, one disposal on every exit, asynchronous cleanup fault plus primary
    fault, and late completion. Attempt builder/resource escape via args, nested
-   data, captured and returned functions, and foreign callbacks. Use barriers to
+   data, captured and returned functions, and foreign callbacks. Demonstrate an
+   async resource's scoped borrow stays alive through the tracked Task and cleanup,
+   cannot escape, and finishes any transaction before a durable actor wait. Use barriers to
    verify callback invalidation, in-flight draining and rejection of calls after
    scope exit; cancellation alone must not release a resource still in use.
 3. **AC3 — package/build:** restore twice with a pinned pure-managed package and
@@ -335,24 +347,16 @@ explicitly enabled by their own scoped issues first.
    synchronous/asynchronous faults and cancellation. Each case and payload must
    remain distinguishable; never implicitly convert to nullable or flatten.
 
-## Review and adoption gate
+## Implementation boundaries
 
-Review the selected signature/exception subset, nullable and F# case mapping,
+Implement the selected signature/exception subset, nullable and F# case mapping,
 mutable snapshots versus scoped capabilities, callback and cancellation lifetime,
 and locked restore/build asset exclusions. Concrete public syntax, package lock
-format, isolation mechanism and precise host shutdown policy need separate review;
-no issue depending on this decision is implemented here. After explicit adoption,
+format, isolation mechanism and precise host shutdown policy belong to their owners;
+no issue depending on this decision is implemented here. After this decision merges,
 [#87](https://github.com/gajo357/dsharplang/issues/87),
 [#88](https://github.com/gajo357/dsharplang/issues/88),
 [#89](https://github.com/gajo357/dsharplang/issues/89) and
 [#90](https://github.com/gajo357/dsharplang/issues/90) remain separately gated
-by setup and their other prerequisites. A documentation check or merge does not
-adopt this proposal or demonstrate safe foreign execution.
-
-## Verification of this proposal
-
-Bootstrap, documentation and link checks, and compiler verification passed
-(18 baseline and 362 feature tests). All 23 automation tests passed. The local
-isolated verifier could not download its pinned Docker image (`Forbidden`);
-GitHub Actions runs the unchanged verifier. These checks validate the repository,
-not foreign execution or adoption.
+by setup and their other prerequisites. Documentation checks or a merged design do
+not demonstrate safe foreign execution; see the issue plan for actual verification.
