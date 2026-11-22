@@ -1,0 +1,15 @@
+module QueueContract
+
+// This checked binding records a contract only. A host, codec and queue delivery
+// are future work; application code cannot construct or directly call the actor.
+type Request { value: int }
+
+actor Worker {
+    trigger Queue<Request>("orders")
+    Handle(message: Request): Result<int, string> { Success(message.value) }
+}
+
+actor Heartbeat {
+    trigger Queue<Unit>("heartbeat")
+    Handle(message: Unit): Unit { () }
+}
