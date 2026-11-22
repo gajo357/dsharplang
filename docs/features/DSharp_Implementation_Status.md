@@ -6,8 +6,8 @@ The #9 setup adds a managed runtime project and test-only manual clock and
 scripted randomness harness. #267 adds a typed dispatcher interface, route and
 message-contract descriptors, and distinct opaque receipt types. Runtime feature
 tests exercise the interface using recording fakes; no production dispatcher,
-actor dispatch, storage, durable acceptance or host integration is implemented.
-The compiler does not yet emit or call this interface. See the
+storage, durable acceptance or application host is implemented. #269 adds the
+bounded generated Invoke entry described below. See the
 [runtime seam plan](implementation/issue-267-plan.md).
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
@@ -29,9 +29,17 @@ metadata, with internal generated bodies. Tests execute those bodies through a
 host-side harness for values, `Unit`, business `Result.Error`, await, helpers and
 borrowed resources; D# code cannot construct or directly call an actor. Host-owned
 dependencies cannot be released, aliased or forwarded as ordinary values, and
-async borrowed operations must be immediately awaited. This is a compiler slice:
-registration, dispatcher, durable execution and public actor invocation remain
-unimplemented.
+async borrowed operations must be immediately awaited. Registration, a production
+dispatcher and durable execution remain unimplemented.
+
+An explicit async top-level host entry can directly await a targeted
+`Invoke<Actor>(message)`. The compiler checks the actor's Handle input and emits
+the exact Handle result through a host-supplied `IActorDispatcher`; recording
+tests execute generated value, Unit and business-error results and isolated
+host contexts. Calls and captures of such entries from D#, Invoke inside actor
+helpers or lambdas, and both Dispatch forms remain unsupported. For affected CLI
+compilations, `DSHARP_RUNTIME_ASSEMBLY` supplies the runtime DLL copied into the
+generated project. This compiler seam does not implement dispatch or durability.
 
 Actor queue bindings can be checked as source metadata against the resolved
 Handle input. The compiler accepts a nonnullable declared record/union or Unit
