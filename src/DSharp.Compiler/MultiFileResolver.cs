@@ -471,6 +471,8 @@ internal static class MultiFileResolver
                 {
                     Name = Rename(actor.Name, symbol.Internal),
                     Dependencies = dependencies,
+                    QueueBindings = actor.QueueBindings.Select(binding => binding with
+                        { MessageType = ResolveType(binding.MessageType, typeParameters) }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported

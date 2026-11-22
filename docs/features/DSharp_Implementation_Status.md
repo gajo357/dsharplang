@@ -31,6 +31,13 @@ async borrowed operations must be immediately awaited. This is a compiler slice:
 registration, dispatcher, durable execution and public actor invocation remain
 unimplemented.
 
+Actor queue bindings can be checked as source metadata against the resolved
+Handle input. The compiler accepts a nonnullable declared record/union or Unit
+root and checks a conservative nested data subset after generic substitution;
+it rejects mismatched contracts, unsupported shapes and duplicate queue names.
+The checked binding does not register a target, encode a message or deliver work.
+The queue codec and other trigger slices remain unimplemented.
+
 The Result helper bodies are authored as D# in
 [`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
 compiler and parsed and bound as the active implementation by #142.
@@ -49,6 +56,7 @@ external interoperability guarantee follows from this lowering. See the
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
 | Checked actor declarations | One typed Handle, helpers, resource dependencies, source metadata and direct-call/escape rejection across supported source layouts | Internal body harness covers value, `Unit`, business error, await and host-owned resource use; no public dispatcher |
+| Checked queue bindings | Explicit actor-local Queue metadata, matching Handle input, source locations, conservative recursive data checks and mismatch/duplicate diagnostics | Compiler and CLI checks only; no registration, serialization or queue delivery |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Multiple source files and modules | Dotted module names, file-scoped imports, qualified lookup and duplicate/ambiguity diagnostics | Split modules and cross-module D# calls execute from multiple files |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |
