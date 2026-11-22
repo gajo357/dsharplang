@@ -12,7 +12,9 @@ its own issue, plan, branch, PR and evidence. Create those bounded child issues
 after this plan is merged; do not combine the children or mark their work done
 here. Search live issues, branches and PRs before creating each child and reuse
 any existing owner. The queue child is first. The parent remains open until all children and
-their shared compiler-contract acceptance checks are complete. Application
+their shared compiler-contract acceptance checks are complete. Actual codec
+compatibility and `Invoke`/`Dispatch` typing remain pending until the separately
+eligible #78 and #241 supply the contracts needed to prove them. Application
 registration and runtime integration remain downstream work; neither #54 nor
 #69 can be made a prerequisite of #52 because each already depends on it.
 
@@ -92,8 +94,8 @@ runtime API. Preserve existing tests and trusted verification.
 | #52 criterion | Evidence needed before the parent can close |
 | --- | --- |
 | AC1: explicit bindings and diagnostics | Each child tests target/input compatibility, invalid or duplicate declarations and source locations; HTTP also checks its applicable response mapping rules. |
-| AC2: immutable serializable messages and transport metadata | Queue child tests declared/Unit roots and recursively substituted nested shapes, capability rejection and retained metadata; later integrations prove supported encoding with #78 rather than assuming it. |
-| AC3: meaningful result, dispatch and no implicit subscription or bypass | Queue/event compiler tests preserve the checked result and existing direct-call restrictions, and show that checked targets do not create implicit subscription metadata. #54 and #241 later verify application registration and dispatch; #61/#69 verify actual receipt behavior. Do not present those downstream checks as already completed or require them as prerequisites of #52. |
+| AC2: immutable serializable messages and transport metadata | Queue child tests declared/Unit roots and recursively substituted nested shapes, capability rejection and retained metadata. Before closing #52, an approved #78 codec/schema contract must support the accepted shapes and compiler checks must enforce that contract; structural eligibility alone is insufficient. |
+| AC3: meaningful result, dispatch and no implicit subscription or bypass | Queue/event compiler tests preserve the checked result and existing direct-call restrictions, and show that checked targets do not create implicit subscription metadata. Before closing #52, use the independently eligible #241 compiler surface to prove a triggered actor can be targeted by both `Invoke` and `Dispatch` with the correct types. #54 later verifies application registration, while #61/#69 verify actual runtime receipt behavior. Do not present those downstream runtime checks as already completed or require them as prerequisites of #52. |
 | AC4: queue and event coverage | Queue child covers typed binding, business result, invalid payload and mismatch; event child checks an explicit public-target subscription contract without claiming host registration. Cross-child compiler tests use the same resolved actor model; #54 separately verifies the registration recipe. |
 
 ## This slice: files and verification
