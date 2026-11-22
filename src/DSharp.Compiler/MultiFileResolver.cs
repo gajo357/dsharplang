@@ -40,6 +40,8 @@ internal static class MultiFileResolver
         void Fail(Token token, string code, string message) => throw new SourceError(new(code, Path(token), token.Span, message));
         void Add(string module, string name, string kind, Token location, string? union = null, string? nameOverride = null)
         {
+            if (kind == "actor" && name == "Unit")
+                Fail(location, "DS2042", "Unit is reserved and cannot name an actor.");
             static bool IsType(string symbolKind) => symbolKind is "record" or "union" or "interface" or "service" or "resource" or "actor";
             static bool IsValue(string symbolKind) => symbolKind is "function" or "record" or "service" or "resource";
             var same = symbols.FirstOrDefault(s => s.Module == module && s.Name == name &&

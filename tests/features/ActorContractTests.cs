@@ -20,6 +20,22 @@ public sealed class ActorContractTests
         UserActorNameCannotCollideWithSyntheticResourceContract();
         ActorMessageTypesResolveAcrossSourceFiles();
         ActorIdentityAndDuplicateNamesRespectModuleBoundaries();
+        ActorCannotShadowUnit();
+    }
+
+    private void ActorCannotShadowUnit()
+    {
+        const string declaration = "actor Unit { Handle(message: Unit): Unit { () } }";
+        var single = DSharpCompiler.Compile("module Demo\n" + declaration, "unit-actor.ds");
+        Assert.Null(single.CSharp);
+        Assert.Contains(single.Diagnostics, diagnostic => diagnostic.Code == "DS2042" && diagnostic.Path == "unit-actor.ds");
+        var multi = DSharpCompiler.Compile(new[]
+        {
+            new SourceFile("types.ds", "module Types\ntype Request { value: int }"),
+            new SourceFile("unit-actor.ds", "module Workers\n" + declaration)
+        });
+        Assert.Null(multi.CSharp);
+        Assert.Contains(multi.Diagnostics, diagnostic => diagnostic.Code == "DS2042" && diagnostic.Path == "unit-actor.ds");
     }
 
     [Fact]

@@ -1474,6 +1474,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
             {
                 Take();
                 var actorName = DeclaredTypeIdentifier();
+                if (actorName.Text == "Unit")
+                    throw new SourceError(new("DS2042", path, actorName.Span, "Unit is reserved and cannot name an actor."));
                 var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
                 Expect("{");
                 var methods = new List<ActorMethodSyntax>();
@@ -2000,7 +2002,7 @@ public static class Binder
                 Fail("DS2015", item.Name, "Duplicate service or type declaration.");
         var actors = new Dictionary<string, ActorDeclarationSyntax>(StringComparer.Ordinal);
         foreach (var actor in syntax.Actors)
-            if (!actors.TryAdd(actor.Name.Text, actor) || records.ContainsKey(actor.Name.Text) || unions.ContainsKey(actor.Name.Text) ||
+            if (actor.Name.Text == "Unit" || !actors.TryAdd(actor.Name.Text, actor) || records.ContainsKey(actor.Name.Text) || unions.ContainsKey(actor.Name.Text) ||
                 interfaces.ContainsKey(actor.Name.Text) || services.ContainsKey(actor.Name.Text) ||
                 syntax.Functions.Any(function => function.Name.Text == actor.Name.Text))
                 Fail("DS2042", actor.Name, "Duplicate actor or conflicting declaration.");
