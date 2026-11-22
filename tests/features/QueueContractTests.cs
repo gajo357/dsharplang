@@ -145,8 +145,33 @@ public sealed class QueueContractTests
         Assert.Equal("mismatch.ds", diagnostic.Path);
         Assert.Contains("Other", diagnostic.Message);
         Assert.Contains("Result<int, string>", diagnostic.Message);
+        var mismatchHandle = mismatch.IndexOf("Handle(message", StringComparison.Ordinal);
+        var mismatchColumn = mismatchHandle - mismatch.LastIndexOf('\n', mismatchHandle);
+        Assert.Contains($"mismatch.ds(4,{mismatchColumn})", diagnostic.Message);
         Assert.True(diagnostic.Span.Start >= mismatch.IndexOf("trigger Queue", StringComparison.Ordinal));
         Assert.True(diagnostic.Span.Start < mismatch.IndexOf("Handle(message", StringComparison.Ordinal));
+
+        string[] contractErrors =
+        [
+            "actor Worker { trigger Queue<Requset>(\"q\") Handle(message: Request): int { 1 } }",
+            "actor Worker { trigger Queue<int>(\"q\") Handle(message: int): int { message } }",
+            "actor Worker { trigger Queue<Request>(\"\") Handle(message: Request): int { 1 } }",
+            "actor Worker { trigger Queue<Request>(\"q\") trigger Queue<Request>(\"q\") Handle(message: Request): int { 1 } }"
+        ];
+        foreach (var declaration in contractErrors)
+        {
+            var source = $"module Demo\ntype Request {{ value: int }}\n{declaration}";
+            var result = DSharpCompiler.Compile(source, "queue-signature.ds");
+            var error = Assert.Single(result.Diagnostics, d => d.Code == "DS2043");
+            var expectedInput = declaration.Contains("Queue<int>", StringComparison.Ordinal) ? "int" : "Request";
+            Assert.Contains($"Handle({expectedInput}): int", error.Message);
+            var handleStart = source.IndexOf("Handle(message", StringComparison.Ordinal);
+            var handleColumn = handleStart - source.LastIndexOf('\n', handleStart);
+            Assert.Contains($"queue-signature.ds(3,{handleColumn})", error.Message);
+            Assert.True(error.Span.Start >= source.IndexOf("trigger Queue", StringComparison.Ordinal) &&
+                error.Span.Start < source.IndexOf("Handle(message", StringComparison.Ordinal),
+                $"Expected trigger source location for: {declaration}");
+        }
 
         string[] malformed =
         [
@@ -208,6 +233,43 @@ public sealed class QueueContractTests
         var invalid = DSharpCompiler.Compile(mismatch);
         Assert.Null(invalid.CSharp);
         Assert.Contains(invalid.Diagnostics, d => d.Code == "DS2043" && d.Path == "worker.ds");
+
+        const string unimportedWorker = "module Workers\nactor Worker { trigger Queue<Contracts.Request>(\"orders\") Handle(message: Unit): int { 1 } }";
+        SourceFile[] missingImport =
+        [
+            new("contracts.ds", "module Contracts\ntype Request { value: int }"),
+            new("unimported-worker.ds", unimportedWorker)
+        ];
+        var missingImportResult = DSharpCompiler.Compile(missingImport);
+        Assert.Null(missingImportResult.CSharp);
+        var missingImportError = Assert.Single(missingImportResult.Diagnostics, d => d.Code == "DS2032");
+        Assert.Equal("unimported-worker.ds", missingImportError.Path);
+        Assert.Equal(unimportedWorker.IndexOf("Contracts.Request", StringComparison.Ordinal), missingImportError.Span.Start);
+        Assert.Contains("Handle(Unit): int", missingImportError.Message);
+        var unimportedHandle = unimportedWorker.IndexOf("Handle(message", StringComparison.Ordinal);
+        var unimportedHandleColumn = unimportedHandle - unimportedWorker.LastIndexOf('\n', unimportedHandle);
+        Assert.Contains($"unimported-worker.ds(2,{unimportedHandleColumn})", missingImportError.Message);
+
+        foreach (var trigger in new[] { "trigger Queue<__dsharp_module_symbol_0<int>>(\"q\")", "" })
+        {
+            SourceFile[] hidden =
+            [
+                new("secret.ds", "module A\ntype Secret<T> { data: T }"),
+                new("unimported.ds", $"module B\nactor Worker {{ {trigger} Handle(message: __dsharp_module_symbol_0<int>): int {{ 1 }} }}")
+            ];
+            var inaccessible = DSharpCompiler.Compile(hidden);
+            Assert.True(inaccessible.CSharp is null && inaccessible.Diagnostics.Any(d => d.Path == "unimported.ds"),
+                $"Expected source spelling of an internal type symbol to be rejected; trigger: {trigger}");
+        }
+
+        SourceFile[] nestedHidden =
+        [
+            new("secret.ds", "module A\ntype Secret<T> { data: T }"),
+            new("unimported.ds", "module B\ntype Outer<T> { value: T }\nactor Worker { trigger Queue<Outer<__dsharp_module_symbol_0<int>>>(\"q\") Handle(message: Outer<__dsharp_module_symbol_0<int>>): int { 1 } }")
+        ];
+        var nestedInaccessible = DSharpCompiler.Compile(nestedHidden);
+        Assert.True(nestedInaccessible.CSharp is null && nestedInaccessible.Diagnostics.Any(d => d.Path == "unimported.ds"),
+            "Expected a nested source spelling of an internal type symbol to be rejected.");
 
         string[] bypasses =
         [

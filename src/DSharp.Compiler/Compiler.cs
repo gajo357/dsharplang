@@ -2370,6 +2370,8 @@ public static class Binder
                     Fail("DS2042", method.Name, "Actor methods cannot be duplicated or overloaded.");
             if (!actorMethods.TryGetValue("Handle", out var handle) || handle.Method.Parameters.Count != 1)
                 Fail("DS2042", actor.Name, "An actor requires exactly one Handle with one typed message parameter.");
+            var expected = handle.Method.Parameters[0].Type.Text;
+            var expectedHandle = $"Expected Handle({ActorDisplayType(expected)}): {ActorDisplayType(handle.Method.ReturnType.Text)} declared at {handle.Method.Name.OriginPath ?? path}({handle.Method.Name.Span.Line},{handle.Method.Name.Span.Column}).";
             var queueBindings = new List<BoundQueueBinding>();
             var queueNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var binding in actor.QueueBindings)
@@ -2383,19 +2385,23 @@ public static class Binder
                     if (literal[i] is '"' or '\n' or '\r') validLiteral = false;
                     else if (literal[i] == '\\' && (++i >= literal.Length - 1 || literal[i] is '\n' or '\r')) validLiteral = false;
                 }
-                if (!validLiteral) Fail("DS2043", binding.QueueName, "Queue names require an ordinary string literal.");
-                var queueName = DecodeText(binding.QueueName, binding.QueueName.OriginPath ?? path);
+                if (!validLiteral) Fail("DS2043", binding.QueueName, $"Queue names require an ordinary string literal. {expectedHandle}");
+                string queueName;
+                try { queueName = DecodeText(binding.QueueName, binding.QueueName.OriginPath ?? path); }
+                catch (SourceError error)
+                {
+                    throw new SourceError(error.Diagnostic with { Message = $"{error.Diagnostic.Message} {expectedHandle}" });
+                }
                 if (queueName.Length == 0 || !queueNames.Add(queueName))
-                    Fail("DS2043", binding.QueueName, "Queue names must be nonempty and unique within an actor.");
+                    Fail("DS2043", binding.QueueName, $"Queue names must be nonempty and unique within an actor. {expectedHandle}");
                 var identity = binding.MessageType.Text;
                 if (!SupportedType(identity) || !GenericTypes.TryParse(identity, out var messageShape) ||
                     messageShape.IsNullable || (messageShape.Name != "Unit" &&
                     (!records.ContainsKey(messageShape.Name) && !unions.ContainsKey(messageShape.Name))) ||
                     !QueueData(messageShape))
-                    Fail("DS2043", binding.MessageType, "Queue input must be Unit or a supported record or union with only supported data fields.");
-                var expected = handle.Method.Parameters[0].Type.Text;
+                    Fail("DS2043", binding.MessageType, $"Queue input must be Unit or a supported record or union with only supported data fields. {expectedHandle}");
                 if (identity != expected)
-                    Fail("DS2043", binding.MessageType, $"Queue input must match Handle({ActorDisplayType(expected)}): {ActorDisplayType(handle.Method.ReturnType.Text)} declared at {handle.Method.Name.OriginPath ?? path}({handle.Method.Name.Span.Line},{handle.Method.Name.Span.Column}).");
+                    Fail("DS2043", binding.MessageType, $"Queue input must match Handle. {expectedHandle}");
                 queueBindings.Add(new BoundQueueBinding(queueName, ActorDisplayType(identity), binding.Keyword.OriginPath ?? path,
                     binding.Keyword.Span, binding.MessageType.Span, binding.QueueName.Span) { TypeIdentity = identity });
             }

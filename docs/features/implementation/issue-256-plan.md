@@ -88,3 +88,10 @@ hosted exact-head isolated verifier must pass before merge.
   31 automation tests passed. The local isolated verifier could not pull the
   pinned MCR SDK image layers (`Forbidden`); exact-head hosted verification is
   still required. `git diff --check` passed.
+- Follow-up review found an unimported generic source name could collide with a
+  synthetic multi-file symbol. Fresh-name allocation now reserves names inside
+  composite type tokens, and regressions cover direct and nested type uses with
+  and without a queue binding. Queue type/name diagnostics also retain the full
+  expected Handle signature and source location, including import errors. The
+  focused queue tests passed after these fixes; full verification is rerun for
+  the updated head, with hosted isolated evidence still required.

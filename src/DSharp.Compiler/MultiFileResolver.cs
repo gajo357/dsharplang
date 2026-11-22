@@ -17,7 +17,25 @@ internal static class MultiFileResolver
         void CollectNames(object? node)
         {
             if (node is null || node is string) return;
-            if (node is Token token) { occupied.Add(token.Text); return; }
+            if (node is Token token)
+            {
+                occupied.Add(token.Text);
+                // Type tokens may contain several identifiers, for example
+                // `Envelope<__dsharp_module_symbol_0<int>>`. Reserve each
+                // constituent as well as the whole token: otherwise a fresh
+                // internal symbol could make an unresolved source name refer
+                // to a declaration from an unimported module.
+                if (GenericTypes.TryParse(token.Text, out var shape))
+                {
+                    void ReserveTypeNames(TypeShape item)
+                    {
+                        occupied.Add(item.Name);
+                        foreach (var argument in item.Arguments) ReserveTypeNames(argument);
+                    }
+                    ReserveTypeNames(shape);
+                }
+                return;
+            }
             if (node is System.Collections.IEnumerable list)
             {
                 foreach (var item in list) CollectNames(item);
@@ -467,12 +485,29 @@ internal static class MultiFileResolver
                 var typeParameters = new HashSet<string>(StringComparer.Ordinal);
                 var dependencies = actor.Dependencies.Select(dependency => dependency with
                     { Type = ResolveType(dependency.Type, typeParameters) }).ToArray();
+                Token ResolveQueueMessageType(ActorQueueBindingSyntax binding)
+                {
+                    try { return ResolveType(binding.MessageType, typeParameters); }
+                    catch (SourceError error) when (error.Diagnostic.Code is "DS2031" or "DS2032")
+                    {
+                        // Preserve the specific import/ambiguity error and its
+                        // location while showing the source-facing contract.
+                        var handles = actor.Methods.Where(method => method.Name.Text == "Handle").ToArray();
+                        if (handles.Length != 1 || handles[0].Parameters.Count != 1) throw;
+                        var handle = handles[0];
+                        var diagnostic = error.Diagnostic;
+                        throw new SourceError(diagnostic with
+                        {
+                            Message = diagnostic.Message + $" Expected Handle({handle.Parameters[0].Type.Text}): {handle.ReturnType.Text} declared at {Path(handle.Name)}({handle.Name.Span.Line},{handle.Name.Span.Column})."
+                        });
+                    }
+                }
                 actors.Add(actor with
                 {
                     Name = Rename(actor.Name, symbol.Internal),
                     Dependencies = dependencies,
                     QueueBindings = actor.QueueBindings.Select(binding => binding with
-                        { MessageType = ResolveType(binding.MessageType, typeParameters) }).ToArray(),
+                        { MessageType = ResolveQueueMessageType(binding) }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported
