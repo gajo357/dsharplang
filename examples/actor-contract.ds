@@ -1,0 +1,15 @@
+module ActorContract
+
+// The compiler checks this declaration and emits an internal body. Dispatch and
+// host registration are future work; application code cannot construct it.
+type Request { value: int }
+
+resource Offset {
+    read(): int { 2 }
+    release(): Unit { () }
+}
+
+actor Calculator(offset: Offset) {
+    double(value: int): int { value * 2 }
+    Handle(message: Request): int { double(message.value) + offset.read() }
+}
