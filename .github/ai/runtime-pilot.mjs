@@ -39,8 +39,20 @@ try {
   const report = readXml(join(trial, 'runtime-features.trx'));
   const results = descendants(report, 'UnitTestResult', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010');
   assert(results.some(r => r.attributes.outcome === 'Failed' && r.attributes.testName?.includes('RuntimeVerifierFailurePilot.DeliberateFailure')), 'Expected intentional test failure not found in runtime TRX');
-  writeFileSync(join(reports, 'pilot.json'), JSON.stringify({ exitCode: result.status, baseline: evidence.baseline, intentionalTest: 'RuntimeVerifierFailurePilot.DeliberateFailure', outcome: 'Failed' }, null, 2));
-  console.log('The real isolated verifier rejected RuntimeVerifierFailurePilot.DeliberateFailure.');
+  // Remove only the disposable probe, then prove the same real verifier passes
+  // the clean candidate. Both reports use fresh directories and strict parsing.
+  rmSync(failure);
+  const clean = mkdtempSync(join(reports, 'clean-'));
+  const cleanLog = openSync(join(clean, 'verification.log'), 'w');
+  let cleanResult;
+  try { cleanResult = spawnSync(process.execPath, [join(trusted, '.github/ai/verify-runtime.mjs'), candidate, clean], { stdio: ['ignore', cleanLog, cleanLog], timeout: 540000, killSignal: 'SIGKILL' }); }
+  finally { closeSync(cleanLog); }
+  if (cleanResult.error) throw cleanResult.error;
+  assert.equal(cleanResult.status, 0, 'Clean candidate failed isolated runtime verification after removing the probe');
+  const cleanEvidence = JSON.parse(readFileSync(join(clean, 'runtime.json'), 'utf8'));
+  assert(cleanEvidence.build === 'success' && cleanEvidence.baseline?.total >= 2 && cleanEvidence.features?.total > 0, 'Clean runtime evidence missing');
+  writeFileSync(join(reports, 'pilot.json'), JSON.stringify({ exitCode: result.status, baseline: evidence.baseline, intentionalTest: 'RuntimeVerifierFailurePilot.DeliberateFailure', outcome: 'Failed', cleanExitCode: cleanResult.status, clean: cleanEvidence }, null, 2));
+  console.log('The real isolated verifier rejected the intentional failure and passed after its removal.');
 } finally {
   rmSync(candidate, { recursive: true, force: true });
 }
