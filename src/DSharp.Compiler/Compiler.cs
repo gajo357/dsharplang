@@ -8,6 +8,7 @@ public sealed record Diagnostic(string Code, string Path, SourceSpan Span, strin
 public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics)
 {
     public IReadOnlyList<BoundActorDeclaration> Actors { get; init; } = Array.Empty<BoundActorDeclaration>();
+    public bool RequiresRuntime { get; init; }
 }
 public sealed record SourceFile(string Path, string Text);
 public sealed record ModuleExport(string Module, string Name, string InternalName);
@@ -212,6 +213,7 @@ public sealed record BoundServiceCall(BoundExpression Receiver, string ReceiverT
 public sealed record BoundServiceConversion(BoundExpression Expression, string Type) : BoundExpression;
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundAwait(BoundExpression Operand, string Type) : BoundExpression;
+public sealed record BoundActorInvocation(string ActorIdentity, BoundExpression Message, string InputType, string ResultType) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
 // Keep this conversion explicit rather than relying on C#'s generic T? rules.
@@ -346,6 +348,7 @@ public sealed record BoundLocal(string Name, int Value, string? InitializerLocal
 }
 public sealed record BoundFunction(string Name, int Value)
 {
+    public bool RequiresDispatcher { get; init; }
     public bool IsOwnedFactory { get; init; }
     public bool IsActorBody { get; init; }
     public IReadOnlyList<string> TypeParameters { get; init; } = Array.Empty<string>();
@@ -418,6 +421,7 @@ public sealed record BoundActorDeclaration(string Name, string InputType, string
 }
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
+    public IReadOnlyList<BoundActorRoute> ActorRoutes { get; init; } = Array.Empty<BoundActorRoute>();
     public IReadOnlyList<BoundRecordDeclaration> Records { get; init; } = Array.Empty<BoundRecordDeclaration>();
     public IReadOnlyList<BoundUnionDeclaration> Unions { get; init; } = Array.Empty<BoundUnionDeclaration>();
     public string? ListSymbol { get; init; }
@@ -431,6 +435,7 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public IReadOnlyList<BoundServiceDeclaration> Services { get; init; } = Array.Empty<BoundServiceDeclaration>();
     public IReadOnlyList<BoundActorDeclaration> Actors { get; init; } = Array.Empty<BoundActorDeclaration>();
 }
+public sealed record BoundActorRoute(string ActorIdentity, string Key, string InputType, string ResultType);
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
 {
@@ -3944,6 +3949,7 @@ public static class Binder
         // explicit signatures permit binding their bodies after the user code.
         inferenceOrder.AddRange(resultHelpers.Values);
         var functions = new List<BoundFunction>();
+        var actorRoutes = new Dictionary<string, BoundActorRoute>(StringComparer.Ordinal);
         // Infer every omitted signature before the final body-checking pass.
         // Runtime-unreachable calls may still need a callee's inferred type
         // during final checking, even when they are not call-graph edges.
@@ -3977,6 +3983,9 @@ public static class Binder
             var resourceHandles = new HashSet<string>(StringComparer.Ordinal);
             var directResourceAwait = false;
             CallSyntax? directlyAwaitedActorHelper = null;
+            CallSyntax? directlyAwaitedInvoke = null;
+            var lambdaDepth = 0;
+            var requiresDispatcher = false;
             // Only individual producer call nodes explicitly marked at a
             // transfer boundary may produce an owned resource. Arguments are
             // never marked, so nesting an owned value into a different call
@@ -5180,7 +5189,9 @@ public static class Binder
                         while (directOperand is GroupSyntax awaitedGroup) directOperand = awaitedGroup.Inner;
                         var savedDirectAwait = directResourceAwait;
                         var savedActorHelperAwait = directlyAwaitedActorHelper;
+                        var savedInvokeAwait = directlyAwaitedInvoke;
                         directlyAwaitedActorHelper = directOperand as CallSyntax;
+                        directlyAwaitedInvoke = directOperand as CallSyntax;
                         if (directOperand is MemberCallSyntax directMember)
                         {
                             ExpressionSyntax directReceiver = directMember.Receiver;
@@ -5191,7 +5202,7 @@ public static class Binder
                         else directResourceAwait = false;
                         (BoundExpression Expression, string Type) awaitOperand;
                         try { awaitOperand = BindExpression(awaited.Operand, awaitHint); }
-                        finally { directResourceAwait = savedDirectAwait; directlyAwaitedActorHelper = savedActorHelperAwait; }
+                        finally { directResourceAwait = savedDirectAwait; directlyAwaitedActorHelper = savedActorHelperAwait; directlyAwaitedInvoke = savedInvokeAwait; }
                         var awaitedType = awaitOperand.Type == "<never>" ? KnownType(awaitOperand.Expression) : awaitOperand.Type;
                         if (awaitedType is null || !GenericTypes.TryParse(awaitedType, out var taskShape) ||
                             taskShape.Name != taskSymbol || taskShape.IsNullable || taskShape.Arguments.Count != 1)
@@ -6047,6 +6058,34 @@ public static class Binder
                             if (ownedCalls.Contains(call)) ownedMemberCalls.Add(implicitMember);
                             if (awaitedOwnedCalls.Contains(call)) awaitedOwnedMembers.Add(implicitMember);
                             return BindExpression(implicitMember, expectedResult);
+                        }
+                        if (call.Name.Text == "Invoke" && !signatures.ContainsKey(call.Name.Text) &&
+                            !records.ContainsKey(call.Name.Text) && !unions.ContainsKey(call.Name.Text) &&
+                            !interfaces.ContainsKey(call.Name.Text) && !services.ContainsKey(call.Name.Text) &&
+                            !actors.ContainsKey(call.Name.Text) && !cases.ContainsKey(call.Name.Text) &&
+                            !functionTypeScope.ContainsKey(call.Name.Text))
+                        {
+                            if (!ReferenceEquals(call, directlyAwaitedInvoke) || !function.IsAsync || lambdaDepth != 0 ||
+                                !sourceHttpFunctions.Contains(function.Name.Text))
+                                Fail("DS2047", call.Name, "Actor Invoke must be directly awaited in an async top-level host entry.");
+                            if (call.TypeArguments.Count != 1 || call.Arguments.Count != 1)
+                                Fail("DS2047", call.Name, "Actor Invoke requires one explicit target and one message.");
+                            var actorIdentity = ScopedType(call.TypeArguments[0], functionTypeScope).Text;
+                            if (!actors.TryGetValue(actorIdentity, out var targetActor))
+                                Fail("DS2047", call.TypeArguments[0], "Actor Invoke requires a visible actor target.");
+                            var targetHandle = targetActor!.Methods.Single(method => method.Name.Text == "Handle");
+                            var inputType = targetHandle.Parameters[0].Type.Text;
+                            var actorResultType = targetHandle.ReturnType.Text;
+                            var message = BindExpression(call.Arguments[0], inputType);
+                            if (message.Type != inputType && message.Type != "<never>")
+                                Fail("DS2047", call.Arguments[0].Token, $"Actor Invoke requires message type {ActorDisplayType(inputType)}.");
+                            var routeKey = syntax.TypeDisplayNames.TryGetValue(targetActor.Name.Text, out var actorDisplay)
+                                ? actorDisplay : syntax.Name.Text + "." + targetActor.Name.Text;
+                            actorRoutes.TryAdd(actorIdentity, new BoundActorRoute(actorIdentity, routeKey, inputType, actorResultType));
+                            requiresDispatcher = true;
+                            taskUsed = true;
+                            return (new BoundActorInvocation(actorIdentity, message.Expression, inputType, actorResultType),
+                                message.Type == "<never>" ? "<never>" : taskSymbol + "<" + actorResultType + ">");
                         }
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
@@ -7712,6 +7751,7 @@ public static class Binder
                 }
                 var expectedReturn = partialReturnHint;
                 if (expectedReturn is not null && !SupportedType(expectedReturn, activeTypeParameters)) expectedReturn = null;
+                lambdaDepth++;
                 try
                 {
                     // Each source lambda establishes its own await boundary.
@@ -7778,6 +7818,7 @@ public static class Binder
                 }
                 finally
                 {
+                    lambdaDepth--;
                     locals = savedLocals;
                     inaccessibleCaptures = savedCaptures;
                     currentReturnType = savedReturnType;
@@ -7827,6 +7868,7 @@ public static class Binder
                 Body = body.Block.Statements.Count == 0 ? null : body.Block with { Result = resultExpression },
                 HasReturn = hasReturn,
                 IsAsync = function.IsAsync,
+                RequiresDispatcher = requiresDispatcher,
                 IsOwnedFactory = ownedFactories.Contains(function.Name.Text),
                 IsActorBody = actorMethodsByBody.ContainsKey(function.Name.Text),
                 ResultLocal = (result.Expression as BoundReference)?.Name,
@@ -7839,6 +7881,52 @@ public static class Binder
             if (resultHelpers.ContainsKey(function.Name.Text))
                 foreach (var dependency in usedResultHelpers)
                     if (!boundPreludeHelpers.Contains(dependency)) inferenceOrder.Add(resultHelpers[dependency]);
+        }
+        // Until scoped context propagation is implemented, host-entry functions
+        // cannot be called, partially applied or captured from D# code.
+        var dispatcherEntries = functions.Where(item => item.RequiresDispatcher).Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (var actor in syntax.Actors)
+        {
+            void CheckHttpReference(Token token, string? resolved, bool referencesResolved)
+            {
+                var identity = referencesResolved ? resolved : token.Text;
+                if (identity is not null && dispatcherEntries.Contains(identity))
+                    Fail("DS2047", token, "A dispatcher host entry cannot be used as an HTTP callback yet.");
+            }
+            foreach (var binding in actor.HttpBindings)
+            {
+                CheckHttpReference(binding.Binder, binding.BinderIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BindingMapper, binding.BindingMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.SuccessMapper, binding.SuccessMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BusinessMapper, binding.BusinessMapperIdentity, binding.ReferencesResolved);
+            }
+            foreach (var binding in actor.HttpPlainBindings)
+            {
+                CheckHttpReference(binding.Binder, binding.BinderIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BindingMapper, binding.BindingMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.SuccessMapper, binding.SuccessMapperIdentity, binding.ReferencesResolved);
+            }
+        }
+        foreach (var owner in functions)
+        {
+            void CheckEntryUse(object? node)
+            {
+                if (node is null or string) return;
+                if (node is BoundCall call && dispatcherEntries.Contains(call.Name))
+                    Fail("DS2047", call.Location ?? signatures[owner.Name].Name, "A dispatcher host entry cannot be called from D# yet.");
+                if (node is BoundFunctionReference reference && dispatcherEntries.Contains(reference.Name))
+                    Fail("DS2047", reference.Location ?? signatures[owner.Name].Name, "A dispatcher host entry cannot be captured from D# yet.");
+                if (node is System.Collections.IEnumerable sequence)
+                {
+                    foreach (var item in sequence) CheckEntryUse(item);
+                    return;
+                }
+                var type = node.GetType();
+                if (!type.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
+                foreach (var property in type.GetProperties())
+                    if (property.GetIndexParameters().Length == 0) CheckEntryUse(property.GetValue(node));
+            }
+            CheckEntryUse(owner);
         }
         // Generic parameters used in data positions must remain data-safe at
         // every call, even when the function returns Unit or forwards through
@@ -7972,6 +8060,7 @@ public static class Binder
         var byName = functions.ToDictionary(function => function.Name, StringComparer.Ordinal);
         return new(syntax.Name.Text, syntax.Functions.Select(function => byName[function.Name.Text]).Concat(usedResultHelpers.Select(name => byName[name])).ToArray())
         {
+            ActorRoutes = actorRoutes.Values.ToArray(),
             ListSymbol = listUsed ? listSymbol : null,
             OptionSymbol = optionUsed ? optionSymbol : null,
             MapSymbol = mapUsed ? mapSymbol : null,
@@ -8065,6 +8154,9 @@ public static class CSharpEmitter
         var hashInterface = hasKeyedCollections ? UniqueGlobal("__DSharp_Hashable") : null;
         var container = "__DSharp_Functions";
         while (!globalNames.Add(container)) container += "_";
+        var routeNames = module.ActorRoutes.Select((route, index) => (route.ActorIdentity,
+                Name: UniqueGlobal("__dsharp_actor_route_" + index.ToString(CultureInfo.InvariantCulture))))
+            .ToDictionary(item => item.ActorIdentity, item => item.Name, StringComparer.Ordinal);
         var unitType = "__DSharp_Unit";
         while (!globalNames.Add(unitType)) unitType += "_";
         var signalType = "__DSharp_ReturnSignal";
@@ -8640,9 +8732,14 @@ public static class CSharpEmitter
                     output.Append("    public static ").Append(function.IsAsync ? "global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(export.Name)
                         .Append(TypeParameterList(function.TypeParameters)).Append("(");
                     var arguments = new List<string>();
+                    if (function.RequiresDispatcher)
+                    {
+                        output.Append("global::DSharp.Runtime.IActorDispatcher __dsharp_dispatcher");
+                        arguments.Add("__dsharp_dispatcher");
+                    }
                     for (var i = 0; i < function.Parameters.Count; i++)
                     {
-                        if (i != 0) output.Append(", ");
+                        if (i != 0 || function.RequiresDispatcher) output.Append(", ");
                         var argument = "__arg" + i.ToString(CultureInfo.InvariantCulture);
                         arguments.Add(argument);
                         output.Append(CType(function.ParameterTypes[i])).Append(" ").Append(argument);
@@ -8654,6 +8751,11 @@ public static class CSharpEmitter
             }
         }
         output.Append("public abstract class ").Append(container).Append("\n{\n");
+        SetTypeParameters(Array.Empty<string>(), Array.Empty<bool>());
+        foreach (var route in module.ActorRoutes)
+            output.Append("    private static readonly global::DSharp.Runtime.ActorRoute<").Append(CType(route.InputType)).Append(", ")
+                .Append(CType(route.ResultType)).Append("> ").Append(routeNames[route.ActorIdentity]).Append(" = new(\"")
+                .Append(route.Key).Append("\");\n");
         bool NeedsLambdaReturn(object? node)
         {
             if (node is null || node is string) return false;
@@ -8741,9 +8843,10 @@ public static class CSharpEmitter
             SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
             output.Append(function.IsOwnedFactory || function.IsActorBody ? "    internal static " : "    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
                 .Append(TypeParameterList(function.TypeParameters)).Append("(");
+            if (function.RequiresDispatcher) output.Append("global::DSharp.Runtime.IActorDispatcher __dsharp_dispatcher");
             for (var i = 0; i < function.Parameters.Count; i++)
             {
-                if (i != 0) output.Append(", ");
+                if (i != 0 || function.RequiresDispatcher) output.Append(", ");
                 output.Append(CType(function.ParameterTypes.Count == 0 ? "int" : function.ParameterTypes[i])).Append(" __dsharp_param_").Append(i.ToString(CultureInfo.InvariantCulture));
             }
             output.Append(")");
@@ -9518,6 +9621,9 @@ public static class CSharpEmitter
                         return "(" + serviceReceiver + ")." + CapabilityMethod(serviceCall.Method) + "(" + string.Join(", ", serviceArguments) + ")";
                     case BoundServiceConversion conversion:
                         return "((" + CType(conversion.Type) + ")(" + EmitExpression(conversion.Expression) + "))";
+                    case BoundActorInvocation invocation:
+                        return "__dsharp_dispatcher.Invoke<" + CType(invocation.InputType) + ", " + CType(invocation.ResultType) + ">(" +
+                            routeNames[invocation.ActorIdentity] + ", " + EmitExpression(invocation.Message) + ")";
                     case BoundCall call:
                         var args = call.Arguments.Select(EmitExpression).ToArray();
                         var slots = functionProjections[call.Name];
@@ -9673,11 +9779,11 @@ public static class DSharpCompiler
             if (!NeedsModuleResolution(parsed, tokens))
             {
                 var bound = Binder.Bind(parsed, path);
-                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors };
+                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors, RequiresRuntime = bound.ActorRoutes.Count > 0 };
             }
             var resolved = MultiFileResolver.Resolve(new[] { parsed });
             var resolvedBound = Binder.Bind(resolved.Unified, path);
-            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors };
+            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors, RequiresRuntime = resolvedBound.ActorRoutes.Count > 0 };
         }
         catch (SourceError error) { return new(null, [error.Diagnostic]); }
     }
@@ -9692,11 +9798,11 @@ public static class DSharpCompiler
             if (parsed.Length == 1 && !NeedsModuleResolution(parsed[0], tokenSets[0]))
             {
                 var bound = Binder.Bind(parsed[0], sources[0].Path);
-                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors };
+                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors, RequiresRuntime = bound.ActorRoutes.Count > 0 };
             }
             var resolved = MultiFileResolver.Resolve(parsed);
             var resolvedBound = Binder.Bind(resolved.Unified, sources[0].Path);
-            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors };
+            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors, RequiresRuntime = resolvedBound.ActorRoutes.Count > 0 };
         }
         catch (SourceError error) { return new(null, new[] { error.Diagnostic }); }
     }

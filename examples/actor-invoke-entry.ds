@@ -1,0 +1,7 @@
+module ActorInvokeEntry
+
+// The generated entry takes a dispatcher supplied by its host. The dispatcher
+// ABI is a seam; this example does not implement durable acceptance or execution.
+type Request { value: int }
+actor Worker { Handle(message: Request): int { message.value } }
+async fn run(value: int): int { await Invoke<Worker>(Request { value = value }) }
