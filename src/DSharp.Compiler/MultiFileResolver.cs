@@ -507,6 +507,14 @@ internal static class MultiFileResolver
                 string? ResolveHttpFunction(Token name) => WithTriggerHandleContext(() =>
                 {
                     var dot = name.Text.LastIndexOf('.');
+                    // Actor-local names shadow module/imported values. They are
+                    // not ordinary module functions, so leave them for the
+                    // binder's HTTP-callable diagnostic rather than searching
+                    // past the shadow or reporting unrelated import ambiguity.
+                    var firstDot = name.Text.IndexOf('.');
+                    var root = firstDot < 0 ? name.Text : name.Text[..firstDot];
+                    if (actor.Methods.Any(method => method.Name.Text == root) ||
+                        actor.Dependencies.Any(dependency => dependency.Name.Text == root)) return null;
                     var found = dot < 0
                         ? ValueName(name)
                         : Qualified(name, name.Text[..dot], name.Text[(dot + 1)..],

@@ -2631,6 +2631,14 @@ public static class Binder
             var businessErrorType = resultShape.Arguments[1].ToString();
             FunctionSyntax SourceFunction(Token token, string? resolved, bool mapper)
             {
+                // Actor-local names take precedence over module functions in
+                // ordinary actor expressions. A descriptor cannot reference an
+                // actor helper or dependency as a host callback.
+                var separator = token.Text.IndexOf('.');
+                var rootName = separator < 0 ? token.Text : token.Text[..separator];
+                if (actor.Methods.Any(method => method.Name.Text == rootName) ||
+                    actor.Dependencies.Any(dependency => dependency.Name.Text == rootName))
+                    HttpError(token, "HTTP functions cannot name an actor-local helper or dependency.");
                 var identity = binding.ReferencesResolved ? resolved : token.Text;
                 if (identity is null || !sourceHttpFunctions.Contains(identity) || !signatures.TryGetValue(identity, out var function))
                 {

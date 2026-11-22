@@ -96,3 +96,11 @@ results. Preserve all existing tests and verification limits.
   exact-head hosted compiler/runtime evidence remains required. No existing
   tests or verification limits were weakened. General HTTP preprocessing,
   non-Result/Dispatch mappings and actual transport behavior remain pending.
+- Follow-up review found that HTTP callback lookup skipped actor-local helpers
+  and dependencies, including when they shadowed the first component of a
+  qualified name. Resolver and binder now respect that ordinary precedence;
+  focused tests cover unqualified, qualified and ambiguous cases. Hosted
+  Compiler also exceeded the unchanged report limit after all 18+394 tests
+  passed, so its temporary checkout path was shortened on this PR. The exact
+  verification commands, coverage and size guard are unchanged; full local
+  and hosted checks are rerun for this revision.

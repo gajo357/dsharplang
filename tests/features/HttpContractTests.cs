@@ -219,6 +219,73 @@ public sealed class HttpContractTests
             $"Expected qualified binder to bypass local value shadow: {string.Join("; ", qualifiedResult.Diagnostics)}");
         Assert.Equal("Binding.decode", Assert.Single(Assert.Single(qualifiedResult.Actors).HttpBindings).Binder);
 
+        (string Label, string ActorDeclaration)[] actorShadows =
+        [
+            ("actor helper", "actor Worker { trigger Http<Reply>(decode, mapBinding, mapSuccess, mapBusiness) decode(raw: Raw): int { 42 } Handle(message: Request): Result<int, bool> { Success(message.value) } }"),
+            ("actor dependency", "interface Store { read(): int }\nactor Worker(decode: Store) { trigger Http<Reply>(decode, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }")
+        ];
+        foreach (var (label, declaration) in actorShadows)
+        {
+            var source = $"module Workers\nimport Contracts\nimport Binding\n{declaration}";
+            SourceFile[] shadowSources = [new("contracts.ds", mapperContracts), new("binding.ds", bindingModule), new("actor-shadow.ds", source)];
+            var shadowResult = DSharpCompiler.Compile(shadowSources);
+            Assert.Null(shadowResult.CSharp);
+            var error = Assert.Single(shadowResult.Diagnostics, d => d.Code == "DS2046");
+            Assert.Equal("actor-shadow.ds", error.Path);
+            Assert.Equal(source.IndexOf("decode, mapBinding", StringComparison.Ordinal), error.Span.Start);
+            Assert.Contains("Handle(Contracts.Request): Result<int, bool>", error.Message);
+            var handle = source.IndexOf("Handle(message", StringComparison.Ordinal);
+            var line = source[..handle].Count(c => c == '\n') + 1;
+            var column = handle - source.LastIndexOf('\n', handle);
+            Assert.Contains($"actor-shadow.ds({line},{column})", error.Message);
+
+            var explicitSource = source.Replace("(decode, mapBinding", "(Binding.decode, mapBinding", StringComparison.Ordinal);
+            SourceFile[] explicitSources = [new("contracts.ds", mapperContracts), new("binding.ds", bindingModule), new("actor-qualified.ds", explicitSource)];
+            var explicitResult = DSharpCompiler.Compile(explicitSources);
+            Assert.True(explicitResult.CSharp is not null && explicitResult.Diagnostics.Count == 0,
+                $"Expected a qualified binder to bypass {label} shadow: {string.Join("; ", explicitResult.Diagnostics)}");
+
+            var ambiguousImportsSource = source.Replace("import Binding\n", "import Binding\nimport Types\n", StringComparison.Ordinal);
+            SourceFile[] ambiguousShadowSources = [new("contracts.ds", mapperContracts), new("binding.ds", bindingModule), new("types.ds", "module Types\ntype decode { value: int }"), new("actor-shadow.ds", ambiguousImportsSource)];
+            var ambiguousShadowResult = DSharpCompiler.Compile(ambiguousShadowSources);
+            Assert.True(ambiguousShadowResult.CSharp is null && ambiguousShadowResult.Diagnostics.Any(d =>
+                d.Code == "DS2046" && d.Path == "actor-shadow.ds" &&
+                d.Span.Start == ambiguousImportsSource.IndexOf("decode, mapBinding", StringComparison.Ordinal)),
+                $"Expected {label} to shadow ambiguous imported values: {string.Join("; ", ambiguousShadowResult.Diagnostics)}");
+        }
+
+        (string Label, string ActorDeclaration)[] qualifiedShadows =
+        [
+            ("dependency", "interface Store { read(): int }\nactor Worker(Binding: Store) { trigger Http<Reply>(BINDER, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }"),
+            ("helper", "actor Worker { trigger Http<Reply>(BINDER, mapBinding, mapSuccess, mapBusiness) Binding(value: int): int { value } Handle(message: Request): Result<int, bool> { Success(message.value) } }")
+        ];
+        foreach (var (label, declaration) in qualifiedShadows)
+        foreach (var moduleName in new[] { "Binding", "Binding.Child" })
+        {
+            var qualifiedBinder = $"{moduleName}.decode";
+            var source = $"module Workers\nimport Contracts\nimport {moduleName}\n{declaration.Replace("BINDER", qualifiedBinder, StringComparison.Ordinal)}";
+            var binderSource = bindingModule.Replace("module Binding\n", $"module {moduleName}\n", StringComparison.Ordinal);
+            SourceFile[] shadowSources = [new("contracts.ds", mapperContracts), new("binding.ds", binderSource), new("qualified-shadow.ds", source)];
+            var shadowResult = DSharpCompiler.Compile(shadowSources);
+            Assert.Null(shadowResult.CSharp);
+            var error = Assert.Single(shadowResult.Diagnostics, d => d.Code == "DS2046");
+            Assert.Equal("qualified-shadow.ds", error.Path);
+            Assert.Equal(source.IndexOf(qualifiedBinder, StringComparison.Ordinal), error.Span.Start);
+            Assert.Contains("Handle(Contracts.Request): Result<int, bool>", error.Message);
+            var handle = source.IndexOf("Handle(message", StringComparison.Ordinal);
+            var line = source[..handle].Count(c => c == '\n') + 1;
+            var column = handle - source.LastIndexOf('\n', handle);
+            Assert.Contains($"qualified-shadow.ds({line},{column})", error.Message);
+            Assert.True(error.Span.Start < handle, $"Expected {label} shadow to identify {qualifiedBinder} in the descriptor.");
+        }
+
+        const string nestedQualified = "module Workers\nimport Contracts\nimport Binding.Child\nactor Worker { trigger Http<Reply>(Binding.Child.decode, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }";
+        var nestedBinding = bindingModule.Replace("module Binding\n", "module Binding.Child\n", StringComparison.Ordinal);
+        SourceFile[] nestedQualifiedSources = [new("contracts.ds", mapperContracts), new("binding.ds", nestedBinding), new("nested-qualified.ds", nestedQualified)];
+        var nestedQualifiedResult = DSharpCompiler.Compile(nestedQualifiedSources);
+        Assert.True(nestedQualifiedResult.CSharp is not null && nestedQualifiedResult.Diagnostics.Count == 0,
+            $"Expected an unshadowed nested qualified binder to compile: {string.Join("; ", nestedQualifiedResult.Diagnostics)}");
+
         const string ambiguousValue = "module Workers\nimport Contracts\nimport Binding\nimport Types\nactor Worker { trigger Http<Reply>(decode, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }";
         SourceFile[] ambiguousValueSources = [new("contracts.ds", mapperContracts), new("binding.ds", bindingModule), new("types.ds", "module Types\ntype decode { value: int }"), new("value-worker.ds", ambiguousValue)];
         var ambiguousValueResult = DSharpCompiler.Compile(ambiguousValueSources);
