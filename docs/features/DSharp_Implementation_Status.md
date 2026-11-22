@@ -22,6 +22,15 @@ in stored Result values. Callable HTTP preprocessing, Logger and the remaining
 #129 integrations remain future work.
 The #35 plain-pipe and #36 tuple milestones retain their tested scope.
 
+Actor declarations now expose checked Handle input/result, dependency and source
+metadata, with internal generated bodies. Tests execute those bodies through a
+host-side harness for values, `Unit`, business `Result.Error`, await, helpers and
+borrowed resources; D# code cannot construct or directly call an actor. Host-owned
+dependencies cannot be released, aliased or forwarded as ordinary values, and
+async borrowed operations must be immediately awaited. This is a compiler slice:
+registration, dispatcher, durable execution and public actor invocation remain
+unimplemented.
+
 The Result helper bodies are authored as D# in
 [`Result.ds`](../../src/DSharp.Compiler/Prelude/Result.ds), packaged with the
 compiler and parsed and bound as the active implementation by #142.
@@ -39,6 +48,7 @@ external interoperability guarantee follows from this lowering. See the
 
 | Feature | Parse/type-check | Generated execution |
 | --- | --- | --- |
+| Checked actor declarations | One typed Handle, helpers, resource dependencies, source metadata and direct-call/escape rejection across supported source layouts | Internal body harness covers value, `Unit`, business error, await and host-owned resource use; no public dispatcher |
 | One module, parameterless int literal functions | Implemented and tested | Demo.answer returns 42 |
 | Multiple source files and modules | Dotted module names, file-scoped imports, qualified lookup and duplicate/ambiguity diagnostics | Split modules and cross-module D# calls execute from multiple files |
 | Immutable function-local int `let` bindings | Inferred/explicit int, earlier-local initializers and literal/local final expressions tested | Chained bindings return 42; independent functions retain distinct values |

@@ -5,7 +5,10 @@ namespace DSharp.Compiler;
 
 public sealed record SourceSpan(int Start, int Length, int Line, int Column);
 public sealed record Diagnostic(string Code, string Path, SourceSpan Span, string Message);
-public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics);
+public sealed record Compilation(string? CSharp, IReadOnlyList<Diagnostic> Diagnostics)
+{
+    public IReadOnlyList<BoundActorDeclaration> Actors { get; init; } = Array.Empty<BoundActorDeclaration>();
+}
 public sealed record SourceFile(string Path, string Text);
 public sealed record ModuleExport(string Module, string Name, string InternalName);
 public sealed record ModuleResolution(ModuleSyntax Unified, IReadOnlyList<ModuleExport> Exports);
@@ -112,6 +115,14 @@ public sealed record ServiceDeclarationSyntax(Token Name, IReadOnlyList<Paramete
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
 public sealed record ResourceDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ServiceMethodSyntax> Methods)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record ActorMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync, BlockSyntax Body)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
+public sealed record ActorDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ActorMethodSyntax> Methods)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
@@ -285,12 +296,14 @@ public sealed record ModuleSyntax(Token Name, IReadOnlyList<FunctionSyntax> Func
     public IReadOnlyList<InterfaceDeclarationSyntax> Interfaces { get; init; } = Array.Empty<InterfaceDeclarationSyntax>();
     public IReadOnlyList<ServiceDeclarationSyntax> Services { get; init; } = Array.Empty<ServiceDeclarationSyntax>();
     public IReadOnlyList<ResourceDeclarationSyntax> Resources { get; init; } = Array.Empty<ResourceDeclarationSyntax>();
+    public IReadOnlyList<ActorDeclarationSyntax> Actors { get; init; } = Array.Empty<ActorDeclarationSyntax>();
     public IReadOnlyList<ExtensionDeclarationSyntax> Extensions { get; init; } = Array.Empty<ExtensionDeclarationSyntax>();
     // Resolver-only metadata for source-facing diagnostics. Bound nominal
     // identities stay opaque and distinct even when source names overlap. A
     // shared empty map preserves existing equality for directly parsed modules.
     private static readonly IReadOnlyDictionary<string, string> EmptyTypeDisplayNames = new Dictionary<string, string>(StringComparer.Ordinal);
     internal IReadOnlyDictionary<string, string> TypeDisplayNames { get; init; } = EmptyTypeDisplayNames;
+    internal IReadOnlyDictionary<string, string> ActorTypeDisplayNames { get; init; } = EmptyTypeDisplayNames;
 }
 public sealed record BoundLocal(string Name, int Value, string? InitializerLocal)
 {
@@ -300,6 +313,7 @@ public sealed record BoundLocal(string Name, int Value, string? InitializerLocal
 public sealed record BoundFunction(string Name, int Value)
 {
     public bool IsOwnedFactory { get; init; }
+    public bool IsActorBody { get; init; }
     public IReadOnlyList<string> TypeParameters { get; init; } = Array.Empty<string>();
     public string ReturnType { get; init; } = "int";
     public BoundBlock? Body { get; init; }
@@ -322,6 +336,10 @@ public sealed record BoundServiceMethod(string Name, string FunctionName, IReadO
     public bool IsOwnedFactory { get; init; }
 }
 public sealed record BoundServiceDeclaration(string Name, IReadOnlyList<string> DependencyTypes, IReadOnlyList<string> Interfaces, IReadOnlyList<BoundServiceMethod> Methods);
+public sealed record BoundActorDependency(string Name, string Type);
+public sealed record BoundActorDeclaration(string Name, string InputType, string ResultType,
+    IReadOnlyList<BoundActorDependency> Dependencies, string SourcePath, SourceSpan NameSpan,
+    SourceSpan HandleSpan, string ImplementationName);
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
     public IReadOnlyList<BoundRecordDeclaration> Records { get; init; } = Array.Empty<BoundRecordDeclaration>();
@@ -335,6 +353,7 @@ public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Funct
     public string? TaskSymbol { get; init; }
     public IReadOnlyList<BoundInterfaceDeclaration> Interfaces { get; init; } = Array.Empty<BoundInterfaceDeclaration>();
     public IReadOnlyList<BoundServiceDeclaration> Services { get; init; } = Array.Empty<BoundServiceDeclaration>();
+    public IReadOnlyList<BoundActorDeclaration> Actors { get; init; } = Array.Empty<BoundActorDeclaration>();
 }
 
 public sealed class SourceError(Diagnostic diagnostic) : Exception(diagnostic.Message)
@@ -895,7 +914,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         return arguments;
     }
     // Draft language words cannot accidentally become identifiers in this subset.
-    private static readonly HashSet<string> Reserved = new("module import type interface service agent worker fn async await let return if else match when for in with extend using app true false null int bool string char public private protected internal".Split(' '));
+    private static readonly HashSet<string> Reserved = new("module import type interface service actor agent worker fn async await let return if else match when for in with extend using app true false null int bool string char public private protected internal".Split(' '));
     private bool ConditionRecordConstruction()
     {
         // A condition and its body may begin `name {`. Recognize a record only
@@ -1409,6 +1428,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         var interfaces = new List<InterfaceDeclarationSyntax>();
         var services = new List<ServiceDeclarationSyntax>();
         var resources = new List<ResourceDeclarationSyntax>();
+        var actors = new List<ActorDeclarationSyntax>();
         var extensions = new List<ExtensionDeclarationSyntax>();
         IReadOnlyList<ParameterSyntax> TypedParameters()
         {
@@ -1449,7 +1469,31 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
         }
         while (Current.Text != "")
         {
-            var declarationDocs = Documentation("fn", "async", "type", "interface", "service", "resource", "extend");
+            var declarationDocs = Documentation("fn", "async", "type", "interface", "service", "resource", "actor", "extend");
+            if (Current.Text == "actor")
+            {
+                Take();
+                var actorName = DeclaredTypeIdentifier();
+                if (actorName.Text == "Unit")
+                    throw new SourceError(new("DS2042", path, actorName.Span, "Unit is reserved and cannot name an actor."));
+                var dependencies = Current.Text == "(" ? TypedParameters() : Array.Empty<ParameterSyntax>();
+                Expect("{");
+                var methods = new List<ActorMethodSyntax>();
+                while (Current.Text is not ("}" or ""))
+                {
+                    var methodDocs = Documentation("async", "<method>");
+                    var isAsyncMethod = Current.Text == "async";
+                    if (isAsyncMethod) Take();
+                    var methodName = Identifier();
+                    var actorParameters = TypedParameters();
+                    Expect(":");
+                    var returnType = TypeToken();
+                    methods.Add(new(methodName, actorParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
+                }
+                Expect("}");
+                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs });
+                continue;
+            }
             if (Current.Text == "extend")
             {
                 Take();
@@ -1638,8 +1682,8 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 throw new SourceError(new("DS2002", path, missing.Token.Span, "A reachable int result is required."));
             functions.Add(new(function, type, body.Result.Token) { Expression = body.Result, Body = body, DocumentationComments = declarationDocs, TypeParameters = functionTypeParameters, Parameters = parameters.Count == 0 ? Array.Empty<ParameterSyntax>() : parameters, Bindings = body.Bindings, InferReturnType = inferReturnType, IsAsync = isAsync });
         }
-        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0 && resources.Count == 0 && extensions.Count == 0) throw Error("Expected at least one declaration.");
-        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Extensions = extensions, Imports = imports };
+        if (functions.Count == 0 && records.Count == 0 && unions.Count == 0 && interfaces.Count == 0 && services.Count == 0 && resources.Count == 0 && actors.Count == 0 && extensions.Count == 0) throw Error("Expected at least one declaration.");
+        return new(name, functions) { DocumentationComments = moduleDocs, Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Actors = actors, Extensions = extensions, Imports = imports };
     }
 }
 
@@ -1690,11 +1734,12 @@ public static class Binder
         var resourceDeclarations = syntax.Resources.GroupBy(item => item.Name.Text, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var resourceInterfaces = new List<InterfaceDeclarationSyntax>();
+        var resourceContracts = new Dictionary<string, string>(StringComparer.Ordinal);
         var privateResourceContracts = new HashSet<string>(StringComparer.Ordinal);
         var resourceServices = new List<ServiceDeclarationSyntax>();
         var occupiedTypes = syntax.Records.Select(item => item.Name.Text).Concat(syntax.Unions.Select(item => item.Name.Text))
             .Concat(syntax.Interfaces.Select(item => item.Name.Text)).Concat(syntax.Services.Select(item => item.Name.Text))
-            .Concat(syntax.Resources.Select(item => item.Name.Text)).ToHashSet(StringComparer.Ordinal);
+            .Concat(syntax.Resources.Select(item => item.Name.Text)).Concat(syntax.Actors.Select(item => item.Name.Text)).ToHashSet(StringComparer.Ordinal);
         var resourceIndex = 0;
         foreach (var resource in syntax.Resources)
         {
@@ -1713,6 +1758,7 @@ public static class Binder
             do contractName = "__dsharp_resource_contract_" + (resourceIndex++).ToString(CultureInfo.InvariantCulture);
             while (!occupiedTypes.Add(contractName));
             privateResourceContracts.Add(contractName);
+            resourceContracts.Add(resource.Name.Text, contractName);
             var contractToken = resource.Name with { Text = contractName };
             var methods = resource.Methods.Select(method => new InterfaceMethodSyntax(method.Name,
                 method.Parameters.Select(parameter => new ParameterSyntax(parameter.Name, parameter.Type!)).ToArray(),
@@ -1743,10 +1789,10 @@ public static class Binder
         var setUsed = false;
         var mutableListUsed = false;
         var mutableMapUsed = false;
-        var taskUsed = syntax.Functions.Any(function => function.IsAsync);
+        var taskUsed = syntax.Functions.Any(function => function.IsAsync) || syntax.Actors.Count > 0;
         bool UserType(string name) => syntax.Records.Any(record => record.Name.Text == name) ||
             syntax.Unions.Any(union => union.Name.Text == name) || syntax.Interfaces.Any(item => item.Name.Text == name) ||
-            syntax.Services.Any(item => item.Name.Text == name);
+            syntax.Services.Any(item => item.Name.Text == name) || syntax.Actors.Any(item => item.Name.Text == name);
         var userResultType = UserType("Result");
         var userOptionType = UserType("Option");
         var userListType = UserType("List");
@@ -1877,6 +1923,15 @@ public static class Binder
                 ReturnType = method.ReturnType is null ? null : ScopedType(method.ReturnType, noTypeScope)
             }).ToArray()
         }).ToArray();
+        var scopedActors = syntax.Actors.Select(item => item with
+        {
+            Dependencies = item.Dependencies.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
+            Methods = item.Methods.Select(method => method with
+            {
+                Parameters = method.Parameters.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
+                ReturnType = ScopedType(method.ReturnType, noTypeScope)
+            }).ToArray()
+        }).ToArray();
         nextTypeSymbol += 8; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
@@ -1894,7 +1949,7 @@ public static class Binder
             new UnionCaseSyntax(new Token("Some", syntheticSpan), new[] { ScopedType(optionTypeTokens[0], optionScope) })
         }) { TypeParameters = optionTypeTokens.Select(parameter => ScopedParameter(parameter, optionScope)).ToArray() };
         scopedUnions = scopedUnions.Append(standardResult).Append(standardOption).ToArray();
-        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions, Interfaces = scopedInterfaces, Services = scopedServices };
+        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions, Interfaces = scopedInterfaces, Services = scopedServices, Actors = scopedActors };
         string DisplayType(string type, bool labelParameters = false)
         {
             if (!GenericTypes.TryParse(type, out var shape)) return type;
@@ -1911,6 +1966,16 @@ public static class Binder
                 return value.Name + (value.Arguments.Count == 0 ? "" : "<" + string.Join(", ", value.Arguments.Select(Format)) + ">") + suffix;
             }
             return Format(Display(shape));
+        }
+        string ActorDisplayType(string type)
+        {
+            if (!GenericTypes.TryParse(type, out var shape)) return type;
+            TypeShape Restore(TypeShape value) => value with
+            {
+                Name = syntax.ActorTypeDisplayNames.TryGetValue(value.Name, out var original) ? original : value.Name,
+                Arguments = value.Arguments.Select(Restore).ToArray()
+            };
+            return DisplayType(Restore(shape).ToString());
         }
         var records = new Dictionary<string, RecordDeclarationSyntax>(StringComparer.Ordinal);
         foreach (var record in syntax.Records)
@@ -1935,6 +2000,12 @@ public static class Binder
         foreach (var item in syntax.Services)
             if (!services.TryAdd(item.Name.Text, item) || interfaces.ContainsKey(item.Name.Text) || records.ContainsKey(item.Name.Text) || unions.ContainsKey(item.Name.Text))
                 Fail("DS2015", item.Name, "Duplicate service or type declaration.");
+        var actors = new Dictionary<string, ActorDeclarationSyntax>(StringComparer.Ordinal);
+        foreach (var actor in syntax.Actors)
+            if (actor.Name.Text == "Unit" || !actors.TryAdd(actor.Name.Text, actor) || records.ContainsKey(actor.Name.Text) || unions.ContainsKey(actor.Name.Text) ||
+                interfaces.ContainsKey(actor.Name.Text) || services.ContainsKey(actor.Name.Text) ||
+                syntax.Functions.Any(function => function.Name.Text == actor.Name.Text))
+                Fail("DS2042", actor.Name, "Duplicate actor or conflicting declaration.");
         bool IsNullable(string type) => type.EndsWith("?", StringComparison.Ordinal);
         var arities = new Dictionary<string, int>(StringComparer.Ordinal)
         {
@@ -2217,6 +2288,57 @@ public static class Binder
             boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
                 service.Dependencies.Select(parameter => parameter.Type.Text).ToArray(), service.Interfaces.Select(iface => iface.Text).ToArray(), boundMethods));
         }
+        var boundActors = new List<BoundActorDeclaration>();
+        var actorMethodsByBody = new Dictionary<string, (ActorDeclarationSyntax Actor, IReadOnlyDictionary<string, (ActorMethodSyntax Method, string Id)> Methods)>(StringComparer.Ordinal);
+        foreach (var actor in syntax.Actors)
+        {
+            var actorMethods = new Dictionary<string, (ActorMethodSyntax Method, string Id)>(StringComparer.Ordinal);
+            foreach (var method in actor.Methods)
+                if (!actorMethods.TryAdd(method.Name.Text, (method, FreshSynthetic("__dsharp_actor_body_"))))
+                    Fail("DS2042", method.Name, "Actor methods cannot be duplicated or overloaded.");
+            if (!actorMethods.TryGetValue("Handle", out var handle) || handle.Method.Parameters.Count != 1)
+                Fail("DS2042", actor.Name, "An actor requires exactly one Handle with one typed message parameter.");
+            var dependencies = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var dependency in actor.Dependencies)
+            {
+                if (!dependencies.Add(dependency.Name.Text) || actorMethods.ContainsKey(dependency.Name.Text))
+                    Fail("DS2042", dependency.Name, "Duplicate or conflicting actor dependency name.");
+                if (!interfaces.ContainsKey(dependency.Type.Text) && !resourceContracts.ContainsKey(dependency.Type.Text) ||
+                    privateResourceContracts.Contains(dependency.Type.Text))
+                    Fail("DS2042", dependency.Type, "Actor dependencies require a declared resource or interface.");
+            }
+            if (!SupportedType(handle.Method.Parameters[0].Type.Text) || !DataType(handle.Method.Parameters[0].Type.Text))
+                Fail("DS2042", handle.Method.Parameters[0].Type, "Actor Handle input must be immutable data or Unit.");
+            if (!SupportedType(handle.Method.ReturnType.Text) || !DataType(handle.Method.ReturnType.Text))
+                Fail("DS2042", handle.Method.ReturnType, "Actor Handle result must be immutable data or Unit.");
+            var loweredDependencies = actor.Dependencies.Select(dependency => resourceContracts.TryGetValue(dependency.Type.Text, out var contract)
+                ? dependency with { Type = dependency.Type with { Text = contract } } : dependency).ToArray();
+            foreach (var (_, pair) in actorMethods)
+            {
+                var names = new HashSet<string>(dependencies, StringComparer.Ordinal);
+                foreach (var parameter in pair.Method.Parameters)
+                {
+                    if (!names.Add(parameter.Name.Text) || actorMethods.ContainsKey(parameter.Name.Text))
+                        Fail("DS2042", parameter.Name, "Actor parameters cannot shadow dependencies or methods.");
+                    if (!SupportedType(parameter.Type.Text)) Fail("DS2042", parameter.Type, "Unsupported actor method parameter.");
+                }
+                if (!SupportedType(pair.Method.ReturnType.Text)) Fail("DS2042", pair.Method.ReturnType, "Unsupported actor method result.");
+                var synthetic = new FunctionSyntax(pair.Method.Name with { Text = pair.Id }, pair.Method.ReturnType, pair.Method.Body.Result.Token)
+                {
+                    Parameters = loweredDependencies.Concat(pair.Method.Parameters).ToArray(),
+                    Body = pair.Method.Body, Expression = pair.Method.Body.Result, Bindings = pair.Method.Body.Bindings,
+                    IsAsync = pair.Method.Name.Text == "Handle" || pair.Method.IsAsync
+                };
+                functionTypeScopes.Add(pair.Id, noTypeScope);
+                syntheticFunctions.Add(synthetic);
+                actorMethodsByBody.Add(pair.Id, (actor, actorMethods));
+            }
+            var displayName = syntax.TypeDisplayNames.TryGetValue(actor.Name.Text, out var display) ? display : actor.Name.Text;
+            boundActors.Add(new BoundActorDeclaration(displayName, ActorDisplayType(handle.Method.Parameters[0].Type.Text),
+                ActorDisplayType(handle.Method.ReturnType.Text), actor.Dependencies.Select(dependency =>
+                    new BoundActorDependency(dependency.Name.Text, ActorDisplayType(dependency.Type.Text))).ToArray(),
+                actor.Name.OriginPath ?? path, actor.Name.Span, handle.Method.Name.Span, handle.Id));
+        }
         syntax = syntax with { Functions = syntax.Functions.Concat(syntheticFunctions).ToArray() };
         var signatures = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
         var ownedFactories = new HashSet<string>(StringComparer.Ordinal);
@@ -2241,7 +2363,9 @@ public static class Binder
             foreach (var parameter in function.Parameters)
             {
                 if (!names.Add(parameter.Name.Text)) Fail("DS2010", parameter.Name, "Duplicate parameter.");
-                if (!SupportedType(parameter.Type.Text, typeParameters)) Fail("DS2011", parameter.Type, "Unsupported parameter type or unconstrained nullable type parameter.");
+                if (!SupportedType(parameter.Type.Text, typeParameters) &&
+                    !(actorMethodsByBody.ContainsKey(function.Name.Text) && privateResourceContracts.Contains(parameter.Type.Text)))
+                    Fail("DS2011", parameter.Type, "Unsupported parameter type or unconstrained nullable type parameter.");
             }
         }
         foreach (var unionCase in standardResult.Cases)
@@ -2377,8 +2501,12 @@ public static class Binder
             var knownTypes = source.Parameters.ToDictionary(parameter => parameter.Name.Text,
                 parameter => parameter.Type.Text, StringComparer.Ordinal);
             var scopedResources = new HashSet<string>(StringComparer.Ordinal);
-            string DependencyName(string name, HashSet<string> names) =>
-                resultHelpers.ContainsKey(source.Name.Text) && !names.Contains(name) && preludeNames.TryGetValue(name, out var resolved) ? resolved : name;
+            string DependencyName(string name, HashSet<string> names)
+            {
+                if (!names.Contains(name) && actorMethodsByBody.TryGetValue(source.Name.Text, out var actorContext) &&
+                    actorContext.Methods.TryGetValue(name, out var actorMethod)) return actorMethod.Id;
+                return resultHelpers.ContainsKey(source.Name.Text) && !names.Contains(name) && preludeNames.TryGetValue(name, out var resolved) ? resolved : name;
+            }
             void PatternNames(PatternSyntax pattern, HashSet<string> names)
             {
                 if (pattern is NamePatternSyntax name) names.Add(name.Name.Text);
@@ -3472,9 +3600,15 @@ public static class Binder
             foreach (var parameter in function.Parameters) locals.Add(parameter.Name.Text, (0, parameter.Type.Text));
             bool IsDefaultMethodName(string name) => defaultReceivers.TryGetValue(function.Name.Text, out var receiver) &&
                 interfaceMethods[receiver.Interface].ContainsKey(name);
+            bool IsActorMethodName(string name) => actorMethodsByBody.TryGetValue(function.Name.Text, out var actorContext) &&
+                actorContext.Methods.ContainsKey(name);
+            bool IsActorDependency(string name) => actorMethodsByBody.TryGetValue(function.Name.Text, out var actorContext) &&
+                actorContext.Actor.Dependencies.Any(dependency => dependency.Name.Text == name);
+            var actorBorrowArguments = new HashSet<ExpressionSyntax>(ReferenceEqualityComparer.Instance);
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var resourceHandles = new HashSet<string>(StringComparer.Ordinal);
             var directResourceAwait = false;
+            CallSyntax? directlyAwaitedActorHelper = null;
             // Only individual producer call nodes explicitly marked at a
             // transfer boundary may produce an owned resource. Arguments are
             // never marked, so nesting an owned value into a different call
@@ -3488,7 +3622,7 @@ public static class Binder
             bool IntrinsicCase(CallSyntax call) => (call.Name.Text is "Success" or "Error") &&
                 !locals.ContainsKey(call.Name.Text) && !signatures.ContainsKey(call.Name.Text) &&
                 !records.ContainsKey(call.Name.Text) && !services.ContainsKey(call.Name.Text) &&
-                !IsDefaultMethodName(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
+                !IsDefaultMethodName(call.Name.Text) && !IsActorMethodName(call.Name.Text) && cases.TryGetValue(call.Name.Text, out var candidates) &&
                 candidates.Count == 1 && candidates[0].Union.Name.Text == resultSymbol;
             bool IntrinsicMemberCase(MemberCallSyntax member) => member.Receiver is ValueSyntax qualifier &&
                 (member.Member.Text is "Success" or "Error") && !locals.ContainsKey(qualifier.Value.Text) &&
@@ -3997,7 +4131,14 @@ public static class Binder
                     for (var i = 0; i < bound.Length; i++)
                     {
                         var expected = Substitute(formalTypes[i].Text, substitutions, formalTypes[i]);
-                        if (!SupportedType(expected, activeTypeParameters))
+                        var actorBorrow = privateResourceContracts.Contains(expected) &&
+                            actorMethodsByBody.TryGetValue(function.Name.Text, out var callerActor) &&
+                            actorMethodsByBody.TryGetValue(location.Text, out var calleeActor) &&
+                            ReferenceEquals(callerActor.Actor, calleeActor.Actor) &&
+                            arguments[i] is ValueSyntax borrowed && locals.TryGetValue(borrowed.Value.Text, out var borrowedLocal) &&
+                            borrowedLocal.Type == expected && callerActor.Actor.Dependencies.Any(dependency =>
+                                dependency.Name.Text == borrowed.Value.Text && resourceContracts.TryGetValue(dependency.Type.Text, out var contract) && contract == expected);
+                        if (!SupportedType(expected, activeTypeParameters) && !actorBorrow)
                             Fail("DS2026", arguments[i].Token, "Function values cannot be stored in data types.");
                         // Commit exits exactly once in runtime argument order.
                         // Later unreachable arguments are still type checked.
@@ -4670,10 +4811,19 @@ public static class Binder
                         ExpressionSyntax directOperand = awaited.Operand;
                         while (directOperand is GroupSyntax awaitedGroup) directOperand = awaitedGroup.Inner;
                         var savedDirectAwait = directResourceAwait;
-                        directResourceAwait = directOperand is MemberCallSyntax { Receiver: ValueSyntax directHandle } && resourceHandles.Contains(directHandle.Value.Text);
+                        var savedActorHelperAwait = directlyAwaitedActorHelper;
+                        directlyAwaitedActorHelper = directOperand as CallSyntax;
+                        if (directOperand is MemberCallSyntax directMember)
+                        {
+                            ExpressionSyntax directReceiver = directMember.Receiver;
+                            while (directReceiver is GroupSyntax receiverGroup) directReceiver = receiverGroup.Inner;
+                            directResourceAwait = directReceiver is ValueSyntax directHandle &&
+                                (resourceHandles.Contains(directHandle.Value.Text) || IsActorDependency(directHandle.Value.Text));
+                        }
+                        else directResourceAwait = false;
                         (BoundExpression Expression, string Type) awaitOperand;
                         try { awaitOperand = BindExpression(awaited.Operand, awaitHint); }
-                        finally { directResourceAwait = savedDirectAwait; }
+                        finally { directResourceAwait = savedDirectAwait; directlyAwaitedActorHelper = savedActorHelperAwait; }
                         var awaitedType = awaitOperand.Type == "<never>" ? KnownType(awaitOperand.Expression) : awaitOperand.Type;
                         if (awaitedType is null || !GenericTypes.TryParse(awaitedType, out var taskShape) ||
                             taskShape.Name != taskSymbol || taskShape.IsNullable || taskShape.Arguments.Count != 1)
@@ -5067,6 +5217,8 @@ public static class Binder
                             return BindQualifiedCase(qualifiedUnion, access.Field, Array.Empty<ExpressionSyntax>(), expectedResult: expectedResult);
                         var receiver = BindExpression(access.Receiver);
                         var receiverType = receiver.Type == "<never>" ? KnownType(receiver.Expression) : receiver.Type;
+                        if (receiverType is not null && privateResourceContracts.Contains(receiverType) && access.Field.Text == "release")
+                            Fail("DS2041", access.Field, "Actor resource cleanup is owned by the host.");
                         var nullableMethodReceiver = receiverType is not null && IsNullable(receiverType);
                         // An extension may explicitly target a nullable type.
                         // Actual fields still require a non-null receiver.
@@ -5410,6 +5562,11 @@ public static class Binder
                             original.Type == "<never>" || changes.Never ? "<never>" : originalType!);
                     case ValueSyntax valueSyntax:
                         var token = valueSyntax.Value;
+                        if (IsActorDependency(token.Text) && !actorBorrowArguments.Contains(valueSyntax))
+                            Fail("DS2041", token, "An actor dependency may only be used as the direct receiver of a host-owned operation.");
+                        if (!locals.ContainsKey(token.Text) && actorMethodsByBody.TryGetValue(function.Name.Text, out var actorValueContext) &&
+                            actorValueContext.Methods.ContainsKey(token.Text))
+                            Fail("DS2042", token, "Actor methods cannot be used as function values.");
                         if (resourceHandles.Contains(token.Text))
                             Fail("DS2041", token, "A resource handle can only be used as the direct receiver of an operation.");
                         if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(token.Text) && !inaccessibleCaptures.Contains(token.Text) &&
@@ -5485,6 +5642,25 @@ public static class Binder
                             Fail("DS2026", token, "A mutable builder can only be used as a local alias or as the receiver of a builder operation.");
                         return (new BoundReference(token.Text), local.Type);
                     case CallSyntax call:
+                        if (!locals.ContainsKey(call.Name.Text) && actorMethodsByBody.TryGetValue(function.Name.Text, out var actorCallContext) &&
+                            actorCallContext.Methods.TryGetValue(call.Name.Text, out var actorMethod))
+                        {
+                            if (call.Name.Text == "Handle") Fail("DS2042", call.Name, "Actor Handle cannot be called directly.");
+                            if (call.TypeArguments.Count != 0 || call.Arguments.Count != actorMethod.Method.Parameters.Count)
+                                Fail("DS2042", call.Name, "Actor helpers must be fully applied with the declared arguments.");
+                            if (actorMethod.Method.IsAsync && actorCallContext.Actor.Dependencies.Count > 0 &&
+                                !ReferenceEquals(call, directlyAwaitedActorHelper))
+                                Fail("DS2041", call.Name, "An async actor helper borrowing dependencies must be immediately awaited.");
+                            var borrowedArguments = actorCallContext.Actor.Dependencies.Select(dependency => (ExpressionSyntax)new ValueSyntax(dependency.Name)).ToArray();
+                            foreach (var borrowedArgument in borrowedArguments) actorBorrowArguments.Add(borrowedArgument);
+                            var helperCall = call with
+                            {
+                                Name = call.Name with { Text = actorMethod.Id },
+                                Arguments = borrowedArguments.Concat(call.Arguments).ToArray()
+                            };
+                            try { return BindExpression(helperCall, expectedResult, pipeInputType, pipeOutputType, pipeNullInput, groupedArgumentTypes, groupedExpectedResult, isPipeTarget); }
+                            finally { foreach (var borrowedArgument in borrowedArguments) actorBorrowArguments.Remove(borrowedArgument); }
+                        }
                         if (resultHelpers.ContainsKey(function.Name.Text) && !locals.ContainsKey(call.Name.Text) && !inaccessibleCaptures.Contains(call.Name.Text) &&
                             preludeNames.TryGetValue(call.Name.Text, out var preludeCallName) && call.Name.Text != preludeCallName)
                             call = call with { Name = call.Name with { Text = preludeCallName } };
@@ -5583,6 +5759,31 @@ public static class Binder
                         }, resolvedCall.Never ? "<never>" : callResultType);
                     case MemberCallSyntax member:
                     {
+                        ExpressionSyntax actorReceiver = member.Receiver;
+                        while (actorReceiver is GroupSyntax actorReceiverGroup) actorReceiver = actorReceiverGroup.Inner;
+                        if (actorReceiver is ValueSyntax actorDependency && IsActorDependency(actorDependency.Value.Text))
+                        {
+                            if (member.Member.Text == "release") Fail("DS2041", member.Member, "Actor resource cleanup is owned by the host.");
+                            if (!locals.TryGetValue(actorDependency.Value.Text, out var actorLocal) ||
+                                !interfaceMethods.TryGetValue(actorLocal.Type, out var actorOperations) ||
+                                !actorOperations.TryGetValue(member.Member.Text, out var actorOperation))
+                                Fail("DS2041", member.Member, "Unknown actor resource operation.");
+                            if (actorOperation!.IsAsync && !directResourceAwait)
+                                Fail("DS2041", member.Member, "An async actor resource operation must be immediately awaited.");
+                            if (!SupportedType(actorOperation.ReturnType.Text) || !DataType(actorOperation.ReturnType.Text))
+                                Fail("DS2041", member.Member, "An actor resource operation must return immutable data.");
+                            if (member.TypeArguments.Count != 0 || member.Arguments.Count != actorOperation.Parameters.Count)
+                                Fail("DS2041", member.Member, "Incorrect actor resource operation arguments.");
+                            var previousDirectAwait = directResourceAwait;
+                            directResourceAwait = false;
+                            (IReadOnlyList<BoundExpression> Values, IReadOnlyList<string> Types, Dictionary<string, string> Substitutions, bool Never) actorArguments;
+                            try { actorArguments = BindGenericArguments(Array.Empty<Token>(), Array.Empty<Token>(), actorOperation.Parameters.Select(parameter => parameter.Type).ToArray(), member.Arguments, member.Member); }
+                            finally { directResourceAwait = previousDirectAwait; }
+                            var actorOperationType = actorOperation.IsAsync ? taskSymbol + "<" + actorOperation.ReturnType.Text + ">" : actorOperation.ReturnType.Text;
+                            if (actorOperation.IsAsync) taskUsed = true;
+                            return (new BoundServiceCall(new BoundReference(actorDependency.Value.Text), actorLocal.Type, member.Member.Text, actorArguments.Values, actorOperationType),
+                                actorArguments.Never ? "<never>" : actorOperationType);
+                        }
                         if (member.Receiver is ValueSyntax scopedReceiver && resourceHandles.Contains(scopedReceiver.Value.Text) &&
                             locals.TryGetValue(scopedReceiver.Value.Text, out var scopedLocal))
                         {
@@ -6187,6 +6388,8 @@ public static class Binder
                         if (listReceiverType is not null &&
                             (interfaceMethods.TryGetValue(listReceiverType, out var dispatchMethods) || serviceMethods.TryGetValue(listReceiverType, out dispatchMethods)))
                         {
+                            if (privateResourceContracts.Contains(listReceiverType) && member.Member.Text == "release")
+                                Fail("DS2041", member.Member, "Actor resource cleanup is owned by the host.");
                             // Virtual dispatch is an indirect dependency. Check
                             // this after binding the receiver, so a service method
                             // named `get` does not make unrelated List.get calls
@@ -6698,6 +6901,8 @@ public static class Binder
                         preludeNames.TryGetValue(preludeCall.Name.Text, out var callName))
                         target = preludeCall with { Name = preludeCall.Name with { Text = callName } };
                 }
+                if (target is ValueSyntax actorName && !locals.ContainsKey(actorName.Value.Text) && IsActorMethodName(actorName.Value.Text))
+                    return BindExpression(new CallSyntax(actorName.Value, pipe.Operator, new[] { pipe.Left }), expectedResult);
                 if (target is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) &&
                     (signatures.ContainsKey(name.Value.Text) || cases.ContainsKey(name.Value.Text)))
@@ -6879,7 +7084,7 @@ public static class Binder
                         return true;
                     }
                     if (node is not CallSyntax prefix || locals.ContainsKey(prefix.Name.Text) ||
-                        inaccessibleCaptures.Contains(prefix.Name.Text) || IsDefaultMethodName(prefix.Name.Text))
+                        inaccessibleCaptures.Contains(prefix.Name.Text) || IsDefaultMethodName(prefix.Name.Text) || IsActorMethodName(prefix.Name.Text))
                         return false;
                     var prefixName = resultHelpers.ContainsKey(function.Name.Text) &&
                         preludeNames.TryGetValue(prefix.Name.Text, out var resolvedPreludeName)
@@ -6894,6 +7099,8 @@ public static class Binder
                     prefixArguments.AddRange(arguments);
                     return BindExpression(resultPrefix! with { Arguments = prefixArguments }, expectedResult);
                 }
+                if (unwrappedReceiver is ValueSyntax actorName && !locals.ContainsKey(actorName.Value.Text) && IsActorMethodName(actorName.Value.Text))
+                    return BindExpression(new CallSyntax(actorName.Value, location, arguments), expectedResult);
                 if (unwrappedReceiver is ValueSyntax name && !locals.ContainsKey(name.Value.Text) && !IsDefaultMethodName(name.Value.Text) &&
                     !inaccessibleCaptures.Contains(name.Value.Text) && !cases.ContainsKey(name.Value.Text) && signatures.ContainsKey(name.Value.Text))
                     return BindExpression(new CallSyntax(name.Value, location, arguments), expectedResult);
@@ -7253,6 +7460,7 @@ public static class Binder
                 HasReturn = hasReturn,
                 IsAsync = function.IsAsync,
                 IsOwnedFactory = ownedFactories.Contains(function.Name.Text),
+                IsActorBody = actorMethodsByBody.ContainsKey(function.Name.Text),
                 ResultLocal = (result.Expression as BoundReference)?.Name,
                 ReturnType = function.ReturnType.Text,
                 ParameterTypes = function.Parameters.Select(p => p.Type.Text).ToArray(),
@@ -7408,6 +7616,7 @@ public static class Binder
                     method.Parameters.Select(parameter => parameter.Type.Text).ToArray(), method.ReturnType.Text, method.IsAsync)
                     { IsOwnedFactory = OwnedTransfer(method.ReturnType.Text) }).ToArray())).ToArray(),
             Services = boundServiceDeclarations,
+            Actors = boundActors,
             Records = syntax.Records.Select(record => new BoundRecordDeclaration(record.Name.Text,
                 record.Fields.Select(field => new BoundRecordField(field.Name.Text, field.Type.Text)).ToArray())
                 { TypeParameters = record.TypeParameters.Select(parameter => parameter.Text).ToArray() }).ToArray(),
@@ -8162,7 +8371,7 @@ public static class CSharpEmitter
         foreach (var function in module.Functions)
         {
             SetTypeParameters(function.TypeParameters, functionProjections[function.Name]);
-            output.Append(function.IsOwnedFactory ? "    internal static " : "    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
+            output.Append(function.IsOwnedFactory || function.IsActorBody ? "    internal static " : "    public static ").Append(function.IsAsync ? "async global::System.Threading.Tasks.Task<" + CType(function.ReturnType) + ">" : CType(function.ReturnType)).Append(" @").Append(function.Name)
                 .Append(TypeParameterList(function.TypeParameters)).Append("(");
             for (var i = 0; i < function.Parameters.Count; i++)
             {
@@ -9094,9 +9303,13 @@ public static class DSharpCompiler
             var tokens = Lexer.Lex(source, path);
             var parsed = new Parser(tokens, path).Parse();
             if (!NeedsModuleResolution(parsed, tokens))
-                return new(CSharpEmitter.Emit(Binder.Bind(parsed, path)), []);
+            {
+                var bound = Binder.Bind(parsed, path);
+                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors };
+            }
             var resolved = MultiFileResolver.Resolve(new[] { parsed });
-            return new(CSharpEmitter.Emit(Binder.Bind(resolved.Unified, path), resolved.Exports), []);
+            var resolvedBound = Binder.Bind(resolved.Unified, path);
+            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors };
         }
         catch (SourceError error) { return new(null, [error.Diagnostic]); }
     }
@@ -9109,9 +9322,13 @@ public static class DSharpCompiler
             var tokenSets = sources.Select(source => Lexer.Lex(source.Text, source.Path)).ToArray();
             var parsed = sources.Select((source, i) => new Parser(tokenSets[i], source.Path).Parse()).ToArray();
             if (parsed.Length == 1 && !NeedsModuleResolution(parsed[0], tokenSets[0]))
-                return new(CSharpEmitter.Emit(Binder.Bind(parsed[0], sources[0].Path)), []);
+            {
+                var bound = Binder.Bind(parsed[0], sources[0].Path);
+                return new(CSharpEmitter.Emit(bound), []) { Actors = bound.Actors };
+            }
             var resolved = MultiFileResolver.Resolve(parsed);
-            return new(CSharpEmitter.Emit(Binder.Bind(resolved.Unified, sources[0].Path), resolved.Exports), []);
+            var resolvedBound = Binder.Bind(resolved.Unified, sources[0].Path);
+            return new(CSharpEmitter.Emit(resolvedBound, resolved.Exports), []) { Actors = resolvedBound.Actors };
         }
         catch (SourceError error) { return new(null, new[] { error.Diagnostic }); }
     }

@@ -19,7 +19,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - run: bash scripts/verify-compiler.sh
+      # TRX repeats the assembly's absolute path for every test. A short,
+      # exact-commit checkout keeps the report within the existing size guard.
+      - name: Run compiler verifier from a short checkout
+        run: |
+          set -euo pipefail
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+          short_checkout="$(mktemp -d /tmp/ds.XXXXXX)"
+          git clone --quiet --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$short_checkout"
+          git -C "$short_checkout" checkout --quiet --detach "$GITHUB_SHA"
+          test "$(git -C "$short_checkout" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$short_checkout" status --porcelain)"
+          cd "$short_checkout"
+          COMPILER_REPORT_DIR="$GITHUB_WORKSPACE/artifacts/compiler" bash scripts/verify-compiler.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

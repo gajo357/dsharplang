@@ -40,12 +40,15 @@ internal static class MultiFileResolver
         void Fail(Token token, string code, string message) => throw new SourceError(new(code, Path(token), token.Span, message));
         void Add(string module, string name, string kind, Token location, string? union = null, string? nameOverride = null)
         {
-            static bool IsType(string symbolKind) => symbolKind is "record" or "union" or "interface" or "service" or "resource";
+            if (kind == "actor" && name == "Unit")
+                Fail(location, "DS2042", "Unit is reserved and cannot name an actor.");
+            static bool IsType(string symbolKind) => symbolKind is "record" or "union" or "interface" or "service" or "resource" or "actor";
             static bool IsValue(string symbolKind) => symbolKind is "function" or "record" or "service" or "resource";
             var same = symbols.FirstOrDefault(s => s.Module == module && s.Name == name &&
                 ((kind == "case" && s.Kind == "case" && s.Union == union) ||
                  (kind != "case" && s.Kind != "case" &&
-                    (kind == s.Kind || IsType(kind) && IsType(s.Kind) || IsValue(kind) && IsValue(s.Kind)))));
+                    (kind == s.Kind || IsType(kind) && IsType(s.Kind) || IsValue(kind) && IsValue(s.Kind) ||
+                     kind == "actor" && s.Kind == "function" || kind == "function" && s.Kind == "actor"))));
             if (same is not null)
                 Fail(location, "DS2001", $"Duplicate declaration '{module}.{name}'; first declared at {Path(same.Location)}({same.Location.Span.Line},{same.Location.Span.Column}).");
             symbols.Add(new(module, name, nameOverride ?? Fresh(), kind, location, union));
@@ -59,6 +62,7 @@ internal static class MultiFileResolver
             foreach (var contract in file.Interfaces) Add(file.Name.Text, contract.Name.Text, "interface", contract.Name);
             foreach (var service in file.Services) Add(file.Name.Text, service.Name.Text, "service", service.Name);
             foreach (var resource in file.Resources) Add(file.Name.Text, resource.Name.Text, "resource", resource.Name);
+            foreach (var actor in file.Actors) Add(file.Name.Text, actor.Name.Text, "actor", actor.Name);
         }
         foreach (var file in files.OrderBy(f => f.Name.Text, StringComparer.Ordinal).ThenBy(f => Path(f.Name), StringComparer.Ordinal))
             foreach (var union in file.Unions)
@@ -82,6 +86,7 @@ internal static class MultiFileResolver
         var interfaces = new List<InterfaceDeclarationSyntax>();
         var services = new List<ServiceDeclarationSyntax>();
         var resources = new List<ResourceDeclarationSyntax>();
+        var actors = new List<ActorDeclarationSyntax>();
         var extensions = new List<ExtensionDeclarationSyntax>();
         foreach (var file in files)
         {
@@ -122,8 +127,8 @@ internal static class MultiFileResolver
                         ("sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "decimal" or "float32" or "float" or "bool" or "char" or "string" or "Unit"))
                     {
                         var dot = name.LastIndexOf('.');
-                        var found = dot < 0 ? Lookup(token, name, s => s.Kind is "record" or "union" or "interface" or "service" or "resource") :
-                            Qualified(token, name[..dot], name[(dot + 1)..], s => s.Kind is "record" or "union" or "interface" or "service" or "resource");
+                        var found = dot < 0 ? Lookup(token, name, s => s.Kind is "record" or "union" or "interface" or "service" or "resource" or "actor") :
+                            Qualified(token, name[..dot], name[(dot + 1)..], s => s.Kind is "record" or "union" or "interface" or "service" or "resource" or "actor");
                         if (found is not null) name = found.Internal;
                     }
                     return shape with { Name = name, Arguments = shape.Arguments.Select(Visit).ToArray() };
@@ -238,7 +243,7 @@ internal static class MultiFileResolver
                         if ((call.Name.Text is "MutableList" or "MutableMap") && !typeParameters.Contains(call.Name.Text))
                         {
                             var builderType = foundCall?.Kind == "record" ? foundCall :
-                                foundCall is null ? Lookup(call.Name, call.Name.Text, s => s.Kind is "union" or "interface") : null;
+                                foundCall is null ? Lookup(call.Name, call.Name.Text, s => s.Kind is "union" or "interface" or "actor") : null;
                             if (builderType is not null)
                                 return call with { Name = Rename(call.Name, builderType.Internal), Arguments = callArguments, TypeArguments = callTypes };
                         }
@@ -293,7 +298,7 @@ internal static class MultiFileResolver
                                 {
                                     var visible = ValueName(prefix[0]);
                                     var nominal = visible?.Kind is "record" or "service" or "resource" ? visible :
-                                        visible is null ? Lookup(prefix[0], prefix[0].Text, s => s.Kind == "interface") : null;
+                                        visible is null ? Lookup(prefix[0], prefix[0].Text, s => s.Kind is "interface" or "actor") : null;
                                     if (nominal is not null) return member with { Receiver = new ValueSyntax(Rename(prefix[0], nominal.Internal)), Arguments = memberArgs, TypeArguments = memberTypes };
                                 }
                             }
@@ -456,6 +461,33 @@ internal static class MultiFileResolver
                     }).ToArray()
                 });
             }
+            foreach (var actor in file.Actors)
+            {
+                var symbol = symbols.Single(s => s.Module == current && s.Kind == "actor" && s.Name == actor.Name.Text);
+                var typeParameters = new HashSet<string>(StringComparer.Ordinal);
+                var dependencies = actor.Dependencies.Select(dependency => dependency with
+                    { Type = ResolveType(dependency.Type, typeParameters) }).ToArray();
+                actors.Add(actor with
+                {
+                    Name = Rename(actor.Name, symbol.Internal),
+                    Dependencies = dependencies,
+                    Methods = actor.Methods.Select(method =>
+                    {
+                        // Actor helpers belong to the actor, not to an imported
+                        // or module-level function with the same source name.
+                        var scope = actor.Methods.Select(item => item.Name.Text).ToHashSet(StringComparer.Ordinal);
+                        foreach (var dependency in dependencies) scope.Add(dependency.Name.Text);
+                        foreach (var parameter in method.Parameters) scope.Add(parameter.Name.Text);
+                        return method with
+                        {
+                            Parameters = method.Parameters.Select(parameter => parameter with
+                                { Type = ResolveType(parameter.Type, typeParameters) }).ToArray(),
+                            ReturnType = ResolveType(method.ReturnType, typeParameters),
+                            Body = Block(method.Body, scope, typeParameters)
+                        };
+                    }).ToArray()
+                });
+            }
             foreach (var extension in file.Extensions)
             {
                 var typeParameters = new HashSet<string>(StringComparer.Ordinal);
@@ -488,9 +520,13 @@ internal static class MultiFileResolver
                 functions.Add(function with { Name = Rename(function.Name, symbol.Internal), ReturnType = ResolveType(function.ReturnType, parameters), Parameters = function.Parameters.Select(p => p with { Type = ResolveType(p.Type, parameters) }).ToArray(), Body = body, Expression = body?.Result ?? (function.Expression is null ? null : Expression(function.Expression, scope, parameters)), Bindings = body?.Bindings ?? function.Bindings });
             }
         }
-        var typeDisplayNames = symbols.Where(symbol => symbol.Kind is "interface" or "service" or "resource")
+        var typeDisplayNames = symbols.Where(symbol => symbol.Kind is "interface" or "service" or "resource" or "actor")
+            .ToDictionary(symbol => symbol.Internal, symbol => symbol.Module + "." + symbol.Name, StringComparer.Ordinal);
+        // Actor metadata exposes source names for all nominal types, without
+        // changing the diagnostic display policy of existing declarations.
+        var actorTypeDisplayNames = symbols.Where(symbol => symbol.Kind is "record" or "union" or "interface" or "service" or "resource" or "actor")
             .ToDictionary(symbol => symbol.Internal, symbol => symbol.Module + "." + symbol.Name, StringComparer.Ordinal);
         return new ModuleResolution(new ModuleSyntax(files[0].Name, functions)
-            { Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Extensions = extensions, TypeDisplayNames = typeDisplayNames }, exports);
+            { Records = records, Unions = unions, Interfaces = interfaces, Services = services, Resources = resources, Actors = actors, Extensions = extensions, TypeDisplayNames = typeDisplayNames, ActorTypeDisplayNames = actorTypeDisplayNames }, exports);
     }
 }
