@@ -542,6 +542,14 @@ internal static class MultiFileResolver
                         BusinessMapperIdentity = ResolveHttpFunction(binding.BusinessMapper),
                         ReferencesResolved = true
                     }).ToArray(),
+                    HttpPlainBindings = actor.HttpPlainBindings.Select(binding => binding with
+                    {
+                        ResponseType = ResolveTriggerMessageType(binding.ResponseType),
+                        BinderIdentity = ResolveHttpFunction(binding.Binder),
+                        BindingMapperIdentity = ResolveHttpFunction(binding.BindingMapper),
+                        SuccessMapperIdentity = ResolveHttpFunction(binding.SuccessMapper),
+                        ReferencesResolved = true
+                    }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported
