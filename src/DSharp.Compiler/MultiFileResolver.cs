@@ -485,9 +485,9 @@ internal static class MultiFileResolver
                 var typeParameters = new HashSet<string>(StringComparer.Ordinal);
                 var dependencies = actor.Dependencies.Select(dependency => dependency with
                     { Type = ResolveType(dependency.Type, typeParameters) }).ToArray();
-                Token ResolveTriggerMessageType(Token messageType)
+                T WithTriggerHandleContext<T>(Func<T> resolve)
                 {
-                    try { return ResolveType(messageType, typeParameters); }
+                    try { return resolve(); }
                     catch (SourceError error) when (error.Diagnostic.Code is "DS2031" or "DS2032")
                     {
                         // Preserve the specific import/ambiguity error and its
@@ -502,6 +502,27 @@ internal static class MultiFileResolver
                         });
                     }
                 }
+                Token ResolveTriggerMessageType(Token messageType) =>
+                    WithTriggerHandleContext(() => ResolveType(messageType, typeParameters));
+                string? ResolveHttpFunction(Token name) => WithTriggerHandleContext(() =>
+                {
+                    var dot = name.Text.LastIndexOf('.');
+                    // Actor-local names shadow module/imported values. They are
+                    // not ordinary module functions, so leave them for the
+                    // binder's HTTP-callable diagnostic rather than searching
+                    // past the shadow or reporting unrelated import ambiguity.
+                    var firstDot = name.Text.IndexOf('.');
+                    var root = firstDot < 0 ? name.Text : name.Text[..firstDot];
+                    if (actor.Methods.Any(method => method.Name.Text == root) ||
+                        actor.Dependencies.Any(dependency => dependency.Name.Text == root)) return null;
+                    var found = dot < 0
+                        ? ValueName(name)
+                        : Qualified(name, name.Text[..dot], name.Text[(dot + 1)..],
+                            item => item.Kind is "function" or "record" or "case" or "service" or "resource");
+                    // A nearer non-function value shadows an imported function;
+                    // ambiguity across value kinds must be reported as usual.
+                    return found?.Kind == "function" ? found.Internal : null;
+                });
                 actors.Add(actor with
                 {
                     Name = Rename(actor.Name, symbol.Internal),
@@ -512,6 +533,15 @@ internal static class MultiFileResolver
                         { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
                     CronBindings = actor.CronBindings.Select(binding => binding with
                         { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
+                    HttpBindings = actor.HttpBindings.Select(binding => binding with
+                    {
+                        ResponseType = ResolveTriggerMessageType(binding.ResponseType),
+                        BinderIdentity = ResolveHttpFunction(binding.Binder),
+                        BindingMapperIdentity = ResolveHttpFunction(binding.BindingMapper),
+                        SuccessMapperIdentity = ResolveHttpFunction(binding.SuccessMapper),
+                        BusinessMapperIdentity = ResolveHttpFunction(binding.BusinessMapper),
+                        ReferencesResolved = true
+                    }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported
