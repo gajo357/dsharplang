@@ -1,0 +1,15 @@
+module EventContract
+
+// An event trigger is a checked candidate only. Application registration,
+// subscription identities, event delivery and serialization are future work.
+type InvoiceCreated { invoiceId: int }
+
+actor IndexInvoice {
+    trigger Event<InvoiceCreated>()
+    Handle(message: InvoiceCreated): Result<int, string> { Success(message.invoiceId) }
+}
+
+actor Pulse {
+    trigger Event<Unit>()
+    Handle(message: Unit): Unit { () }
+}
