@@ -7885,6 +7885,28 @@ public static class Binder
         // Until scoped context propagation is implemented, host-entry functions
         // cannot be called, partially applied or captured from D# code.
         var dispatcherEntries = functions.Where(item => item.RequiresDispatcher).Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (var actor in syntax.Actors)
+        {
+            void CheckHttpReference(Token token, string? resolved, bool referencesResolved)
+            {
+                var identity = referencesResolved ? resolved : token.Text;
+                if (identity is not null && dispatcherEntries.Contains(identity))
+                    Fail("DS2047", token, "A dispatcher host entry cannot be used as an HTTP callback yet.");
+            }
+            foreach (var binding in actor.HttpBindings)
+            {
+                CheckHttpReference(binding.Binder, binding.BinderIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BindingMapper, binding.BindingMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.SuccessMapper, binding.SuccessMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BusinessMapper, binding.BusinessMapperIdentity, binding.ReferencesResolved);
+            }
+            foreach (var binding in actor.HttpPlainBindings)
+            {
+                CheckHttpReference(binding.Binder, binding.BinderIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.BindingMapper, binding.BindingMapperIdentity, binding.ReferencesResolved);
+                CheckHttpReference(binding.SuccessMapper, binding.SuccessMapperIdentity, binding.ReferencesResolved);
+            }
+        }
         foreach (var owner in functions)
         {
             void CheckEntryUse(object? node)

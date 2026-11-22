@@ -59,13 +59,56 @@ public sealed class ActorInvokeEntryTests
             await File.WriteAllTextAsync(Path.Combine(directory, "Generated.csproj"), $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup><ItemGroup><Reference Include=\"DSharp.Runtime\"><HintPath>{escaped}</HintPath></Reference></ItemGroup></Project>");
             await File.WriteAllTextAsync(Path.Combine(directory, "global.json"), "{\"sdk\":{\"version\":\"11.0.100\",\"rollForward\":\"disable\"}}");
             await File.WriteAllTextAsync(Path.Combine(directory, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
-            var host = await Run(directory, null, "run", "--project", "Generated.csproj", "--configuration", "Release", "--nologo");
+            var build = await Run(directory, null, "build", "Generated.csproj", "--configuration", "Release", "--nologo");
+            Assert.True(build.ExitCode == 0, $"Generated host build failed: {build.Output}");
+            var host = await Run(directory, null, Path.Combine(directory, "bin/Release/net11.0/Generated.dll"));
             Assert.True(host.ExitCode == 0, $"Generated host failed: {host.Output}");
             Assert.Contains("host checks passed", host.Output);
             await CheckCli(root, runtime, directory);
             InvokeIsTypedScopedAndCannotEscapeTheSupportedEntryBoundary();
+            HttpDescriptorsCannotCaptureDispatcherEntries();
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static void HttpDescriptorsCannotCaptureDispatcherEntries()
+    {
+        const string common = """
+            module Demo
+            type Raw { value: int }
+            type Request { value: int }
+            type Reply { code: int }
+            actor Decoder { Handle(raw: Raw): Result<Request, string> { Success(Request { value = raw.value }) } }
+            async fn decode(raw: Raw): Result<Request, string> { await Invoke<Decoder>(raw) }
+            fn mapBinding(error: string): Reply { Reply { code = 400 } }
+            fn mapSuccess(value: int): Reply { Reply { code = value } }
+            fn mapBusiness(error: bool): Reply { Reply { code = 500 } }
+            """;
+        foreach (var worker in new[]
+        {
+            "actor Worker { trigger Http<Reply>(decode, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }",
+            "actor Worker { trigger Http<Reply>(decode, mapBinding, mapSuccess) Handle(message: Request): int { message.value } }"
+        })
+        {
+            var source = common + "\n" + worker;
+            var result = DSharpCompiler.Compile(source, "http-invoke.ds");
+            Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "http-invoke.ds" && d.Span.Start == source.LastIndexOf("decode,", StringComparison.Ordinal)),
+                $"Expected dispatcher-dependent HTTP binder rejection: {string.Join("; ", result.Diagnostics)}");
+        }
+
+        SourceFile[] sources =
+        [
+            new("contracts.ds", "module Contracts\ntype Raw { value: int }\ntype Request { value: int }\ntype Reply { code: int }"),
+            new("binding.ds", "module Binding\nimport Contracts\nactor Decoder { Handle(raw: Raw): Result<Request, string> { Success(Request { value = raw.value }) } }\nasync fn decode(raw: Raw): Result<Request, string> { await Invoke<Decoder>(raw) }"),
+            new("worker.ds", "module App\nimport Contracts\nimport Binding\nfn mapBinding(error: string): Reply { Reply { code = 400 } }\nfn mapSuccess(value: int): Reply { Reply { code = value } }\nfn mapBusiness(error: bool): Reply { Reply { code = 500 } }\nactor Worker { trigger Http<Reply>(Binding.decode, mapBinding, mapSuccess, mapBusiness) Handle(message: Request): Result<int, bool> { Success(message.value) } }")
+        ];
+        var qualified = DSharpCompiler.Compile(sources);
+        Assert.True(qualified.CSharp is null && qualified.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "worker.ds" && d.Span.Start == sources[2].Text.IndexOf("Binding.decode,", StringComparison.Ordinal)),
+            $"Expected imported dispatcher-dependent HTTP binder rejection: {string.Join("; ", qualified.Diagnostics)}");
+        sources[2] = sources[2] with { Text = sources[2].Text.Replace("Binding.decode, mapBinding, mapSuccess, mapBusiness", "Binding.decode, mapBinding, mapSuccess", StringComparison.Ordinal).Replace("Handle(message: Request): Result<int, bool> { Success(message.value) }", "Handle(message: Request): int { message.value }", StringComparison.Ordinal) };
+        var qualifiedPlain = DSharpCompiler.Compile(sources);
+        Assert.True(qualifiedPlain.CSharp is null && qualifiedPlain.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "worker.ds" && d.Span.Start == sources[2].Text.IndexOf("Binding.decode,", StringComparison.Ordinal)),
+            $"Expected imported dispatcher-dependent plain HTTP binder rejection: {string.Join("; ", qualifiedPlain.Diagnostics)}");
     }
 
     private static void InvokeIsTypedScopedAndCannotEscapeTheSupportedEntryBoundary()

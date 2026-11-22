@@ -89,3 +89,19 @@ whether the runtime reference is needed, not infer it from generated text.
   hosts. It also exercised CLI check and compilation with the actual runtime
   ABI, clear missing/invalid assembly failures, ordinary output and the scoped
   negative cases. Recording dispatchers do not prove durable acceptance.
+
+## Same-branch review and CI repair
+
+- Hosted CI 272 failed one of 397 compiler feature tests because the new
+  generated-host test tried to execute its native apphost from the isolated
+  verifier's no-exec `/tmp`; the other 396 feature tests and 18 baseline tests
+  passed. The test now builds the same generated project and runs its managed
+  DLL via `dotnet`, retaining its host execution and assertions. The verifier,
+  test coverage and limits are unchanged.
+- Review found a dispatcher-dependent entry could otherwise be retained as an
+  HTTP binder without its required context. Both Result and plain HTTP
+  descriptor forms now reject such callbacks using the resolved function
+  identity, with DS2047 at the reference. New single- and multi-file tests
+  cover unqualified and qualified binders, both forms and source locations.
+- The focused Invoke integration test passed with these repairs; hosted checks
+  on the repaired exact head are needed before merge.
