@@ -485,9 +485,9 @@ internal static class MultiFileResolver
                 var typeParameters = new HashSet<string>(StringComparer.Ordinal);
                 var dependencies = actor.Dependencies.Select(dependency => dependency with
                     { Type = ResolveType(dependency.Type, typeParameters) }).ToArray();
-                Token ResolveQueueMessageType(ActorQueueBindingSyntax binding)
+                Token ResolveTriggerMessageType(Token messageType)
                 {
-                    try { return ResolveType(binding.MessageType, typeParameters); }
+                    try { return ResolveType(messageType, typeParameters); }
                     catch (SourceError error) when (error.Diagnostic.Code is "DS2031" or "DS2032")
                     {
                         // Preserve the specific import/ambiguity error and its
@@ -507,7 +507,9 @@ internal static class MultiFileResolver
                     Name = Rename(actor.Name, symbol.Internal),
                     Dependencies = dependencies,
                     QueueBindings = actor.QueueBindings.Select(binding => binding with
-                        { MessageType = ResolveQueueMessageType(binding) }).ToArray(),
+                        { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
+                    EventBindings = actor.EventBindings.Select(binding => binding with
+                        { MessageType = ResolveTriggerMessageType(binding.MessageType) }).ToArray(),
                     Methods = actor.Methods.Select(method =>
                     {
                         // Actor helpers belong to the actor, not to an imported

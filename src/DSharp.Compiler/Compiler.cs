@@ -126,10 +126,15 @@ public sealed record ActorQueueBindingSyntax(Token Keyword, Token MessageType, T
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
 }
+public sealed record ActorEventBindingSyntax(Token Keyword, Token MessageType)
+{
+    public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
+}
 public sealed record ActorDeclarationSyntax(Token Name, IReadOnlyList<ParameterSyntax> Dependencies, IReadOnlyList<ActorMethodSyntax> Methods)
 {
     public IReadOnlyList<Token> DocumentationComments { get; init; } = Array.Empty<Token>();
     public IReadOnlyList<ActorQueueBindingSyntax> QueueBindings { get; init; } = Array.Empty<ActorQueueBindingSyntax>();
+    public IReadOnlyList<ActorEventBindingSyntax> EventBindings { get; init; } = Array.Empty<ActorEventBindingSyntax>();
 }
 public sealed record ExtensionMethodSyntax(Token Name, IReadOnlyList<ParameterSyntax> Parameters, Token ReturnType, bool IsAsync, BlockSyntax Body)
 {
@@ -348,11 +353,17 @@ public sealed record BoundQueueBinding(string QueueName, string MessageType, str
     // This nominal identity is local to one resolved compilation, not a wire schema.
     internal string TypeIdentity { get; init; } = "";
 }
+public sealed record BoundEventBinding(string MessageType, string SourcePath, SourceSpan TriggerSpan, SourceSpan TypeSpan)
+{
+    // This identity is scoped to the compilation; it is not a subscription or wire schema.
+    internal string TypeIdentity { get; init; } = "";
+}
 public sealed record BoundActorDeclaration(string Name, string InputType, string ResultType,
     IReadOnlyList<BoundActorDependency> Dependencies, string SourcePath, SourceSpan NameSpan,
     SourceSpan HandleSpan, string ImplementationName)
 {
     public IReadOnlyList<BoundQueueBinding> QueueBindings { get; init; } = Array.Empty<BoundQueueBinding>();
+    public IReadOnlyList<BoundEventBinding> EventBindings { get; init; } = Array.Empty<BoundEventBinding>();
 }
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
@@ -1494,24 +1505,34 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                 Expect("{");
                 var methods = new List<ActorMethodSyntax>();
                 var queueBindings = new List<ActorQueueBindingSyntax>();
+                var eventBindings = new List<ActorEventBindingSyntax>();
                 while (Current.Text is not ("}" or ""))
                 {
                     var methodDocs = Documentation("async", "<method>");
                     // `trigger()` remains an ordinary helper; only the actor member
-                    // form beginning with `trigger Queue` has binding meaning.
+                    // forms beginning with `trigger Queue` or `trigger Event` have binding meaning.
                     if (Current.Text == "trigger" && position + 1 < tokens.Count && tokens[position + 1].Text != "(")
                     {
                         var keyword = Take();
-                        Expect("Queue");
+                        var isEvent = Current.Text == "Event";
+                        Expect(isEvent ? "Event" : "Queue");
                         Expect("<");
                         var messageType = TypeToken();
                         Expect(">");
                         Expect("(");
-                        if (!Current.Text.StartsWith('"') || !Current.Text.EndsWith('"') || Current.Text.Length < 2)
-                            throw Error("A queue binding requires a string-literal queue name.");
-                        var queueName = Take();
-                        Expect(")");
-                        queueBindings.Add(new(keyword, messageType, queueName) { DocumentationComments = methodDocs });
+                        if (isEvent)
+                        {
+                            Expect(")");
+                            eventBindings.Add(new(keyword, messageType) { DocumentationComments = methodDocs });
+                        }
+                        else
+                        {
+                            if (!Current.Text.StartsWith('"') || !Current.Text.EndsWith('"') || Current.Text.Length < 2)
+                                throw Error("A queue binding requires a string-literal queue name.");
+                            var queueName = Take();
+                            Expect(")");
+                            queueBindings.Add(new(keyword, messageType, queueName) { DocumentationComments = methodDocs });
+                        }
                         continue;
                     }
                     var isAsyncMethod = Current.Text == "async";
@@ -1523,7 +1544,7 @@ public sealed class Parser(IReadOnlyList<Token> tokens, string path = "<source>"
                     methods.Add(new(methodName, actorParameters, returnType, isAsyncMethod, Block()) { DocumentationComments = methodDocs });
                 }
                 Expect("}");
-                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings });
+                actors.Add(new(actorName, dependencies, methods) { DocumentationComments = declarationDocs, QueueBindings = queueBindings, EventBindings = eventBindings });
                 continue;
             }
             if (Current.Text == "extend")
@@ -1959,6 +1980,7 @@ public static class Binder
         {
             Dependencies = item.Dependencies.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
             QueueBindings = item.QueueBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
+            EventBindings = item.EventBindings.Select(binding => binding with { MessageType = ScopedType(binding.MessageType, noTypeScope) }).ToArray(),
             Methods = item.Methods.Select(method => method with
             {
                 Parameters = method.Parameters.Select(parameter => parameter with { Type = ScopedType(parameter.Type, noTypeScope) }).ToArray(),
@@ -2321,10 +2343,10 @@ public static class Binder
             boundServiceDeclarations.Add(new BoundServiceDeclaration(service.Name.Text,
                 service.Dependencies.Select(parameter => parameter.Type.Text).ToArray(), service.Interfaces.Select(iface => iface.Text).ToArray(), boundMethods));
         }
-        // Queue contracts intentionally admit only a structurally checked subset. Check
+        // Trigger contracts intentionally admit only a structurally checked subset. Check
         // instantiated members, including unused generic arguments, rather than
         // assuming that any otherwise valid immutable type is serializable.
-        bool QueueData(TypeShape root)
+        bool TriggerData(TypeShape root)
         {
             var active = new Dictionary<string, string>(StringComparer.Ordinal);
             var complete = new HashSet<string>(StringComparer.Ordinal);
@@ -2372,6 +2394,18 @@ public static class Binder
                 Fail("DS2042", actor.Name, "An actor requires exactly one Handle with one typed message parameter.");
             var expected = handle.Method.Parameters[0].Type.Text;
             var expectedHandle = $"Expected Handle({ActorDisplayType(expected)}): {ActorDisplayType(handle.Method.ReturnType.Text)} declared at {handle.Method.Name.OriginPath ?? path}({handle.Method.Name.Span.Line},{handle.Method.Name.Span.Column}).";
+            string ValidateTriggerType(Token messageType, string kind, string diagnostic)
+            {
+                var identity = messageType.Text;
+                if (!SupportedType(identity) || !GenericTypes.TryParse(identity, out var messageShape) ||
+                    messageShape.IsNullable || (messageShape.Name != "Unit" &&
+                    (!records.ContainsKey(messageShape.Name) && !unions.ContainsKey(messageShape.Name))) ||
+                    !TriggerData(messageShape))
+                    Fail(diagnostic, messageType, $"{kind} input must be Unit or a supported record or union with only supported data fields. {expectedHandle}");
+                if (identity != expected)
+                    Fail(diagnostic, messageType, $"{kind} input must match Handle. {expectedHandle}");
+                return identity;
+            }
             var queueBindings = new List<BoundQueueBinding>();
             var queueNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var binding in actor.QueueBindings)
@@ -2394,16 +2428,19 @@ public static class Binder
                 }
                 if (queueName.Length == 0 || !queueNames.Add(queueName))
                     Fail("DS2043", binding.QueueName, $"Queue names must be nonempty and unique within an actor. {expectedHandle}");
-                var identity = binding.MessageType.Text;
-                if (!SupportedType(identity) || !GenericTypes.TryParse(identity, out var messageShape) ||
-                    messageShape.IsNullable || (messageShape.Name != "Unit" &&
-                    (!records.ContainsKey(messageShape.Name) && !unions.ContainsKey(messageShape.Name))) ||
-                    !QueueData(messageShape))
-                    Fail("DS2043", binding.MessageType, $"Queue input must be Unit or a supported record or union with only supported data fields. {expectedHandle}");
-                if (identity != expected)
-                    Fail("DS2043", binding.MessageType, $"Queue input must match Handle. {expectedHandle}");
+                var identity = ValidateTriggerType(binding.MessageType, "Queue", "DS2043");
                 queueBindings.Add(new BoundQueueBinding(queueName, ActorDisplayType(identity), binding.Keyword.OriginPath ?? path,
                     binding.Keyword.Span, binding.MessageType.Span, binding.QueueName.Span) { TypeIdentity = identity });
+            }
+            var eventBindings = new List<BoundEventBinding>();
+            var eventTypes = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var binding in actor.EventBindings)
+            {
+                var identity = ValidateTriggerType(binding.MessageType, "Event", "DS2044");
+                if (!eventTypes.Add(identity))
+                    Fail("DS2044", binding.MessageType, $"An event message contract cannot be duplicated within an actor. {expectedHandle}");
+                eventBindings.Add(new BoundEventBinding(ActorDisplayType(identity), binding.Keyword.OriginPath ?? path,
+                    binding.Keyword.Span, binding.MessageType.Span) { TypeIdentity = identity });
             }
             var dependencies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var dependency in actor.Dependencies)
@@ -2445,7 +2482,7 @@ public static class Binder
                 ActorDisplayType(handle.Method.ReturnType.Text), actor.Dependencies.Select(dependency =>
                     new BoundActorDependency(dependency.Name.Text, ActorDisplayType(dependency.Type.Text))).ToArray(),
                 actor.Name.OriginPath ?? path, actor.Name.Span, handle.Method.Name.Span, handle.Id)
-                { QueueBindings = queueBindings });
+                { QueueBindings = queueBindings, EventBindings = eventBindings });
         }
         syntax = syntax with { Functions = syntax.Functions.Concat(syntheticFunctions).ToArray() };
         var signatures = new Dictionary<string, FunctionSyntax>(StringComparer.Ordinal);
