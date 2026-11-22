@@ -1,20 +1,21 @@
 # DEC-04: Durable actor acceptance, attempts and publication recovery
 
-**Status:** Draft proposal for review; not adopted or implemented.  
+**Status:** Decision accepted for merge; effective when merged, not implemented.
 **Issue:** [#14](https://github.com/gajo357/dsharplang/issues/14).  
 **Base:** `a10e9d70bd5239ff100f704f289e10d8f7335f9e`.
 
 ## Scope and review boundary
 
-This proposal replaces the historical queue-agent and callable-worker split,
+This decision replaces the historical queue-agent and callable-worker split,
 `enqueue(agent)` adapter and rules that retry or reject a normal business
 `Result.Error`. The [actor handoff](../DSharp_Actor_Runtime_Instructions.md)
 selects the target semantics. [DEC-03](DEC-03.md) describes caller-visible
-Invoke/Dispatch outcomes and remains a draft requiring expressed maintainer
-acceptance; this storage proposal aligns with its semantics without adopting its
-illustrative fault or language spelling. A reviewed merge may carry acceptance
-when the maintainer expresses it. Documentation checks do not implement or adopt
-either contract. The [implementation status](../DSharp_Implementation_Status.md)
+Invoke/Dispatch outcomes. For this decision, accept its semantic distinctions:
+Invoke returns the exact declared Handle result, business errors complete normally,
+and submission failure, execution fault, timeout, cancellation and uncertain
+acknowledgement remain distinct. Its illustrative fault and language spelling
+are not adopted here. Documentation checks do not implement this contract.
+The [implementation status](../DSharp_Implementation_Status.md)
 records what runs today.
 
 #59–#69 own the provider, intake, execution, policies and publication; #78 owns
@@ -52,18 +53,25 @@ attempts. An unavailable or incompatible selected implementation after deploymen
 is retained as an explicit blocked/failed operational state for inspection and
 recovery; never select a new fallback during recovery.
 
-A caller retains a stable submission identity for acknowledgement loss. On retry,
+A caller retains a stable submission identity for acknowledgement loss. Its
+namespace is the application identity plus submission identity, shared by
+targeted and publication operations. On retry,
 look up that identity **before** re-evaluating a changed registry, predicates or
 capacity: a matching retained submission returns its original identity/status or
 receipt, and conflicting reuse is rejected. Compare the full semantic request,
-including operation and payload/target identity, under a reviewed canonical
-representation; a hash alone must not silently accept a conflict. Concurrent
+including operation, payload/target, awaited parent and attempt where applicable,
+and options that change behavior, under a canonical representation. If the
+approved codec cannot provide that comparison, reject the unsupported use or
+configuration; a hash alone must not silently accept a conflict. Concurrent
 identical retries cannot create two logical invocations. Authorized status lookup
 can resolve an uncertain acknowledgement. A pre-commit rejection and an unknown
 post-commit response are distinct; never claim a lost response proves rejection.
-Retention must cover the advertised deduplication horizon; after expiry the
-runtime cannot promise a retry will deduplicate. The horizon and exact API remain
-review decisions, not implicit infinite retention.
+Retention must cover a finite positive deduplication horizon explicitly configured
+and validated before accepting traffic, measured from acceptance. Retain the
+record while its invocation or delivery remains active or retained for actionable
+recovery, even if that horizon has elapsed. After permitted expiry the runtime
+cannot promise a retry will deduplicate. The provider and host must expose the
+configured horizon to callers; no universal duration or exact API is selected here.
 
 ## Attempts, fencing and outcomes
 
@@ -84,7 +92,10 @@ sets eligibility/lease data, and retains the same logical invocation and pinned
 selection. It must never reuse a token for a later attempt. Claim atomically checks
 unowned eligibility; owner renewal, completion, failure and reschedule each check
 the current state, exact token and unexpired lease against the provider's
-authoritative clock. Expiry recovery atomically compares the observed current
+authoritative clock. Expiry is `now >= leaseUntil`; comparisons for an ownership
+transition use one provider-authoritative time source inside its transaction.
+The provider must preserve safe behavior across restart and clock changes or
+reject the unsupported deployment. Expiry recovery atomically compares the observed current
 state and token and requires that lease to be expired before fencing it. Renewal,
 claim and recovery serialize so an old observation cannot fence a renewed lease
 or a replacement owner. An expired or superseded token cannot renew, complete, enqueue a
@@ -139,11 +150,22 @@ restart does not reroll the delay; ensure arithmetic is bounded. Do not set a
 universal attempt count, timeout, capacity, delay or retention default here.
 A caller's wait timeout does not itself cancel accepted work or prove it stopped;
 a later completion can be inspected. Explicit authorized cancellation is a
-separate cooperative request. A pending cancellation and claim, or a running
-cancellation and fenced completion/expiry, must serialize to one documented
-durable outcome without double completion or hidden retry; cancellation cannot
-undo committed business or external effects. Exact cancellation winner rules,
-control surface and provider clock-jump behavior require review with #13/#57.
+separate cooperative request. A pending cancellation atomically makes work
+cancelled if it commits before claim; if claim wins, cancellation records a
+durable request and signals the running attempt cooperatively. If that request
+commits before a fenced terminal result, the subsequent fenced exit or expiry
+recovery records cancellation and does not schedule another attempt. If the
+terminal result commits first, cancellation reports the already-terminal state.
+These transitions serialize and never deliver two durable outcomes; repeated
+requests are idempotent and a stale owner cannot acknowledge cancellation or
+replace the result. When a still-fenced attempt exits after the request, record
+its actual normal, fault or cleanup outcome separately for authorized inspection
+without replacing cancellation or delivering a second caller answer. After
+expiry, a stale owner cannot update the authoritative record; external effects
+may still occur. Cancellation
+cannot undo committed business or external effects, nor stop noncooperative code.
+The exact control surface and provider clock-jump behavior remain with #57 and
+provider conformance.
 
 Retain deduplication records and completed/failure results for their documented
 horizons. Preserve an ancestor while retained child/failure records depend on it,
@@ -219,7 +241,7 @@ a documentation pass is not durability evidence.
 3. **Outcomes and control:** persist `Unit`, a successful value and a business
    `Result.Error` as normal completion; fault retries preserve identity/selection,
    then record terminal origin. Race cancellation with claim, completion and
-   expiry under the adopted winner rule. A timed-out waiter can inspect a later
+   expiry under the winner rule above. A timed-out waiter can inspect a later
    result; no result, cancellation or timeout implies rollback.
 4. **Ordering and permits:** hold one target/key permit across an Invoke, reject
    descendant re-entry, exercise a bounded other cycle and let an independent key
@@ -237,13 +259,13 @@ a documentation pass is not durability evidence.
    outbox/equivalent coordination. Retain ancestors, deduplication and results
    while references/horizons require them and protect inspection authorization.
 
-## Review decisions
+## Implementation boundaries
 
-Review acceptance/deduplication scope and horizon, canonical identity comparison,
-provider durability and clock/lease assumptions, retention and ancestor rules,
-cancellation winner and authorized recovery/skip policy, and publication/follow-up
-atomicity. Coordinate caller-visible outcomes and the unresolved public fault
-surface with #13; encoding with #78; and cross-store coordination with #95.
-Exact language/API spellings and provider defaults remain separate reviewed
-choices. No runtime behavior is claimed until its owning implementation and
-conformance evidence exist.
+Implement the acceptance, fencing, cancellation, retention and atomicity rules
+above. Provider-specific clock/lease behavior, canonical identity encoding and
+the configured deduplication horizon must be specified and validated against
+those rules before a provider claims conformance. Authorized recovery and skip
+policy must be explicit and auditable. Coordinate the public fault surface with
+#13, encoding with #78 and cross-store coordination with #95. Exact language/API
+spellings and provider defaults remain separate bounded choices. No runtime
+behavior is claimed until its owning implementation and conformance evidence exist.
