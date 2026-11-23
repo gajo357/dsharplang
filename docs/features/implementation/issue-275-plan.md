@@ -71,3 +71,27 @@ explicitly excluded.
 - Documentation link validation and `git diff --check` passed. Earlier local
   attempts encountered sandbox socket and .NET home permissions; rerunning with
   the necessary bounded permissions produced the successful results above.
+
+## Same-PR CI repair
+
+Hosted Compiler #275 passed at `e206be6`, but CI #282's trusted isolated
+compiler verifier ran all 18 baseline and 400 feature tests successfully and
+then rejected the oversized raw feature TRX. The isolated harness uses its
+base checkout's test project, so the standalone workflow's short output path
+cannot fix that stage. The compiler test project now uses short, distinct
+Debug/Release output paths at the same five-directory depth required by the
+existing tests. The unchanged isolated verifier still stages the trusted base
+project; for this exact base only, CI applies the reviewed project bytes to its
+temporary trusted checkout after checking both whole-file hashes and rejecting
+symlinks. The verifier, tests, complete TRX and 512,000-byte limit are unchanged.
+
+The workflow's compiler pilot now includes a deliberate failing feature and
+requires a successful build/baseline, the named failure in the raw TRX and the
+unchanged validator's failure, so an infrastructure or size failure cannot count
+as proof. The CI timeout is extended for the extra isolated run. Local migration
+checks accepted the exact project and rejected altered candidate bytes without
+modifying the trusted project; actionlint passed. The five-level Release and
+Debug paths were confirmed through MSBuild; focused scoped Invoke and old
+multi-file root traversal tests passed, as did all 31 automation tests. Actual
+isolated success/failure pilot results and the full exact-head hosted checks
+remain pending.
