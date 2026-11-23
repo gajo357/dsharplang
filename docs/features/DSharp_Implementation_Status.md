@@ -63,7 +63,10 @@ The queue codec and general HTTP trigger surface remain unimplemented.
 Actor event declarations now expose checked candidate message metadata using
 the same structural data and Handle-input rules. They do not create a
 subscription or activate delivery; explicit application registration and event
-publication remain future work.
+publication remain future work. An executed compiler integration test targets
+the same Queue/Event-bound actor through both Invoke and targeted Dispatch,
+preserving its business Error and separate fake acceptance receipt through the
+shared typed route. It does not demonstrate actual admission or delivery.
 
 Actor Cron declarations expose checked message and raw expression metadata
 using those same structural rules. The expression is not parsed or validated;
