@@ -415,6 +415,9 @@ public sealed record BoundActorDeclaration(string Name, string InputType, string
     IReadOnlyList<BoundActorDependency> Dependencies, string SourcePath, SourceSpan NameSpan,
     SourceSpan HandleSpan, string ImplementationName)
 {
+    // Describes the internal Handle-body signature; this is not registration
+    // or a production actor-executor contract.
+    public bool RequiresDispatcher { get; init; }
     public IReadOnlyList<BoundQueueBinding> QueueBindings { get; init; } = Array.Empty<BoundQueueBinding>();
     public IReadOnlyList<BoundEventBinding> EventBindings { get; init; } = Array.Empty<BoundEventBinding>();
     public IReadOnlyList<BoundCronBinding> CronBindings { get; init; } = Array.Empty<BoundCronBinding>();
@@ -6121,9 +6124,27 @@ public static class Binder
                             var isPublication = isDispatch && call.TypeArguments.Count == 0;
                             var operation = isDispatch ? "Dispatch" : "Invoke";
                             var diagnostic = isDispatch ? "DS2048" : "DS2047";
+                            // This deliberately narrow actor seam carries no live
+                            // dependency or local resource across the invocation.
+                            // The general resource boundary remains with #45.
+                            bool ResourceFreeActorHandle()
+                            {
+                                if (isDispatch || !actorMethodsByBody.TryGetValue(function.Name.Text, out var context) ||
+                                    context.Actor.Dependencies.Count != 0 ||
+                                    !context.Methods.TryGetValue("Handle", out var handle) || handle.Id != function.Name.Text ||
+                                    handle.Method.Body.Bindings.Count != 0 || handle.Method.Body.Statements.Count != 0 ||
+                                    call.Arguments.Count != 1 || call.Arguments[0] is not ValueSyntax input ||
+                                    input.Value.Text != handle.Method.Parameters[0].Name.Text) return false;
+                                ExpressionSyntax result = handle.Method.Body.Result;
+                                while (result is GroupSyntax group) result = group.Inner;
+                                if (result is not AwaitSyntax awaited) return false;
+                                ExpressionSyntax operand = awaited.Operand;
+                                while (operand is GroupSyntax operandGroup) operand = operandGroup.Inner;
+                                return ReferenceEquals(operand, call);
+                            }
                             if (!ReferenceEquals(call, directlyAwaitedInvoke) || !function.IsAsync || lambdaDepth != 0 ||
-                                !sourceHttpFunctions.Contains(function.Name.Text))
-                                Fail(diagnostic, call.Name, $"Actor {operation} must be directly awaited in an async top-level host entry.");
+                                (!sourceHttpFunctions.Contains(function.Name.Text) && !ResourceFreeActorHandle()))
+                                Fail(diagnostic, call.Name, $"Actor {operation} requires a supported directly awaited scoped entry.");
                             if (isDispatch && (function.ReturnType.Text != (isPublication ? publicationReceiptSymbol : invocationReceiptSymbol) ||
                                 !ReferenceEquals(call, DispatchResultSite(function))))
                                 Fail(diagnostic, call.Name, "Dispatch is supported only as the directly awaited inferred entry result.");
@@ -8001,6 +8022,9 @@ public static class Binder
         for (var i = 0; i < functions.Count; i++)
             if (dispatcherEntries.Contains(functions[i].Name) && !functions[i].RequiresDispatcher)
                 functions[i] = functions[i] with { RequiresDispatcher = true };
+        for (var i = 0; i < boundActors.Count; i++)
+            if (dispatcherEntries.Contains(boundActors[i].ImplementationName))
+                boundActors[i] = boundActors[i] with { RequiresDispatcher = true };
         foreach (var actor in syntax.Actors)
         {
             void CheckHttpReference(Token token, string? resolved, bool referencesResolved)
