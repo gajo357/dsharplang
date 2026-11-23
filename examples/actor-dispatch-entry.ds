@@ -1,0 +1,7 @@
+module ActorDispatchEntry
+
+// The host provides a dispatcher; the returned opaque receipt comes from that
+// dispatcher. This example does not implement durable acceptance or execution.
+type Request { value: int }
+actor Worker { Handle(message: Request): int { message.value } }
+async fn send(value: int) { await Dispatch<Worker>(Request { value = value }) }

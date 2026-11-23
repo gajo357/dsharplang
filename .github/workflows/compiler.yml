@@ -25,7 +25,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
-          short_checkout="$(mktemp -d /tmp/XXX)"
+          # mkdir is atomic and refuses any pre-existing file, directory or
+          # symlink. A private one-character path saves two bytes in each of
+          # the many repeated TRX assembly paths without changing the guard.
+          short_checkout=""
+          for candidate in {a..z} {A..Z} {0..9}; do
+            if mkdir -m 700 "/tmp/$candidate" 2>/dev/null; then
+              short_checkout="/tmp/$candidate"
+              break
+            fi
+          done
+          test -n "$short_checkout"
+          trap 'rm -rf -- "$short_checkout"' EXIT
           git clone --quiet --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$short_checkout"
           git -C "$short_checkout" checkout --quiet --detach "$GITHUB_SHA"
           test "$(git -C "$short_checkout" rev-parse HEAD)" = "$GITHUB_SHA"
