@@ -46,7 +46,11 @@ Invoke entry or another such function; generated calls forward its host-supplied
 dispatcher, including across tested qualified and recursive chains. Recording
 tests exercise interleaved hosts, pending calls and faults. Captures, partials,
 unawaited calls, receipt forwarding and dispatcher operations inside actor
-helpers or lambdas remain unsupported. A directly awaited targetless Dispatch host
+helpers or lambdas remain unsupported. A resource-free actor Handle whose sole
+result directly invokes a target with its own input can also use an explicit
+host-supplied dispatcher; checked actor metadata identifies this body signature.
+Recording tests cover isolated host contexts, exact results and faults. Other
+actor-body shapes and resource-crossing policy remain unimplemented. A directly awaited targetless Dispatch host
 entry accepts a conservative checked message subset and yields an opaque
 publication receipt; recording tests exercise fake acceptance and host isolation.
 Actual publication, subscriptions and delivery remain unimplemented. For affected CLI

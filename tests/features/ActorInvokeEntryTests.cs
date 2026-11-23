@@ -123,7 +123,6 @@ public sealed class ActorInvokeEntryTests
             "fn use(): int { Invoke<Worker>(Request { value = 1 }) }",
             "async fn use(): int { let callback = async () => { await Invoke<Worker>(Request { value = 1 }) }\n await callback() }",
             "async fn use(): int { await (async () => { await Invoke<Worker>(Request { value = 1 }) })() }",
-            "actor Caller { Handle(message: Request): int { await Invoke<Worker>(message) } }",
             "actor Caller { async helper(message: Request): int { await Invoke<Worker>(message) } Handle(message: Request): int { 1 } }",
             "extend Request { async fn call(self): int { await Invoke<Worker>(self) } }",
             "async fn entry(): int { await Invoke<Worker>(Request { value = 1 }) }\nfn leak(): Unit { let callback = entry\n () }",
@@ -136,6 +135,11 @@ public sealed class ActorInvokeEntryTests
             Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "invalid-invoke.ds"),
                 $"Expected invalid or unsupported Invoke rejection: {scenario}; diagnostics: {string.Join("; ", result.Diagnostics)}");
         }
+        var actorBody = DSharpCompiler.Compile(declarations + "actor Caller { Handle(message: Request): int { await Invoke<Worker>(message) } }", "actor-body-invoke.ds");
+        Assert.True(actorBody.CSharp is not null && actorBody.Diagnostics.Count == 0 && actorBody.RequiresRuntime,
+            $"Expected resource-free direct actor Handle Invoke: {string.Join("; ", actorBody.Diagnostics)}");
+        Assert.True(Assert.Single(actorBody.Actors, actor => actor.Name == "Caller").RequiresDispatcher);
+        Assert.False(Assert.Single(actorBody.Actors, actor => actor.Name == "Worker").RequiresDispatcher);
         var nested = DSharpCompiler.Compile(declarations + "async fn entry(): int { await Invoke<Worker>(Request { value = 1 }) }\nasync fn caller(): int { await entry() }", "nested-invoke.ds");
         Assert.True(nested.CSharp is not null && nested.Diagnostics.Count == 0 && nested.RequiresRuntime,
             $"Expected directly awaited scoped Invoke chain: {string.Join("; ", nested.Diagnostics)}");
