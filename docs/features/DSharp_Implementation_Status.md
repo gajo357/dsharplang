@@ -6,10 +6,11 @@ The #9 setup adds a managed runtime project and test-only manual clock and
 scripted randomness harness. #267 adds a typed dispatcher interface, route and
 message-contract descriptors, and distinct opaque receipt types. Runtime feature
 tests exercise the interface using recording fakes. #59 adds a provisional,
-single-process, volatile reference for targeted-submission identity and lookup:
-tests cover byte-exact retries and conflicts, pinned selection and concurrent
-admission. This is not a canonical codec, production store or durable acceptance;
-publication, execution attempts, recovery and provider conformance remain open.
+single-process, volatile reference for targeted and publication identity and
+lookup: tests cover byte-exact retries and conflicts, pinned selections and frozen
+publication intents, and concurrent admission in the shared submission namespace.
+This is not a canonical codec, production store or durable acceptance; delivery,
+execution attempts, recovery and provider conformance remain open.
 No production dispatcher or application host is implemented. #269 adds the
 bounded generated Invoke entry described below. See the
 [runtime seam plan](implementation/issue-267-plan.md).

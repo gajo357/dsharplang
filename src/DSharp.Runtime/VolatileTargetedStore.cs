@@ -100,13 +100,15 @@ internal sealed class TargetedRequest
 
 internal sealed record TargetedRecord(TargetedRequest Request, Guid InvocationId, string SelectedImplementation);
 internal sealed record TargetedAcceptResult(TargetedAcceptKind Kind, TargetedRecord? Record);
+internal enum SubmissionProbeKind { Absent, Existing, Conflict }
+internal sealed record TargetedProbeResult(SubmissionProbeKind Kind, TargetedRecord? Record);
 
 /// <summary>
 /// Provisional single-process reference bookkeeping; records live only until
 /// this object is discarded. No receipt, durable acknowledgement, selection,
 /// authorization, codec, retention expiry or multi-record transaction is supplied.
 /// </summary>
-internal sealed class VolatileTargetedStore
+internal sealed partial class VolatileTargetedStore
 {
     private readonly object gate = new();
     private readonly Dictionary<(string ApplicationId, string SubmissionId), TargetedRecord> submissions = new();
@@ -125,8 +127,27 @@ internal sealed class VolatileTargetedStore
     public bool IsDurable => false;
     public bool SupportsAtomicFollowUps => false;
 
-    // Hosts may consult this before performing any selection. Authorization and
-    // selection orchestration are intentionally outside this reference model.
+    // This request-aware probe shares the entire submission namespace, so a
+    // host can discover a cross-operation conflict before doing any selection.
+    // Authorization and complete host orchestration remain outside this model.
+    public TargetedProbeResult ProbeTargeted(TargetedRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        lock (gate)
+        {
+            var key = (request.ApplicationId, request.SubmissionId);
+            if (publications.ContainsKey(key))
+                return new(SubmissionProbeKind.Conflict, null);
+            if (!submissions.TryGetValue(key, out var existing))
+                return new(SubmissionProbeKind.Absent, null);
+            return request.SameRequest(existing.Request)
+                ? new(SubmissionProbeKind.Existing, existing)
+                : new(SubmissionProbeKind.Conflict, null);
+        }
+    }
+
+    // Kind-specific record lookup; use ProbeTargeted for shared-key conflict
+    // detection before selection. Authorization and orchestration remain outside.
     public TargetedRecord? Lookup(string applicationId, string submissionId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
@@ -141,6 +162,8 @@ internal sealed class VolatileTargetedStore
         lock (gate)
         {
             var key = (request.ApplicationId, request.SubmissionId);
+            if (publications.ContainsKey(key))
+                return new(TargetedAcceptKind.Conflict, null);
             if (submissions.TryGetValue(key, out var existing))
                 return request.SameRequest(existing.Request)
                     ? new(TargetedAcceptKind.Existing, existing)
@@ -153,8 +176,16 @@ internal sealed class VolatileTargetedStore
                 return new(TargetedAcceptKind.InvocationIdCollision, null);
 
             var record = new TargetedRecord(request, invocationId, selectedImplementation);
-            submissions.Add(key, record);
             invocationIds.Add(invocationId);
+            try
+            {
+                submissions.Add(key, record);
+            }
+            catch
+            {
+                invocationIds.Remove(invocationId);
+                throw;
+            }
             return new(TargetedAcceptKind.Created, record);
         }
     }
