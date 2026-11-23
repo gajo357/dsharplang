@@ -172,7 +172,7 @@ internal sealed partial class VolatileTargetedStore
             if (invocationId == Guid.Empty)
                 throw new ArgumentException("A nonempty invocation identity is required for a new record.", nameof(invocationId));
             ArgumentException.ThrowIfNullOrWhiteSpace(selectedImplementation);
-            if (invocationIds.Contains(invocationId))
+            if (invocationIds.Contains(invocationId) || usedOwnershipIds.Contains(invocationId))
                 return new(TargetedAcceptKind.InvocationIdCollision, null);
 
             var record = new TargetedRecord(request, invocationId, selectedImplementation);

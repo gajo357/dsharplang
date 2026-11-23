@@ -117,3 +117,57 @@ passed 18 baseline and 406 feature tests from a private short-path source snapsh
 the unchanged TRX guard accepted 506,836 bytes. The runtime source matches the
 final candidate; the subsequent runtime run covers the final bounded waits in
 the new runtime test's race barriers.
+
+## Third slice: volatile targeted ownership and expiry
+
+Base: `1c20ff0097571ea316887901889b59693b811173`, with #9/#14 and the
+preceding #59 slices merged. Continue on the existing dedicated branch. Add
+`src/DSharp.Runtime/VolatileTargetedOwnership.cs` and
+`tests/runtime-features/VolatileTargetedOwnershipTests.cs`, extend the targeted
+identity check in `src/DSharp.Runtime/VolatileTargetedStore.cs`, and update this
+plan and the implementation status.
+Existing tests, dependencies, verifier, public ABI and D# syntax remain unchanged.
+
+Use an explicitly initialized store-owned simulated clock, advanced only
+monotonically under the store gate, and read it once in each ownership operation.
+Do not invoke host callbacks or use caller-supplied transition timestamps. A
+claim of an already accepted targeted invocation requires its application,
+submission and invocation identity; publication IDs have a separate domain and
+may have the same raw value. Claim atomically creates a distinct attempt and
+fresh ownership token, records a positive finite lease and retains
+the original invocation and selection. Never reuse an attempt identity or token.
+Targeted invocation, attempt and token IDs cannot collide in either insertion
+order; publication IDs remain a distinct domain.
+Renewal checks the exact current owner and unexpired lease and strictly extends
+the deadline. All time arithmetic and identities are validated before mutation.
+
+Expiry uses an observed attempt, token and lease deadline, atomically verifies
+that all still match and that `now >= leaseUntil`, and fences the expired owner
+only when the caller explicitly selects terminal lease-expired failure. Retain
+that failure and the attempt; do not claim the handler threw. No automatic retry,
+eligibility, scheduling or provider policy is selected. This is only a volatile
+fencing reference; retry, rescheduling and normalized execution faults remain
+#59 work.
+It cannot stop a stale process or guarantee ordering of its external effects.
+
+Tests map to the slice as follows: coordinated claims and renew/expiry races
+exercise atomic ownership; exact-boundary expiry, old observations and wrong or
+reused tokens exercise fencing; invalid/overflowing durations and backwards
+clock movements exercise fail-closed validation; retained invocation and
+selection check identity preservation; unknown or publication identities cannot
+be claimed. Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual outcomes and isolated-image limits.
+
+This internal, single-process simulated clock is not a provider-authoritative
+real-time or restart-safe clock. Durable acceptance, real provider conformance,
+completion, cancellation, policy, rescheduling and publication execution remain
+open; #59 is not completed by this slice.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 24 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot. Its runtime source and feature test match this candidate;
+the unchanged 512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.
