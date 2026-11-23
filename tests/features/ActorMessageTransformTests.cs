@@ -103,7 +103,6 @@ public sealed class ActorMessageTransformTests
             "actor Caller { Handle(message: Input): int { await Invoke<Worker>(Output { value = message.value + 1 }) } }",
             "actor Caller { Handle(message: Input): int { await Invoke<Worker>(Output { value = -1 }) } }",
             "actor Caller { Handle(message: Input): int { await Invoke<Worker>(Output { value = ((value: int) => value)(message.value) }) } }",
-            "actor Caller { Handle(message: Input): int { let saved = message\n await Invoke<Worker>(Output { value = saved.value }) } }",
             "interface Store { read(): int }\nactor Caller(store: Store) { Handle(message: Input): int { await Invoke<Worker>(Output { value = message.value }) } }",
             "actor Caller { Handle(message: Input): int { using reader = Reader() { await Invoke<Worker>(Output { value = reader.read() }) } } }",
             "actor Caller { async helper(message: Input): int { await Invoke<Worker>(Output { value = message.value }) } Handle(message: Input): int { 1 } }",
@@ -116,6 +115,9 @@ public sealed class ActorMessageTransformTests
             Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "invalid-transform.ds"),
                 $"Expected bounded transformation rejection: {scenario}; diagnostics: {string.Join("; ", result.Diagnostics)}");
         }
+        var localTransform = DSharpCompiler.Compile(common + "\nactor Caller { Handle(message: Input): int { let saved = message\n await Invoke<Worker>(Output { value = saved.value }) } }", "local-actor-transform.ds");
+        Assert.True(localTransform.CSharp is not null && localTransform.Diagnostics.Count == 0 && localTransform.RequiresRuntime,
+            $"Expected pure actor input alias in Handle transformation: {string.Join("; ", localTransform.Diagnostics)}");
         var direct = DSharpCompiler.Compile(common + "\nactor Caller { Handle(message: Input): int { await Invoke<Worker>(Output { value = message.value }) } }\nfn bad(): Unit { Caller() }", "transform-bypass.ds");
         Assert.True(direct.CSharp is null && direct.Diagnostics.Any(d => d.Path == "transform-bypass.ds"),
             $"Expected direct actor construction rejection: {string.Join("; ", direct.Diagnostics)}");

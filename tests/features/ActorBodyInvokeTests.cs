@@ -66,7 +66,6 @@ public sealed class ActorBodyInvokeTests
         [
             "actor Caller { Handle(message: Request): int { await Invoke<Missing>(message) } }",
             "actor Caller { Handle(message: Request): int { await Invoke<Worker>(1) } }",
-            "actor Caller { Handle(message: Request): int { let saved = message\n await Invoke<Worker>(saved) } }",
             "interface Store { read(): int }\nactor Caller(store: Store) { Handle(message: Request): int { await Invoke<Worker>(message) } }",
             "resource Reader { read(): int { 1 } release(): Unit { () } }\nactor Caller { Handle(message: Request): int { using reader = Reader() { await Invoke<Worker>(message) } } }",
             "actor Caller { async helper(message: Request): int { await Invoke<Worker>(message) } Handle(message: Request): int { 1 } }",
@@ -83,6 +82,9 @@ public sealed class ActorBodyInvokeTests
         var transformed = DSharpCompiler.Compile(common + "actor Caller { Handle(message: Request): int { await Invoke<Worker>(Request { value = message.value }) } }", "transformed-actor-invoke.ds");
         Assert.True(transformed.CSharp is not null && transformed.Diagnostics.Count == 0 && transformed.RequiresRuntime,
             $"Expected immutable record transformation in Handle Invoke: {string.Join("; ", transformed.Diagnostics)}");
+        var localAlias = DSharpCompiler.Compile(common + "actor Caller { Handle(message: Request): int { let saved = message\n await Invoke<Worker>(saved) } }", "actor-local-alias.ds");
+        Assert.True(localAlias.CSharp is not null && localAlias.Diagnostics.Count == 0 && localAlias.RequiresRuntime,
+            $"Expected pure actor input alias before Handle Invoke: {string.Join("; ", localAlias.Diagnostics)}");
         foreach (var bypass in new[]
         {
             "fn bad(): Unit { Caller() }",

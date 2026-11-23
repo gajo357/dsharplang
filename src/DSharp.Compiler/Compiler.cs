@@ -4069,6 +4069,16 @@ public static class Binder
             var actorBorrowArguments = new HashSet<ExpressionSyntax>(ReferenceEqualityComparer.Instance);
             var inaccessibleCaptures = new HashSet<string>(StringComparer.Ordinal);
             var resourceHandles = new HashSet<string>(StringComparer.Ordinal);
+            bool DeclaredActorRecord(string type) => GenericTypes.TryParse(type, out var shape) &&
+                !shape.IsNullable && records.ContainsKey(shape.Name);
+            bool PureActorData(BoundExpression expression, ISet<string> allowed) => expression switch
+            {
+                BoundReference reference => allowed.Contains(reference.Name),
+                BoundFieldAccess field => DeclaredActorRecord(field.ReceiverType) && PureActorData(field.Receiver, allowed),
+                BoundRecordConstruction record => DeclaredActorRecord(record.Type) && record.Fields.All(field => PureActorData(field.Value, allowed)),
+                BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundFloat64 or BoundBool or BoundText or BoundUnit => true,
+                _ => false
+            };
             var directResourceAwait = false;
             CallSyntax? directlyAwaitedActorHelper = null;
             CallSyntax? directlyAwaitedInvoke = null;
@@ -6165,7 +6175,7 @@ public static class Binder
                                 if (isDispatch || !actorMethodsByBody.TryGetValue(function.Name.Text, out var context) ||
                                     context.Actor.Dependencies.Count != 0 ||
                                     !context.Methods.TryGetValue("Handle", out var handle) || handle.Id != function.Name.Text ||
-                                    handle.Method.Body.Bindings.Count != 0 || handle.Method.Body.Statements.Count != 0 ||
+                                    handle.Method.Body.Statements.Any(statement => statement is not LetStatementSyntax) ||
                                     call.Arguments.Count != 1) return false;
                                 ExpressionSyntax result = handle.Method.Body.Result;
                                 while (result is GroupSyntax group) result = group.Inner;
@@ -6211,22 +6221,6 @@ public static class Binder
                             var message = BindExpression(call.Arguments[0], inputType);
                             if (message.Type != inputType && message.Type != "<never>")
                                 Fail(diagnostic, call.Arguments[0].Token, $"Actor {operation} requires message type {ActorDisplayType(inputType)}.");
-                            if (!sourceHttpFunctions.Contains(function.Name.Text))
-                            {
-                                var actorInput = actorMethodsByBody[function.Name.Text].Methods["Handle"].Method.Parameters[0].Name.Text;
-                                bool DeclaredRecord(string type) => GenericTypes.TryParse(type, out var shape) &&
-                                    !shape.IsNullable && records.ContainsKey(shape.Name);
-                                bool PureActorMessage(BoundExpression expression) => expression switch
-                                {
-                                    BoundReference reference => reference.Name == actorInput,
-                                    BoundFieldAccess field => DeclaredRecord(field.ReceiverType) && PureActorMessage(field.Receiver),
-                                    BoundRecordConstruction record => DeclaredRecord(record.Type) && record.Fields.All(field => PureActorMessage(field.Value)),
-                                    BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundFloat64 or BoundBool or BoundText or BoundUnit => true,
-                                    _ => false
-                                };
-                                if (!PureActorMessage(message.Expression))
-                                    Fail(diagnostic, call.Arguments[0].Token, "Actor Handle messages must use only immutable input fields, record construction or literals.");
-                            }
                             var routeKey = syntax.TypeDisplayNames.TryGetValue(targetActor.Name.Text, out var actorDisplay)
                                 ? actorDisplay : syntax.Name.Text + "." + targetActor.Name.Text;
                             actorRoutes.TryAdd(actorIdentity, new BoundActorRoute(actorIdentity, routeKey, inputType, actorResultType));
@@ -8007,6 +8001,28 @@ public static class Binder
                 continue;
             }
             var body = BindBlock(sourceBody, true, function.ReturnType.Text);
+            if (requiresDispatcher && actorMethodsByBody.TryGetValue(function.Name.Text, out var actorContext) &&
+                actorContext.Methods.TryGetValue("Handle", out var actorHandle) && actorHandle.Id == function.Name.Text)
+            {
+                // Validate the actual bound sequence, not the parallel syntax
+                // binding list: Binder clients can supply either representation.
+                var allowed = new HashSet<string>(StringComparer.Ordinal) { actorHandle.Method.Parameters[0].Name.Text };
+                var sourceBindings = actorHandle.Method.Body.Statements.Count != 0
+                    ? actorHandle.Method.Body.Statements.OfType<LetStatementSyntax>().Select(statement => statement.Binding).ToArray()
+                    : actorHandle.Method.Body.Bindings.ToArray();
+                for (var index = 0; index < body.Block.Statements.Count; index++)
+                {
+                    var statement = body.Block.Statements[index];
+                    if (statement is not BoundLetStatement local || local.Local.Expression is null ||
+                        !DataType(local.Local.Type) || !PureActorData(local.Local.Expression, allowed))
+                        Fail("DS2047", index < sourceBindings.Length ? sourceBindings[index].Name : actorHandle.Method.Name,
+                            "Actor Handle locals before Invoke must be pure immutable data.");
+                    allowed.Add(local.Local.Name);
+                }
+                if (body.Block.Result is not BoundAwait { Operand: BoundActorInvocation invocation } ||
+                    !PureActorData(invocation.Message, allowed))
+                    Fail("DS2047", actorHandle.Method.Name, "Actor Handle messages must use only proven immutable data.");
+            }
             if (body.Type != "<never>" && body.Type != "<null>" && !IsNullable(body.Type) && body.Type != function.ReturnType.Text && (function.ReturnType.Text is "string" or "char"))
                 Fail("DS2003", function.ReturnType, "Return type does not match the function body.");
             Require(sourceBody.Result, body.Type, function.ReturnType.Text);
