@@ -2,9 +2,30 @@ namespace DSharp.Runtime;
 
 // Provisional single-process state only; failure means the lease expired, not
 // that the actor threw or that a stale process stopped executing.
-internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired }
+internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed }
+
+// Opaque bytes only. Supplying metadata is not a codec or schema compatibility check.
+internal sealed class TargetedCompletion
+{
+    private readonly byte[] payload;
+    private readonly byte[] contractMetadata;
+
+    public TargetedCompletion(byte[] payload, byte[] contractMetadata)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(contractMetadata);
+        if (contractMetadata.Length == 0)
+            throw new ArgumentException("Result contract metadata must be supplied.", nameof(contractMetadata));
+        this.payload = (byte[])payload.Clone();
+        this.contractMetadata = (byte[])contractMetadata.Clone();
+    }
+
+    public byte[] Payload => (byte[])payload.Clone();
+    public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
+}
+
 internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAttemptState State,
-    Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil);
+    Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null);
 internal enum AttemptTransitionStatus
 {
     Applied, NotFound, NotEligible, InvalidOwner, Expired, ObservationMismatch,
@@ -114,6 +135,32 @@ internal sealed partial class VolatileTargetedStore
             if (deadline <= current.LeaseUntil.Value)
                 return new(AttemptTransitionStatus.NotExtended, current);
             var next = current with { LeaseUntil = deadline };
+            ownerships[invocationId] = next;
+            return new(AttemptTransitionStatus.Applied, next);
+        }
+    }
+
+    public AttemptTransitionResult Complete(string applicationId, string submissionId, Guid invocationId,
+        Guid attemptId, Guid token, TargetedCompletion completion)
+    {
+        ValidateSubmissionKey(applicationId, submissionId);
+        ValidateIdentity(invocationId, nameof(invocationId));
+        ValidateIdentity(attemptId, nameof(attemptId));
+        ValidateIdentity(token, nameof(token));
+        ArgumentNullException.ThrowIfNull(completion);
+        lock (gate)
+        {
+            var now = GetClock();
+            var current = FindOwnership(applicationId, submissionId, invocationId);
+            if (current is null)
+                return new(AttemptTransitionStatus.NotFound, null);
+            if (current.State != TargetedAttemptState.Running)
+                return new(AttemptTransitionStatus.NotEligible, current);
+            if (current.AttemptId != attemptId || current.Token != token)
+                return new(AttemptTransitionStatus.InvalidOwner, current);
+            if (now >= current.LeaseUntil!.Value)
+                return new(AttemptTransitionStatus.Expired, current);
+            var next = current with { State = TargetedAttemptState.Completed, Completion = completion };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
         }

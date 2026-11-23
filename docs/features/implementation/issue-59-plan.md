@@ -171,3 +171,50 @@ short-path snapshot. Its runtime source and feature test match this candidate;
 the unchanged 512,000-byte TRX guard accepted the 506,836-byte feature report.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Fourth slice: volatile fenced normal completion
+
+Base: `72294c442bd1e924be28bec314d730e94a16ffb2`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing branch. Extend the internal
+targeted ownership reference in `src/DSharp.Runtime/VolatileTargetedOwnership.cs`
+and add `tests/runtime-features/VolatileTargetedCompletionTests.cs`; update this plan and the
+implementation status. Existing tests, dependencies, verifier, public ABI and D#
+syntax stay unchanged.
+
+Model a copied opaque normal-result envelope containing bytes and nonempty
+result contract/encoding metadata. Empty bytes can represent a Unit-like value;
+business-error-like bytes remain normal values. The reference does not decode or
+validate declared D# types or provide canonical encoding. Copy buffers on input
+and output, and preserve the accepted request, selection, invocation and attempt.
+
+Completion reads the store's simulated clock once inside the shared gate and
+requires the exact targeted key and invocation, running state, attempt and token,
+and `now < leaseUntil`. It atomically records one terminal completed outcome.
+Wrong, stale, expired, unknown or terminal owners cannot mutate the result; a
+repeat returns a non-mutating terminal status, even for matching bytes. Read-only
+inspection can return the retained outcome; this slice does not claim lost-ack
+replay semantics. No host callbacks occur under the gate and no follow-ups are
+accepted; same-store atomic follow-ups remain explicitly unsupported.
+
+Tests map to acceptance as follows: plain, Unit-like and business-error-like
+opaque outcomes and copied buffers exercise preservation; invalid metadata and
+wrong identity or state exercise fail-closed behavior; exact deadline, renewal,
+stale owners and repeated completions exercise fencing; coordinated competing
+completion, renewal and expiry races exercise atomic terminal outcomes. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual results and any isolated-image limit.
+
+This remains a volatile simulation, not a production provider, canonical codec,
+schema compatibility check, durable acknowledgement, authorization mechanism,
+executor, fault/retry policy, cancellation or restart evidence. #59 stays open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 29 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot; the unchanged 512,000-byte TRX guard accepted the
+506,836-byte feature report. Runtime source matches the final candidate; the
+final unclaimed/publication-key assertions were covered by the subsequent full
+runtime run.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.
