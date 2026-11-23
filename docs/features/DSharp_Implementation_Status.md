@@ -10,9 +10,10 @@ single-process, volatile reference for targeted and publication identity and
 lookup: tests cover byte-exact retries and conflicts, pinned selections and frozen
 publication intents, and concurrent admission in the shared submission namespace.
 The reference also exercises a simulated-clock targeted claim, lease renewal and
-explicit terminal lease-expiry failure with fenced owners. This is not a canonical
-codec, production store or durable acceptance; execution, retry policy, durable
-recovery and provider conformance remain open.
+explicit terminal lease-expiry failure with fenced owners, and stores copied
+opaque normal-completion bytes only for a current unexpired owner. This is not a
+canonical codec, production store or durable acceptance; execution, result schema
+validation, retry policy, durable recovery and provider conformance remain open.
 No production dispatcher or application host is implemented. #269 adds the
 bounded generated Invoke entry described below. See the
 [runtime seam plan](implementation/issue-267-plan.md).
