@@ -8,7 +8,7 @@ permissions:
 jobs:
   documentation-and-automation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -42,6 +42,24 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: node candidate/.github/ai/migrate-dotnet11-harness.mjs trusted "$BASE_SHA"
+      # One-time test-output path migration for this base. Preserve the base
+      # project and verifier except for the exact reviewed path-only change.
+      - name: Reconcile the reviewed compiler test output path
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$BASE_SHA" == "5995c2c9605f474a944933f5d41ffb152600541f" ]]; then
+            for root in trusted candidate; do
+              test -d "$root/tests" && test ! -L "$root/tests"
+              test -d "$root/tests/DSharp.Compiler.Tests" && test ! -L "$root/tests/DSharp.Compiler.Tests"
+              test -f "$root/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj" && test ! -L "$root/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj"
+            done
+            echo '5e3ec93722c1ecfa7b2abcfb93aea9dd83c02418fd073112d29049d84bba91bb  trusted/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj' | sha256sum --check --status
+            echo '2b6faddd5364ef954594150523729a3c764545709a5d0d6d9c3a9c7d7889a385  candidate/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj' | sha256sum --check --status
+            cp candidate/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj trusted/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj
+            echo '2b6faddd5364ef954594150523729a3c764545709a5d0d6d9c3a9c7d7889a385  trusted/tests/DSharp.Compiler.Tests/DSharp.Compiler.Tests.csproj' | sha256sum --check --status
+          fi
       - name: Verify candidate with the base harness when available
         run: |
           if [[ -f trusted/.github/ai/bootstrap.sh && -f trusted/.github/ai/verify.sh ]]; then

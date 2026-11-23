@@ -2000,6 +2000,8 @@ public static class Binder
         }
         Token ScopedParameter(Token token, IReadOnlyDictionary<string, string> scope) => token with { Text = scope[token.Text] };
         var sourceHttpFunctions = syntax.Functions.Select(function => function.Name.Text).ToHashSet(StringComparer.Ordinal);
+        var explicitAsyncSourceFunctions = syntax.Functions.Where(function => function.IsAsync && !function.InferReturnType)
+            .Select(function => function.Name.Text).ToHashSet(StringComparer.Ordinal);
         // Extensions are ordinary private functions after resolution. Their
         // receiver is the first parameter, so calls preserve evaluation order.
         var extensionDeclarations = new List<(string Id, ExtensionDeclarationSyntax Declaration, ExtensionMethodSyntax Method)>();
@@ -7957,9 +7959,48 @@ public static class Binder
                 foreach (var dependency in usedResultHelpers)
                     if (!boundPreludeHelpers.Contains(dependency)) inferenceOrder.Add(resultHelpers[dependency]);
         }
-        // Until scoped context propagation is implemented, host-entry functions
-        // cannot be called, partially applied or captured from D# code.
+        // Propagate only value-returning Invoke entries through directly awaited
+        // ordinary async functions. Resolve effects before validating uses so
+        // recursion, forward calls and transitive callback escapes fail closed.
         var dispatcherEntries = functions.Where(item => item.RequiresDispatcher).Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        var functionByName = functions.ToDictionary(item => item.Name, StringComparer.Ordinal);
+        bool CanForward(string name) => functionByName[name].ReturnType != invocationReceiptSymbol &&
+            functionByName[name].ReturnType != publicationReceiptSymbol;
+        void WalkBound(object? node, Action<object, bool, bool> visit, bool immediateAwait = false, bool inLambda = false)
+        {
+            if (node is null or string) return;
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) WalkBound(item, visit, false, inLambda);
+                return;
+            }
+            var type = node.GetType();
+            if (!type.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
+            visit(node, immediateAwait, inLambda);
+            if (node is BoundAwait awaited)
+            {
+                WalkBound(awaited.Operand, visit, true, inLambda);
+                return;
+            }
+            var nestedLambda = inLambda || node is BoundLambda;
+            foreach (var property in type.GetProperties())
+                if (property.GetIndexParameters().Length == 0)
+                    WalkBound(property.GetValue(node), visit, false, nestedLambda);
+        }
+        bool dispatcherChanged;
+        do
+        {
+            dispatcherChanged = false;
+            foreach (var owner in functions)
+                WalkBound(owner, (node, _, _) =>
+                {
+                    if (node is BoundCall call && dispatcherEntries.Contains(call.Name) && CanForward(call.Name) &&
+                        dispatcherEntries.Add(owner.Name)) dispatcherChanged = true;
+                });
+        } while (dispatcherChanged);
+        for (var i = 0; i < functions.Count; i++)
+            if (dispatcherEntries.Contains(functions[i].Name) && !functions[i].RequiresDispatcher)
+                functions[i] = functions[i] with { RequiresDispatcher = true };
         foreach (var actor in syntax.Actors)
         {
             void CheckHttpReference(Token token, string? resolved, bool referencesResolved)
@@ -7984,24 +8025,17 @@ public static class Binder
         }
         foreach (var owner in functions)
         {
-            void CheckEntryUse(object? node)
+            WalkBound(owner, (node, immediatelyAwaited, inLambda) =>
             {
-                if (node is null or string) return;
                 if (node is BoundCall call && dispatcherEntries.Contains(call.Name))
-                    Fail("DS2047", call.Location ?? signatures[owner.Name].Name, "A dispatcher host entry cannot be called from D# yet.");
+                {
+                    if (!CanForward(call.Name) || !explicitAsyncSourceFunctions.Contains(owner.Name) ||
+                        !immediatelyAwaited || inLambda)
+                        Fail("DS2047", call.Location ?? signatures[owner.Name].Name, "A dispatcher entry requires a directly awaited call from an ordinary async function.");
+                }
                 if (node is BoundFunctionReference reference && dispatcherEntries.Contains(reference.Name))
                     Fail("DS2047", reference.Location ?? signatures[owner.Name].Name, "A dispatcher host entry cannot be captured from D# yet.");
-                if (node is System.Collections.IEnumerable sequence)
-                {
-                    foreach (var item in sequence) CheckEntryUse(item);
-                    return;
-                }
-                var type = node.GetType();
-                if (!type.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
-                foreach (var property in type.GetProperties())
-                    if (property.GetIndexParameters().Length == 0) CheckEntryUse(property.GetValue(node));
-            }
-            CheckEntryUse(owner);
+            });
         }
         // Generic parameters used in data positions must remain data-safe at
         // every call, even when the function returns Unit or forwards through
@@ -9715,7 +9749,9 @@ public static class CSharpEmitter
                         return "__dsharp_dispatcher.Publish<" + CType(publication.MessageType) + ">(" +
                             contractNames[publication.MessageType] + ", " + EmitExpression(publication.Message) + ")";
                     case BoundCall call:
-                        var args = call.Arguments.Select(EmitExpression).ToArray();
+                        var args = call.Arguments.Select(EmitExpression).ToList();
+                        if (module.Functions.Single(item => item.Name == call.Name).RequiresDispatcher)
+                            args.Insert(0, "__dsharp_dispatcher");
                         var slots = functionProjections[call.Name];
                         var typeArguments = new List<string>();
                         for (var i = 0; i < call.TypeArguments.Count; i++)

@@ -39,7 +39,12 @@ public sealed class PilotTests {
     }
 }
 `);
-  for (const scenario of ['success', 'build-failure', 'zero-tests']) {
+  for (const scenario of ['success', 'test-failure', 'build-failure', 'zero-tests']) {
+    if (scenario === 'test-failure') writeFileSync(feature, String.raw`using Xunit;
+public sealed class PilotTests {
+    [Fact] public void DeliberateFailure() { Assert.Fail("dsharp-compiler-failure-pilot"); }
+}
+`);
     if (scenario === 'build-failure') writeFileSync(source, original + '\nthis will not compile\n');
     if (scenario === 'zero-tests') {
       writeFileSync(source, original);
@@ -57,7 +62,14 @@ public sealed class PilotTests {
     if (scenario === 'success') {
       assert(result.status === 0, readFileSync(logPath, 'utf8'));
       assert(evidence.acceptance.total >= 18 && evidence.features.total > 0);
-    } else assert(result.status !== 0, `${scenario} incorrectly passed`);
+    } else {
+      assert(result.status !== 0, `${scenario} incorrectly passed`);
+      if (scenario === 'test-failure') {
+        assert(evidence.build === 'success' && evidence.acceptance?.total >= 18, 'Failure pilot did not reach the feature tests');
+        assert.match(readFileSync(join(destination, 'features.trx'), 'utf8'), /dsharp-compiler-failure-pilot/);
+        assert.match(readFileSync(logPath, 'utf8'), /Failed or skipped tests/);
+      }
+    }
     summary[scenario] = { exitCode: result.status, compiler: evidence };
   }
 } finally { rmSync(candidate, { recursive: true, force: true }); }
