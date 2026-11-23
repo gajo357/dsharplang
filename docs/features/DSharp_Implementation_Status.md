@@ -42,7 +42,10 @@ invocation receipt and shares the target route with Invoke. Recording tests
 exercise pending fake acceptance, exact receipt identity and isolated hosts.
 Receipt construction, source annotations and storage are not supported. Calls
 and captures of such entries from D#, dispatcher operations inside actor helpers
-or lambdas, and untargeted Dispatch remain unsupported. For affected CLI
+or lambdas remain unsupported. The #273 draft adds targetless Dispatch for a
+conservative checked message subset and exercises it with a recording dispatcher;
+the draft is blocked by a prior test that requires the same syntax to be rejected.
+Actual publication, subscriptions and delivery remain unimplemented. For affected CLI
 compilations, `DSHARP_RUNTIME_ASSEMBLY` supplies the runtime DLL copied into the
 generated project. This compiler seam does not implement dispatch or durability.
 

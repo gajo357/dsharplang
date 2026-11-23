@@ -1,0 +1,7 @@
+module ActorPublicationEntry
+
+// The host supplies a dispatcher; this entry publishes an immutable message and
+// returns its opaque publication receipt. It does not implement subscriptions,
+// delivery or durable acceptance.
+type Event { value: int }
+async fn publish(value: int) { await Dispatch(Event { value = value }) }
