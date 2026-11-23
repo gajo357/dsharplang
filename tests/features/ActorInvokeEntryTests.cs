@@ -126,7 +126,6 @@ public sealed class ActorInvokeEntryTests
             "actor Caller { Handle(message: Request): int { await Invoke<Worker>(message) } }",
             "actor Caller { async helper(message: Request): int { await Invoke<Worker>(message) } Handle(message: Request): int { 1 } }",
             "extend Request { async fn call(self): int { await Invoke<Worker>(self) } }",
-            "async fn entry(): int { await Invoke<Worker>(Request { value = 1 }) }\nasync fn caller(): int { await entry() }",
             "async fn entry(): int { await Invoke<Worker>(Request { value = 1 }) }\nfn leak(): Unit { let callback = entry\n () }",
             "async fn entry(value: int): int { await Invoke<Worker>(Request { value = value }) }\nfn leak(): Unit { let callback = entry\n () }",
             "async fn entry(first: int, second: int): int { await Invoke<Worker>(Request { value = first }) }\nfn leak(): Unit { let callback = entry(1)\n () }"
@@ -137,6 +136,9 @@ public sealed class ActorInvokeEntryTests
             Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "invalid-invoke.ds"),
                 $"Expected invalid or unsupported Invoke rejection: {scenario}; diagnostics: {string.Join("; ", result.Diagnostics)}");
         }
+        var nested = DSharpCompiler.Compile(declarations + "async fn entry(): int { await Invoke<Worker>(Request { value = 1 }) }\nasync fn caller(): int { await entry() }", "nested-invoke.ds");
+        Assert.True(nested.CSharp is not null && nested.Diagnostics.Count == 0 && nested.RequiresRuntime,
+            $"Expected directly awaited scoped Invoke chain: {string.Join("; ", nested.Diagnostics)}");
         var direct = DSharpCompiler.Compile(declarations + "fn use(): int { Worker().Handle(Request { value = 1 }) }", "direct-actor.ds");
         Assert.True(direct.CSharp is null && direct.Diagnostics.Any(d => d.Path == "direct-actor.ds"), "Expected direct actor-call rejection.");
         var shadow = DSharpCompiler.Compile("module Demo\nfn Invoke<T>(value: T): T { value }\nfn ordinary(): int { Invoke<int>(7) }", "shadow-invoke.ds");
@@ -181,9 +183,9 @@ public sealed class ActorInvokeEntryTests
             new("entry.ds", "module Entries\nimport Actors\nasync fn entry(): int { await Invoke<Worker>(()) }"),
             new("caller.ds", "module Callers\nimport Entries\nasync fn caller(): int { await Entries.entry() }")
         ];
-        var forbiddenCall = DSharpCompiler.Compile(qualifiedCall);
-        Assert.True(forbiddenCall.CSharp is null && forbiddenCall.Diagnostics.Any(d => d.Code == "DS2047" && d.Path == "caller.ds"),
-            $"Expected qualified effectful entry call rejection: {string.Join("; ", forbiddenCall.Diagnostics)}");
+        var supportedCall = DSharpCompiler.Compile(qualifiedCall);
+        Assert.True(supportedCall.CSharp is not null && supportedCall.Diagnostics.Count == 0 && supportedCall.RequiresRuntime,
+            $"Expected qualified directly awaited scoped Invoke chain: {string.Join("; ", supportedCall.Diagnostics)}");
 
         SourceFile[] qualifiedCapture =
         [

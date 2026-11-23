@@ -40,9 +40,13 @@ host contexts. A directly awaited targeted `Dispatch<Actor>(message)` can be
 the final result of an unannotated async host entry; it yields an opaque runtime
 invocation receipt and shares the target route with Invoke. Recording tests
 exercise pending fake acceptance, exact receipt identity and isolated hosts.
-Receipt construction, source annotations and storage are not supported. Calls
-and captures of such entries from D#, dispatcher operations inside actor helpers
-or lambdas remain unsupported. A directly awaited targetless Dispatch host
+Receipt construction, source annotations and storage are not supported. An
+explicitly typed ordinary async function may directly await a fully applied
+Invoke entry or another such function; generated calls forward its host-supplied
+dispatcher, including across tested qualified and recursive chains. Recording
+tests exercise interleaved hosts, pending calls and faults. Captures, partials,
+unawaited calls, receipt forwarding and dispatcher operations inside actor
+helpers or lambdas remain unsupported. A directly awaited targetless Dispatch host
 entry accepts a conservative checked message subset and yields an opaque
 publication receipt; recording tests exercise fake acceptance and host isolation.
 Actual publication, subscriptions and delivery remain unimplemented. For affected CLI
