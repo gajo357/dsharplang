@@ -81,3 +81,24 @@ input remain in use. No subscription, actor selection or handler call is emitted
   compiler verifier (18 baseline and 399 feature tests). Its 511,931-byte TRX
   was within the 512,000-byte limit by only 69 bytes. Actual current-head and
   hosted verification are required; no verifier, guard or protection is bypassed.
+
+## Same-PR report-size repair
+
+- After the fixture migration, hosted CI 279 passed its trusted base harness,
+  but Compiler 272's 18 baseline and all 399 feature tests passed before its
+  raw TRX exceeded the unchanged size guard. The local unchanged verifier
+  passed those tests and runtime 2+5 from `/tmp/a`; its 511,931-byte report
+  illustrates the original narrow margin.
+- The standalone Compiler workflow now uses a temporary, test-project-only
+  MSBuild output-path setting with the same five directory levels required by
+  existing tests. It shortens only the absolute assembly path repeated in the
+  raw TRX. Exact-SHA and clean-checkout checks, test discovery/execution,
+  unmodified verifier, 512,000-byte guard and artifact upload remain intact.
+  The unchanged compiler verifier passed 18 baseline and 399 feature tests at
+  the shorter path with a 494,375-byte TRX (17,625 bytes below the cap).
+- A disposable pilot added one deliberately failing new feature test and ran
+  the real standalone verifier with the same output-path setting. It reported
+  399 passing and one failing test, exited nonzero, and the unchanged TRX
+  validator independently rejected the 497,526-byte report as failed. The
+  temporary test was not added to the branch. Hosted exact-head verification
+  of this workflow repair remains required.
