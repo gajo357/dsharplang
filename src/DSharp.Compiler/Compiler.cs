@@ -6166,8 +6166,7 @@ public static class Binder
                                     context.Actor.Dependencies.Count != 0 ||
                                     !context.Methods.TryGetValue("Handle", out var handle) || handle.Id != function.Name.Text ||
                                     handle.Method.Body.Bindings.Count != 0 || handle.Method.Body.Statements.Count != 0 ||
-                                    call.Arguments.Count != 1 || call.Arguments[0] is not ValueSyntax input ||
-                                    input.Value.Text != handle.Method.Parameters[0].Name.Text) return false;
+                                    call.Arguments.Count != 1) return false;
                                 ExpressionSyntax result = handle.Method.Body.Result;
                                 while (result is GroupSyntax group) result = group.Inner;
                                 if (result is not AwaitSyntax awaited) return false;
@@ -6212,6 +6211,22 @@ public static class Binder
                             var message = BindExpression(call.Arguments[0], inputType);
                             if (message.Type != inputType && message.Type != "<never>")
                                 Fail(diagnostic, call.Arguments[0].Token, $"Actor {operation} requires message type {ActorDisplayType(inputType)}.");
+                            if (!sourceHttpFunctions.Contains(function.Name.Text))
+                            {
+                                var actorInput = actorMethodsByBody[function.Name.Text].Methods["Handle"].Method.Parameters[0].Name.Text;
+                                bool DeclaredRecord(string type) => GenericTypes.TryParse(type, out var shape) &&
+                                    !shape.IsNullable && records.ContainsKey(shape.Name);
+                                bool PureActorMessage(BoundExpression expression) => expression switch
+                                {
+                                    BoundReference reference => reference.Name == actorInput,
+                                    BoundFieldAccess field => DeclaredRecord(field.ReceiverType) && PureActorMessage(field.Receiver),
+                                    BoundRecordConstruction record => DeclaredRecord(record.Type) && record.Fields.All(field => PureActorMessage(field.Value)),
+                                    BoundInt or BoundInteger or BoundDecimal or BoundFloat32 or BoundFloat64 or BoundBool or BoundText or BoundUnit => true,
+                                    _ => false
+                                };
+                                if (!PureActorMessage(message.Expression))
+                                    Fail(diagnostic, call.Arguments[0].Token, "Actor Handle messages must use only immutable input fields, record construction or literals.");
+                            }
                             var routeKey = syntax.TypeDisplayNames.TryGetValue(targetActor.Name.Text, out var actorDisplay)
                                 ? actorDisplay : syntax.Name.Text + "." + targetActor.Name.Text;
                             actorRoutes.TryAdd(actorIdentity, new BoundActorRoute(actorIdentity, routeKey, inputType, actorResultType));

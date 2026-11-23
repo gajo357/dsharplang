@@ -51,8 +51,10 @@ parameters or Unit. Recording tests cover separate receipt kinds, interleaved
 host scopes and faults. Receipt storage, captures, partials, unawaited calls and
 dispatcher operations inside actor
 helpers or lambdas remain unsupported. A resource-free actor Handle whose sole
-result directly invokes a target with its own input can also use an explicit
-host-supplied dispatcher; checked actor metadata identifies this body signature.
+result directly invokes a target can also use an explicit host-supplied
+dispatcher. Its message may be the input or a checked construction from input
+record fields and primitive literal nodes; operators and arbitrary calls remain
+unsupported. Checked actor metadata identifies this body signature.
 Recording tests cover isolated host contexts, exact results and faults. Other
 actor-body shapes remain unimplemented. Direct or transitive actor operations
 are rejected while a locally owned `using` scope is live; without transaction
