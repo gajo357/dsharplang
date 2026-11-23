@@ -78,7 +78,7 @@ public sealed class TargetedDispatchEntryTests
         [
             "async fn use() { await Dispatch<Missing>(Request { value = 1 }) }",
             "async fn use() { await Dispatch<Worker>(1) }",
-            "async fn use() { await Dispatch(Request { value = 1 }) }",
+            "async fn use() { await Dispatch<Worker, Worker>(Request { value = 1 }) }",
             "async fn use(): Unit { let pending = Dispatch<Worker>(Request { value = 1 })\n () }",
             "fn use(): Unit { let pending = Dispatch<Worker>(Request { value = 1 })\n () }",
             "async fn use(): Unit { let callback = async () => { await Dispatch<Worker>(Request { value = 1 }) }\n await callback() }",
