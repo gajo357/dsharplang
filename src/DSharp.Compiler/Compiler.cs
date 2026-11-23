@@ -6178,6 +6178,11 @@ public static class Binder
                             if (!ReferenceEquals(call, directlyAwaitedInvoke) || !function.IsAsync || lambdaDepth != 0 ||
                                 (!sourceHttpFunctions.Contains(function.Name.Text) && !ResourceFreeActorHandle()))
                                 Fail(diagnostic, call.Name, $"Actor {operation} requires a supported directly awaited scoped entry.");
+                            // A locally owned resource may be a transaction;
+                            // its scope must end before actor admission or wait.
+                            // The language does not yet classify transaction kinds.
+                            if (resourceHandles.Count != 0)
+                                Fail("DS2041", call.Name, "An actor operation cannot cross an active owned resource scope.");
                             if (isDispatch && (function.ReturnType.Text != (isPublication ? publicationReceiptSymbol : invocationReceiptSymbol) ||
                                 !ReferenceEquals(call, DispatchResultSite(function))))
                                 Fail(diagnostic, call.Name, "Dispatch is supported only as the directly awaited inferred entry result.");
@@ -8061,6 +8066,31 @@ public static class Binder
         for (var i = 0; i < boundActors.Count; i++)
             if (dispatcherEntries.Contains(boundActors[i].ImplementationName))
                 boundActors[i] = boundActors[i] with { RequiresDispatcher = true };
+        // Direct calls are checked while binding. Check resolved transitive
+        // dispatcher calls after the effect fixed point, preserving the exact
+        // lexical boundary: acquisition precedes this scope, its body owns it.
+        void CheckOwnedActorBoundary(object? node, bool active)
+        {
+            if (node is null or string) return;
+            if (node is System.Collections.IEnumerable sequence)
+            {
+                foreach (var item in sequence) CheckOwnedActorBoundary(item, active);
+                return;
+            }
+            var type = node.GetType();
+            if (!type.Name.StartsWith("Bound", StringComparison.Ordinal)) return;
+            if (node is BoundUsing owned)
+            {
+                CheckOwnedActorBoundary(owned.Acquisition, active);
+                CheckOwnedActorBoundary(owned.Body, true);
+                return;
+            }
+            if (active && node is BoundCall call && dispatcherEntries.Contains(call.Name))
+                Fail("DS2041", call.Location ?? signatures[call.Name].Name, "An actor operation cannot cross an active owned resource scope.");
+            foreach (var property in type.GetProperties())
+                if (property.GetIndexParameters().Length == 0) CheckOwnedActorBoundary(property.GetValue(node), active);
+        }
+        foreach (var function in functions) CheckOwnedActorBoundary(function, false);
         foreach (var actor in syntax.Actors)
         {
             void CheckHttpReference(Token token, string? resolved, bool referencesResolved)
