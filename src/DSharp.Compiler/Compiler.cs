@@ -214,6 +214,7 @@ public sealed record BoundServiceConversion(BoundExpression Expression, string T
 public sealed record BoundNull(string Type) : BoundExpression;
 public sealed record BoundAwait(BoundExpression Operand, string Type) : BoundExpression;
 public sealed record BoundActorInvocation(string ActorIdentity, BoundExpression Message, string InputType, string ResultType) : BoundExpression;
+public sealed record BoundActorDispatch(string ActorIdentity, BoundExpression Message, string InputType, string ResultType) : BoundExpression;
 public sealed record BoundPropagation(BoundExpression Operand, string OperandType, string Type, string ReturnType) : BoundExpression;
 // An unconstrained T and its nullable projection have different CLR types.
 // Keep this conversion explicit rather than relying on C#'s generic T? rules.
@@ -422,6 +423,7 @@ public sealed record BoundActorDeclaration(string Name, string InputType, string
 public sealed record BoundModule(string Name, IReadOnlyList<BoundFunction> Functions)
 {
     public IReadOnlyList<BoundActorRoute> ActorRoutes { get; init; } = Array.Empty<BoundActorRoute>();
+    internal string? InvocationReceiptSymbol { get; init; }
     public IReadOnlyList<BoundRecordDeclaration> Records { get; init; } = Array.Empty<BoundRecordDeclaration>();
     public IReadOnlyList<BoundUnionDeclaration> Unions { get; init; } = Array.Empty<BoundUnionDeclaration>();
     public string? ListSymbol { get; init; }
@@ -1936,6 +1938,7 @@ public static class Binder
         var mutableListSymbol = "$" + (userTypeSymbolCount + 5).ToString(CultureInfo.InvariantCulture);
         var mutableMapSymbol = "$" + (userTypeSymbolCount + 6).ToString(CultureInfo.InvariantCulture);
         var taskSymbol = "$" + (userTypeSymbolCount + 7).ToString(CultureInfo.InvariantCulture);
+        var invocationReceiptSymbol = "$" + (userTypeSymbolCount + 8).ToString(CultureInfo.InvariantCulture);
         var resultUsed = false;
         var optionUsed = false;
         var listUsed = false;
@@ -1972,6 +1975,8 @@ public static class Binder
         Token ScopedType(Token token, IReadOnlyDictionary<string, string> scope)
         {
             if (!GenericTypes.TryParse(token.Text, out var shape)) return token;
+            bool ForgedReceipt(TypeShape value) => value.Name == invocationReceiptSymbol || value.Arguments.Any(ForgedReceipt);
+            if (ForgedReceipt(shape)) Fail("DS2048", token, "The invocation receipt is an internal compiler type.");
             TypeShape Rebind(TypeShape value)
             {
                 var name = value.Name;
@@ -2092,7 +2097,7 @@ public static class Binder
                 ReturnType = ScopedType(method.ReturnType, noTypeScope)
             }).ToArray()
         }).ToArray();
-        nextTypeSymbol += 8; // Reserve the intrinsic nominal identities after source symbols.
+        nextTypeSymbol += 9; // Reserve the intrinsic nominal identities after source symbols.
         var syntheticSpan = new SourceSpan(0, 0, 1, 1);
         var resultTypeTokens = new[] { new Token("T", syntheticSpan), new Token("E", syntheticSpan) };
         var resultScope = TypeScope(resultTypeTokens);
@@ -2109,13 +2114,43 @@ public static class Binder
             new UnionCaseSyntax(new Token("Some", syntheticSpan), new[] { ScopedType(optionTypeTokens[0], optionScope) })
         }) { TypeParameters = optionTypeTokens.Select(parameter => ScopedParameter(parameter, optionScope)).ToArray() };
         scopedUnions = scopedUnions.Append(standardResult).Append(standardOption).ToArray();
-        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = scopedFunctions, Interfaces = scopedInterfaces, Services = scopedServices, Actors = scopedActors };
+        // This one omitted async result is a compiler-owned, non-spellable
+        // receipt. Other omitted async results retain the existing rejection.
+        CallSyntax? DispatchResultSite(FunctionSyntax function)
+        {
+            ExpressionSyntax? result = function.Body?.Result ?? function.Expression;
+            while (result is GroupSyntax group) result = group.Inner;
+            if (result is not AwaitSyntax awaited) return null;
+            ExpressionSyntax operand = awaited.Operand;
+            while (operand is GroupSyntax group) operand = group.Inner;
+            return operand is CallSyntax { Name.Text: "Dispatch" } call ? call : null;
+        }
+        bool HasDispatchLocal(FunctionSyntax function)
+        {
+            if (function.Parameters.Any(parameter => parameter.Name.Text == "Dispatch") ||
+                functionTypeScopes[function.Name.Text].ContainsKey("Dispatch")) return true;
+            var body = function.Body;
+            return (body?.Bindings ?? function.Bindings).Any(binding => binding.Name.Text == "Dispatch") ||
+                body is not null && body.Statements.OfType<TupleLetStatementSyntax>()
+                    .Any(binding => binding.Pattern.Names.Any(name => name.Text == "Dispatch"));
+        }
+        var normalizedFunctions = scopedFunctions.Select(function => function.IsAsync && function.InferReturnType &&
+            sourceHttpFunctions.Contains(function.Name.Text) && DispatchResultSite(function) is not null &&
+            !HasDispatchLocal(function) &&
+            !scopedFunctions.Any(other => other.Name.Text == "Dispatch") &&
+            !scopedRecords.Any(item => item.Name.Text == "Dispatch") && !scopedUnions.Any(item => item.Name.Text == "Dispatch") &&
+            !scopedUnions.Any(item => item.Cases.Any(unionCase => unionCase.Name.Text == "Dispatch")) &&
+            !scopedInterfaces.Any(item => item.Name.Text == "Dispatch") && !scopedServices.Any(item => item.Name.Text == "Dispatch") &&
+            !scopedActors.Any(item => item.Name.Text == "Dispatch")
+                ? function with { ReturnType = function.ReturnType with { Text = invocationReceiptSymbol }, InferReturnType = false }
+                : function).ToArray();
+        syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = normalizedFunctions, Interfaces = scopedInterfaces, Services = scopedServices, Actors = scopedActors };
         string DisplayType(string type, bool labelParameters = false)
         {
             if (!GenericTypes.TryParse(type, out var shape)) return type;
             TypeShape Display(TypeShape value) => value with
             {
-                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : value.Name == taskSymbol ? "Task" : syntax.TypeDisplayNames.TryGetValue(value.Name, out var displayName) ? displayName : typeSymbolNames.TryGetValue(value.Name, out var name)
+                Name = value.Name == resultSymbol ? "Result" : value.Name == optionSymbol ? "Option" : value.Name == listSymbol ? "List" : value.Name == mapSymbol ? "Map" : value.Name == setSymbol ? "Set" : value.Name == mutableListSymbol ? "MutableList" : value.Name == mutableMapSymbol ? "MutableMap" : value.Name == taskSymbol ? "Task" : value.Name == invocationReceiptSymbol ? "invocation receipt" : syntax.TypeDisplayNames.TryGetValue(value.Name, out var displayName) ? displayName : typeSymbolNames.TryGetValue(value.Name, out var name)
                     ? name + (labelParameters ? " (type parameter)" : "") : value.Name,
                 Arguments = value.Arguments.Select(Display).ToArray()
             };
@@ -2172,7 +2207,7 @@ public static class Binder
             ["int"] = 0, ["sbyte"] = 0, ["byte"] = 0, ["short"] = 0, ["ushort"] = 0,
             ["uint"] = 0, ["long"] = 0, ["ulong"] = 0, ["decimal"] = 0, ["float32"] = 0, ["float"] = 0,
             ["bool"] = 0, ["string"] = 0, ["char"] = 0, ["Unit"] = 0,
-            [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1
+            [listSymbol] = 1, [mapSymbol] = 2, [setSymbol] = 1, [taskSymbol] = 1, [invocationReceiptSymbol] = 0
         };
         foreach (var record in syntax.Records) arities.Add(record.Name.Text, record.TypeParameters.Count);
         foreach (var union in syntax.Unions) arities.Add(union.Name.Text, union.TypeParameters.Count);
@@ -2239,7 +2274,8 @@ public static class Binder
         bool ContainsBuilder(TypeShape shape) => IsBuilder(shape) || shape.Arguments.Any(ContainsBuilder);
         bool ContainsTask(TypeShape shape) => shape.Name == taskSymbol || shape.Arguments.Any(ContainsTask);
         bool ContainsCapability(TypeShape shape) => interfaces.ContainsKey(shape.Name) || services.ContainsKey(shape.Name) || shape.Arguments.Any(ContainsCapability);
-        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape) && !ContainsCapability(shape);
+        bool ContainsReceipt(TypeShape shape) => shape.Name == invocationReceiptSymbol || shape.Arguments.Any(ContainsReceipt);
+        bool DataType(string type) => GenericTypes.TryParse(type, out var shape) && !shape.ContainsFunction && !ContainsBuilder(shape) && !ContainsTask(shape) && !ContainsCapability(shape) && !ContainsReceipt(shape);
         // Resource-bearing Results are affine transfer envelopes, never normal
         // data. Recognize only the intrinsic Result with a direct, nonnullable
         // resource success type and an independently valid immutable error.
@@ -6059,33 +6095,42 @@ public static class Binder
                             if (awaitedOwnedCalls.Contains(call)) awaitedOwnedMembers.Add(implicitMember);
                             return BindExpression(implicitMember, expectedResult);
                         }
-                        if (call.Name.Text == "Invoke" && !signatures.ContainsKey(call.Name.Text) &&
+                        if (call.Name.Text is "Invoke" or "Dispatch" && !signatures.ContainsKey(call.Name.Text) &&
                             !records.ContainsKey(call.Name.Text) && !unions.ContainsKey(call.Name.Text) &&
                             !interfaces.ContainsKey(call.Name.Text) && !services.ContainsKey(call.Name.Text) &&
                             !actors.ContainsKey(call.Name.Text) && !cases.ContainsKey(call.Name.Text) &&
                             !functionTypeScope.ContainsKey(call.Name.Text))
                         {
+                            var isDispatch = call.Name.Text == "Dispatch";
+                            var operation = isDispatch ? "Dispatch" : "Invoke";
+                            var diagnostic = isDispatch ? "DS2048" : "DS2047";
                             if (!ReferenceEquals(call, directlyAwaitedInvoke) || !function.IsAsync || lambdaDepth != 0 ||
                                 !sourceHttpFunctions.Contains(function.Name.Text))
-                                Fail("DS2047", call.Name, "Actor Invoke must be directly awaited in an async top-level host entry.");
+                                Fail(diagnostic, call.Name, $"Actor {operation} must be directly awaited in an async top-level host entry.");
+                            if (isDispatch && (function.ReturnType.Text != invocationReceiptSymbol ||
+                                !ReferenceEquals(call, DispatchResultSite(function))))
+                                Fail(diagnostic, call.Name, "Targeted Dispatch is supported only as the directly awaited inferred entry result.");
                             if (call.TypeArguments.Count != 1 || call.Arguments.Count != 1)
-                                Fail("DS2047", call.Name, "Actor Invoke requires one explicit target and one message.");
+                                Fail(diagnostic, call.Name, $"Actor {operation} requires one explicit target and one message.");
                             var actorIdentity = ScopedType(call.TypeArguments[0], functionTypeScope).Text;
                             if (!actors.TryGetValue(actorIdentity, out var targetActor))
-                                Fail("DS2047", call.TypeArguments[0], "Actor Invoke requires a visible actor target.");
+                                Fail(diagnostic, call.TypeArguments[0], $"Actor {operation} requires a visible actor target.");
                             var targetHandle = targetActor!.Methods.Single(method => method.Name.Text == "Handle");
                             var inputType = targetHandle.Parameters[0].Type.Text;
                             var actorResultType = targetHandle.ReturnType.Text;
                             var message = BindExpression(call.Arguments[0], inputType);
                             if (message.Type != inputType && message.Type != "<never>")
-                                Fail("DS2047", call.Arguments[0].Token, $"Actor Invoke requires message type {ActorDisplayType(inputType)}.");
+                                Fail(diagnostic, call.Arguments[0].Token, $"Actor {operation} requires message type {ActorDisplayType(inputType)}.");
                             var routeKey = syntax.TypeDisplayNames.TryGetValue(targetActor.Name.Text, out var actorDisplay)
                                 ? actorDisplay : syntax.Name.Text + "." + targetActor.Name.Text;
                             actorRoutes.TryAdd(actorIdentity, new BoundActorRoute(actorIdentity, routeKey, inputType, actorResultType));
                             requiresDispatcher = true;
                             taskUsed = true;
-                            return (new BoundActorInvocation(actorIdentity, message.Expression, inputType, actorResultType),
-                                message.Type == "<never>" ? "<never>" : taskSymbol + "<" + actorResultType + ">");
+                            return isDispatch
+                                ? (new BoundActorDispatch(actorIdentity, message.Expression, inputType, actorResultType),
+                                    message.Type == "<never>" ? "<never>" : taskSymbol + "<" + invocationReceiptSymbol + ">")
+                                : (new BoundActorInvocation(actorIdentity, message.Expression, inputType, actorResultType),
+                                    message.Type == "<never>" ? "<never>" : taskSymbol + "<" + actorResultType + ">");
                         }
                         if (services.TryGetValue(call.Name.Text, out var serviceConstructor))
                         {
@@ -8061,6 +8106,7 @@ public static class Binder
         return new(syntax.Name.Text, syntax.Functions.Select(function => byName[function.Name.Text]).Concat(usedResultHelpers.Select(name => byName[name])).ToArray())
         {
             ActorRoutes = actorRoutes.Values.ToArray(),
+            InvocationReceiptSymbol = functions.Any(function => function.ReturnType == invocationReceiptSymbol) ? invocationReceiptSymbol : null,
             ListSymbol = listUsed ? listSymbol : null,
             OptionSymbol = optionUsed ? optionSymbol : null,
             MapSymbol = mapUsed ? mapSymbol : null,
@@ -8272,7 +8318,7 @@ public static class CSharpEmitter
                     return current.IsNullable ? "global::System.Nullable<" + tuple + ">" : tuple;
                 }
                 var name = current.Arguments.Count == 0 && parameterNames.TryGetValue(current.Name, out var parameter) ? parameter :
-                    current.Name == "Unit" ? unitType : current.Name == "float32" ? "float" : current.Name == "float" ? "double" : current.Name == module.ListSymbol ? listTypeName! :
+                    current.Name == "Unit" ? unitType : current.Name == module.InvocationReceiptSymbol ? "global::DSharp.Runtime.InvocationReceipt" : current.Name == "float32" ? "float" : current.Name == "float" ? "double" : current.Name == module.ListSymbol ? listTypeName! :
                     current.Name == module.MapSymbol ? mapTypeName! : current.Name == module.SetSymbol ? setTypeName! :
                     current.Name == module.MutableListSymbol ? mutableListTypeName! : current.Name == module.MutableMapSymbol ? mutableMapTypeName! :
                     current.Name == module.TaskSymbol ? "global::System.Threading.Tasks.Task" :
@@ -9624,6 +9670,9 @@ public static class CSharpEmitter
                     case BoundActorInvocation invocation:
                         return "__dsharp_dispatcher.Invoke<" + CType(invocation.InputType) + ", " + CType(invocation.ResultType) + ">(" +
                             routeNames[invocation.ActorIdentity] + ", " + EmitExpression(invocation.Message) + ")";
+                    case BoundActorDispatch dispatch:
+                        return "__dsharp_dispatcher.Dispatch<" + CType(dispatch.InputType) + ", " + CType(dispatch.ResultType) + ">(" +
+                            routeNames[dispatch.ActorIdentity] + ", " + EmitExpression(dispatch.Message) + ")";
                     case BoundCall call:
                         var args = call.Arguments.Select(EmitExpression).ToArray();
                         var slots = functionProjections[call.Name];

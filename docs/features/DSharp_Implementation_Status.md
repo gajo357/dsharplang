@@ -36,8 +36,13 @@ An explicit async top-level host entry can directly await a targeted
 `Invoke<Actor>(message)`. The compiler checks the actor's Handle input and emits
 the exact Handle result through a host-supplied `IActorDispatcher`; recording
 tests execute generated value, Unit and business-error results and isolated
-host contexts. Calls and captures of such entries from D#, Invoke inside actor
-helpers or lambdas, and both Dispatch forms remain unsupported. For affected CLI
+host contexts. A directly awaited targeted `Dispatch<Actor>(message)` can be
+the final result of an unannotated async host entry; it yields an opaque runtime
+invocation receipt and shares the target route with Invoke. Recording tests
+exercise pending fake acceptance, exact receipt identity and isolated hosts.
+Receipt construction, source annotations and storage are not supported. Calls
+and captures of such entries from D#, dispatcher operations inside actor helpers
+or lambdas, and untargeted Dispatch remain unsupported. For affected CLI
 compilations, `DSHARP_RUNTIME_ASSEMBLY` supplies the runtime DLL copied into the
 generated project. This compiler seam does not implement dispatch or durability.
 
