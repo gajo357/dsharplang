@@ -24,12 +24,41 @@ internal sealed class TargetedCompletion
     public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
 }
 
+// Caller-reported opaque data; this is neither a normalized diagnostic nor
+// evidence of an actor fault origin. The caller selects any retry policy.
+internal sealed class TargetedFault
+{
+    private readonly byte[] payload;
+    private readonly byte[] contractMetadata;
+
+    public TargetedFault(byte[] payload, byte[] contractMetadata)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(contractMetadata);
+        if (contractMetadata.Length == 0)
+            throw new ArgumentException("Fault contract metadata must be supplied.", nameof(contractMetadata));
+        this.payload = (byte[])payload.Clone();
+        this.contractMetadata = (byte[])contractMetadata.Clone();
+    }
+
+    public byte[] Payload => (byte[])payload.Clone();
+    public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
+}
+
+internal sealed record RescheduledAttempt(Guid AttemptId, Guid Token, DateTimeOffset LeaseUntil,
+    DateTimeOffset EligibleAt, TargetedFault Fault);
+
 internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAttemptState State,
-    Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null);
+    Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null)
+{
+    public DateTimeOffset? EligibleAt { get; init; }
+    // Only the store supplies this collection: it never exposes its mutable backing array.
+    public IReadOnlyList<RescheduledAttempt> History { get; init; } = Array.Empty<RescheduledAttempt>();
+}
 internal enum AttemptTransitionStatus
 {
     Applied, NotFound, NotEligible, InvalidOwner, Expired, ObservationMismatch,
-    NotExpired, IdentityCollision, NotExtended
+    NotExpired, IdentityCollision, NotExtended, NotYetEligible
 }
 internal sealed record AttemptTransitionResult(AttemptTransitionStatus Status, TargetedOwnership? Ownership);
 
@@ -94,17 +123,22 @@ internal sealed partial class VolatileTargetedStore
                 return new(AttemptTransitionStatus.NotFound, null);
             if (current.State != TargetedAttemptState.Eligible)
                 return new(AttemptTransitionStatus.NotEligible, current);
+            if (current.EligibleAt is { } due && now < due)
+                return new(AttemptTransitionStatus.NotYetEligible, current);
             if (attemptId == token || invocationIds.Contains(attemptId) || invocationIds.Contains(token) ||
                 usedOwnershipIds.Contains(attemptId) || usedOwnershipIds.Contains(token))
                 return new(AttemptTransitionStatus.IdentityCollision, current);
             var deadline = AddLease(now, duration);
-            var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Running, attemptId, token, deadline);
+            var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Running, attemptId, token, deadline)
+            {
+                History = current.History
+            };
             // Roll back both identity reservations if any subsequent insertion fails.
             usedOwnershipIds.Add(attemptId);
             try
             {
                 usedOwnershipIds.Add(token);
-                try { ownerships.Add(invocationId, next); }
+                try { ownerships[invocationId] = next; }
                 catch { usedOwnershipIds.Remove(token); throw; }
             }
             catch { usedOwnershipIds.Remove(attemptId); throw; }
@@ -161,6 +195,49 @@ internal sealed partial class VolatileTargetedStore
             if (now >= current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.Expired, current);
             var next = current with { State = TargetedAttemptState.Completed, Completion = completion };
+            ownerships[invocationId] = next;
+            return new(AttemptTransitionStatus.Applied, next);
+        }
+    }
+
+    public AttemptTransitionResult RescheduleAfterFault(string applicationId, string submissionId, Guid invocationId,
+        Guid attemptId, Guid token, TimeSpan delay, TargetedFault fault)
+    {
+        ValidateSubmissionKey(applicationId, submissionId);
+        ValidateIdentity(invocationId, nameof(invocationId));
+        ValidateIdentity(attemptId, nameof(attemptId));
+        ValidateIdentity(token, nameof(token));
+        if (delay < TimeSpan.Zero || delay == TimeSpan.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(delay), "A finite nonnegative delay is required.");
+        ArgumentNullException.ThrowIfNull(fault);
+        lock (gate)
+        {
+            var now = GetClock();
+            var current = FindOwnership(applicationId, submissionId, invocationId);
+            if (current is null)
+                return new(AttemptTransitionStatus.NotFound, null);
+            if (current.State != TargetedAttemptState.Running)
+                return new(AttemptTransitionStatus.NotEligible, current);
+            if (current.AttemptId != attemptId || current.Token != token)
+                return new(AttemptTransitionStatus.InvalidOwner, current);
+            if (now >= current.LeaseUntil!.Value)
+                return new(AttemptTransitionStatus.Expired, current);
+
+            DateTimeOffset due;
+            try { due = now.Add(delay); }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new ArgumentOutOfRangeException(nameof(delay), "Eligibility exceeds the clock range.");
+            }
+            var history = new RescheduledAttempt[current.History.Count + 1];
+            for (var i = 0; i < current.History.Count; i++)
+                history[i] = current.History[i];
+            history[^1] = new RescheduledAttempt(attemptId, token, current.LeaseUntil.Value, due, fault);
+            var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Eligible, null, null, null)
+            {
+                EligibleAt = due,
+                History = Array.AsReadOnly(history)
+            };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
         }

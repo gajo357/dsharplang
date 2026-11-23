@@ -218,3 +218,49 @@ final unclaimed/publication-key assertions were covered by the subsequent full
 runtime run.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Fifth slice: volatile owned rescheduling after a reported fault
+
+Base: `faa47ed4ca4acbfc3975acebefd6f6986bebc1cd`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing issue branch. Extend the
+internal reference in `src/DSharp.Runtime/VolatileTargetedOwnership.cs`, add
+`tests/runtime-features/VolatileTargetedRescheduleTests.cs`, and update this plan
+and implementation status. Keep old tests, dependencies, verifier, public ABI and
+D# syntax intact.
+
+An explicit caller-selected reschedule after a reported runtime fault requires
+the full targeted key, Running state, exact attempt/token and `now < leaseUntil`
+under the store gate. A nonnegative caller-selected delay is added with checked
+time arithmetic to the simulated clock read once inside the gate; persist the
+resulting eligibility instant without rerolling or choosing a default policy.
+Retain a copied opaque caller-reported fault and an immutable snapshot of each
+rescheduled attempt. Atomically fence the old owner and store the eligible time.
+The data is neither a canonical codec nor a normalized diagnostic; no actor fault
+origin is inferred. A subsequent claim may occur only at or after eligibility,
+with fresh never-reused attempt/token identities and the same invocation, input
+and selected implementation. No host callback runs inside the gate.
+
+Completed normal values, including business-error-like bytes, and terminal
+lease-expiry failure remain terminal. This slice does not add expiry-to-retry,
+automatic policy, retries of business results, cancellation or provider
+recovery. Unrecognized durability, follow-up or policy guarantees remain
+unsupported. The simulated reference cannot stop a stale process or guarantee
+external-effect ordering; #59 remains open.
+
+Acceptance-to-test map: zero and positive delay, exact eligibility boundary,
+negative/overflow rejection and stored due time exercise scheduling; stale,
+expired, wrong and terminal owners exercise fencing; repeated reschedule and
+fresh claim exercise identity non-reuse, pinned selection and immutable attempt
+history; input/output mutation exercises fault copying; coordinated completion,
+renewal, reschedule and claim races exercise atomic transitions. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`. Record actual outcomes and any isolated-image limit.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 34 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching the final runtime source and tests. The unchanged
+512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.
