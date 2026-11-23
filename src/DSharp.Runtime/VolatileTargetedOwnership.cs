@@ -1,8 +1,8 @@
 namespace DSharp.Runtime;
 
-// Provisional single-process state only; failure means the lease expired, not
-// that the actor threw or that a stale process stopped executing.
-internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed }
+// Provisional single-process state only. Lease expiry does not imply that the
+// actor threw or that a stale process stopped executing.
+internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed, FailedReportedFault }
 
 // Opaque bytes only. Supplying metadata is not a codec or schema compatibility check.
 internal sealed class TargetedCompletion
@@ -45,6 +45,22 @@ internal sealed class TargetedFault
     public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
 }
 
+// Origin is optional caller-reported data: it is neither inferred nor validated.
+internal sealed class ReportedTerminalFault
+{
+    public ReportedTerminalFault(TargetedFault fault, Guid? originInvocationId = null)
+    {
+        ArgumentNullException.ThrowIfNull(fault);
+        if (originInvocationId == Guid.Empty)
+            throw new ArgumentException("A supplied origin must be nonempty.", nameof(originInvocationId));
+        Fault = fault;
+        OriginInvocationId = originInvocationId;
+    }
+
+    public TargetedFault Fault { get; }
+    public Guid? OriginInvocationId { get; }
+}
+
 internal sealed record RescheduledAttempt(Guid AttemptId, Guid Token, DateTimeOffset LeaseUntil,
     DateTimeOffset EligibleAt, TargetedFault Fault);
 
@@ -84,6 +100,7 @@ internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAtte
     Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null)
 {
     public DateTimeOffset? EligibleAt { get; init; }
+    public ReportedTerminalFault? TerminalFault { get; init; }
     // This pre-existing view contains only explicitly reported faults.
     public IReadOnlyList<RescheduledAttempt> History { get; init; } = Array.Empty<RescheduledAttempt>();
     // Complete ordered rescheduling history, including lease loss; snapshots own their buffers.
@@ -230,6 +247,32 @@ internal sealed partial class VolatileTargetedStore
             if (now >= current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.Expired, current);
             var next = current with { State = TargetedAttemptState.Completed, Completion = completion };
+            ownerships[invocationId] = next;
+            return new(AttemptTransitionStatus.Applied, next);
+        }
+    }
+
+    public AttemptTransitionResult FailAfterFault(string applicationId, string submissionId, Guid invocationId,
+        Guid attemptId, Guid token, ReportedTerminalFault fault)
+    {
+        ValidateSubmissionKey(applicationId, submissionId);
+        ValidateIdentity(invocationId, nameof(invocationId));
+        ValidateIdentity(attemptId, nameof(attemptId));
+        ValidateIdentity(token, nameof(token));
+        ArgumentNullException.ThrowIfNull(fault);
+        lock (gate)
+        {
+            var now = GetClock();
+            var current = FindOwnership(applicationId, submissionId, invocationId);
+            if (current is null)
+                return new(AttemptTransitionStatus.NotFound, null);
+            if (current.State != TargetedAttemptState.Running)
+                return new(AttemptTransitionStatus.NotEligible, current);
+            if (current.AttemptId != attemptId || current.Token != token)
+                return new(AttemptTransitionStatus.InvalidOwner, current);
+            if (now >= current.LeaseUntil!.Value)
+                return new(AttemptTransitionStatus.Expired, current);
+            var next = current with { State = TargetedAttemptState.FailedReportedFault, TerminalFault = fault };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
         }

@@ -307,3 +307,42 @@ short-path snapshot matching the final runtime source and tests. The unchanged
 512,000-byte TRX guard accepted the 506,836-byte feature report.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Seventh slice: volatile fenced terminal reported faults
+
+Base: `bcb10806c12c9bf408b58e41b41283da068e1590`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing issue branch. Extend
+`src/DSharp.Runtime/VolatileTargetedOwnership.cs`, add
+`tests/runtime-features/VolatileTerminalFaultTests.cs`, and update this plan and
+implementation status. Keep existing tests, dependencies, verifier, public ABI and
+syntax intact.
+
+An explicit caller-selected terminal reported fault requires the full targeted
+key, Running state, exact attempt/token and `now < leaseUntil` under the shared
+simulated-clock gate. Store a distinct terminal state with copied opaque fault
+data and an optional, nonempty caller-reported origin invocation ID. Preserve the
+exact supplied origin; do not invent one or claim it was validated, authenticated
+or normalized. Preserve invocation, selection, attempt and existing recovery
+histories. A repeat, stale or expired owner cannot mutate the terminal snapshot.
+Completed business-error-like values and lease-expiry failure remain distinct.
+
+Acceptance-to-test map: present, absent and invalid origins plus mutated input and
+output buffers exercise faithful copying; wrong key/attempt/token, just-before and
+exact expiry, repeated and terminal operations exercise fencing; mixed prior
+reschedule history exercises retention; coordinated fault, completion, reschedule,
+renewal and expiry races exercise one coherent outcome. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual outcomes and isolated-image limits.
+
+This internal simulation is not normalized #243 fault-chain propagation, origin
+validation, cleanup-fault aggregation, authorization, durable storage, recovery,
+automatic retry policy, execution or provider conformance. #59 stays open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 46 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching the final runtime source and tests. The unchanged
+512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.

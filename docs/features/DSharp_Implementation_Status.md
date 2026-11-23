@@ -15,7 +15,9 @@ opaque normal-completion bytes only for a current unexpired owner. An explicitly
 reported fault can be rescheduled with a caller-chosen delay; the reference keeps
 prior attempt data and requires fresh ownership after simulated eligibility. A
 caller can also select retry after an exactly observed expired lease; a tagged
-ordered history distinguishes lease loss from a reported fault.
+ordered history distinguishes lease loss from a reported fault. A current
+unexpired owner can explicitly record an opaque terminal reported fault and an
+optional caller-supplied, unverified origin invocation ID.
 This is not a canonical codec, production store or durable acceptance; execution,
 result schema validation, retry policy, durable recovery and provider conformance
 remain open.
