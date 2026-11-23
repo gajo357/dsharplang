@@ -2126,15 +2126,17 @@ public static class Binder
         scopedUnions = scopedUnions.Append(standardResult).Append(standardOption).ToArray();
         // This one omitted async result is a compiler-owned, non-spellable
         // receipt. Other omitted async results retain the existing rejection.
-        CallSyntax? DispatchResultSite(FunctionSyntax function)
+        CallSyntax? AwaitedResultCall(FunctionSyntax function)
         {
             ExpressionSyntax? result = function.Body?.Result ?? function.Expression;
             while (result is GroupSyntax group) result = group.Inner;
             if (result is not AwaitSyntax awaited) return null;
             ExpressionSyntax operand = awaited.Operand;
             while (operand is GroupSyntax group) operand = group.Inner;
-            return operand is CallSyntax { Name.Text: "Dispatch" } call ? call : null;
+            return operand as CallSyntax;
         }
+        CallSyntax? DispatchResultSite(FunctionSyntax function) =>
+            AwaitedResultCall(function) is { Name.Text: "Dispatch" } call ? call : null;
         bool HasDispatchLocal(FunctionSyntax function)
         {
             if (function.Parameters.Any(parameter => parameter.Name.Text == "Dispatch") ||
@@ -2156,6 +2158,35 @@ public static class Binder
             !scopedActors.Any(item => item.Name.Text == "Dispatch")
                 ? function with { ReturnType = function.ReturnType with { Text = dispatchSite.TypeArguments.Count == 0 ? publicationReceiptSymbol : invocationReceiptSymbol }, InferReturnType = false }
                 : function).ToArray();
+        // Only a finite chain rooted in an existing Dispatch entry can infer an
+        // opaque receipt. Restrict relay arguments to already-bound parameters
+        // (or Unit) and the entire body to the final await, so no resource scope
+        // or stored receipt can cross the acceptance boundary here.
+        var receiptRelayEntries = new HashSet<string>(StringComparer.Ordinal);
+        bool IsReceipt(string name) => name == invocationReceiptSymbol || name == publicationReceiptSymbol;
+        bool relayChanged;
+        do
+        {
+            relayChanged = false;
+            for (var i = 0; i < normalizedFunctions.Length; i++)
+            {
+                var function = normalizedFunctions[i];
+                if (!function.IsAsync || !function.InferReturnType || !sourceHttpFunctions.Contains(function.Name.Text) ||
+                    function.TypeParameters.Count != 0 || function.Body is null || function.Body.Bindings.Count != 0 ||
+                    function.Body.Statements.Count != 0 || AwaitedResultCall(function) is not { } call ||
+                    call.TypeArguments.Count != 0 || function.Parameters.Any(parameter => parameter.Name.Text == call.Name.Text) ||
+                    functionTypeScopes[function.Name.Text].ContainsKey(call.Name.Text) ||
+                    call.Arguments.Any(argument => argument is not UnitSyntax &&
+                        (argument is not ValueSyntax value || !function.Parameters.Any(parameter => parameter.Name.Text == value.Value.Text))))
+                    continue;
+                var matches = normalizedFunctions.Where(candidate => candidate.Name.Text == call.Name.Text).ToArray();
+                if (matches.Length != 1 || matches[0].InferReturnType || matches[0].TypeParameters.Count != 0 ||
+                    matches[0].Parameters.Count != call.Arguments.Count || !IsReceipt(matches[0].ReturnType.Text)) continue;
+                normalizedFunctions[i] = function with { ReturnType = function.ReturnType with { Text = matches[0].ReturnType.Text }, InferReturnType = false };
+                receiptRelayEntries.Add(function.Name.Text);
+                relayChanged = true;
+            }
+        } while (relayChanged);
         syntax = syntax with { Records = scopedRecords, Unions = scopedUnions, Functions = normalizedFunctions, Interfaces = scopedInterfaces, Services = scopedServices, Actors = scopedActors };
         string DisplayType(string type, bool labelParameters = false)
         {
@@ -2667,6 +2698,8 @@ public static class Binder
         foreach (var function in syntax.Functions)
         {
             var typeParameters = Parameters(function.TypeParameters);
+            if (receiptRelayEntries.Contains(function.Name.Text) && function.Parameters.Any(parameter => !DataType(parameter.Type.Text)))
+                Fail("DS2041", function.Name, "A receipt relay cannot carry a capability or execution value across acceptance.");
             if (function.IsAsync && function.InferReturnType) Fail("DS2027", function.Name, "Async functions require an explicit logical result type.");
             if (!signatures.TryAdd(function.Name.Text, function)) Fail("DS2001", function.Name, "Duplicate function declaration.");
             if (services.ContainsKey(function.Name.Text)) Fail("DS2001", function.Name, "A function and service constructor cannot share a name.");
@@ -7987,6 +8020,9 @@ public static class Binder
         var functionByName = functions.ToDictionary(item => item.Name, StringComparer.Ordinal);
         bool CanForward(string name) => functionByName[name].ReturnType != invocationReceiptSymbol &&
             functionByName[name].ReturnType != publicationReceiptSymbol;
+        bool IsReceiptRelay(BoundFunction owner, BoundCall call) =>
+            receiptRelayEntries.Contains(owner.Name) && owner.ReturnType == functionByName[call.Name].ReturnType &&
+            owner.Expression is BoundAwait awaited && ReferenceEquals(awaited.Operand, call);
         void WalkBound(object? node, Action<object, bool, bool> visit, bool immediateAwait = false, bool inLambda = false)
         {
             if (node is null or string) return;
@@ -8015,7 +8051,7 @@ public static class Binder
             foreach (var owner in functions)
                 WalkBound(owner, (node, _, _) =>
                 {
-                    if (node is BoundCall call && dispatcherEntries.Contains(call.Name) && CanForward(call.Name) &&
+                    if (node is BoundCall call && dispatcherEntries.Contains(call.Name) && (CanForward(call.Name) || IsReceiptRelay(owner, call)) &&
                         dispatcherEntries.Add(owner.Name)) dispatcherChanged = true;
                 });
         } while (dispatcherChanged);
@@ -8053,7 +8089,7 @@ public static class Binder
             {
                 if (node is BoundCall call && dispatcherEntries.Contains(call.Name))
                 {
-                    if (!CanForward(call.Name) || !explicitAsyncSourceFunctions.Contains(owner.Name) ||
+                    if ((!CanForward(call.Name) || !explicitAsyncSourceFunctions.Contains(owner.Name)) && !IsReceiptRelay(owner, call) ||
                         !immediatelyAwaited || inLambda)
                         Fail("DS2047", call.Location ?? signatures[owner.Name].Name, "A dispatcher entry requires a directly awaited call from an ordinary async function.");
                 }
