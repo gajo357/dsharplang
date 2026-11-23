@@ -48,12 +48,46 @@ internal sealed class TargetedFault
 internal sealed record RescheduledAttempt(Guid AttemptId, Guid Token, DateTimeOffset LeaseUntil,
     DateTimeOffset EligibleAt, TargetedFault Fault);
 
+internal enum AttemptRecoveryKind { ReportedFault, LeaseExpired }
+
+// No actor fault or origin is inferred from the loss of a lease.
+internal sealed class AttemptRecovery
+{
+    private AttemptRecovery(Guid attemptId, Guid token, DateTimeOffset leaseUntil,
+        DateTimeOffset eligibleAt, AttemptRecoveryKind kind, TargetedFault? fault)
+    {
+        AttemptId = attemptId;
+        Token = token;
+        LeaseUntil = leaseUntil;
+        EligibleAt = eligibleAt;
+        Kind = kind;
+        Fault = fault;
+    }
+
+    internal static AttemptRecovery ForFault(RescheduledAttempt attempt) =>
+        new(attempt.AttemptId, attempt.Token, attempt.LeaseUntil, attempt.EligibleAt,
+            AttemptRecoveryKind.ReportedFault, attempt.Fault);
+
+    internal static AttemptRecovery ForExpiry(Guid attemptId, Guid token, DateTimeOffset leaseUntil,
+        DateTimeOffset eligibleAt) =>
+        new(attemptId, token, leaseUntil, eligibleAt, AttemptRecoveryKind.LeaseExpired, null);
+
+    public Guid AttemptId { get; }
+    public Guid Token { get; }
+    public DateTimeOffset LeaseUntil { get; }
+    public DateTimeOffset EligibleAt { get; }
+    public AttemptRecoveryKind Kind { get; }
+    public TargetedFault? Fault { get; }
+}
+
 internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAttemptState State,
     Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null)
 {
     public DateTimeOffset? EligibleAt { get; init; }
-    // Only the store supplies this collection: it never exposes its mutable backing array.
+    // This pre-existing view contains only explicitly reported faults.
     public IReadOnlyList<RescheduledAttempt> History { get; init; } = Array.Empty<RescheduledAttempt>();
+    // Complete ordered rescheduling history, including lease loss; snapshots own their buffers.
+    public IReadOnlyList<AttemptRecovery> RecoveryHistory { get; init; } = Array.Empty<AttemptRecovery>();
 }
 internal enum AttemptTransitionStatus
 {
@@ -131,7 +165,8 @@ internal sealed partial class VolatileTargetedStore
             var deadline = AddLease(now, duration);
             var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Running, attemptId, token, deadline)
             {
-                History = current.History
+                History = current.History,
+                RecoveryHistory = current.RecoveryHistory
             };
             // Roll back both identity reservations if any subsequent insertion fails.
             usedOwnershipIds.Add(attemptId);
@@ -233,10 +268,58 @@ internal sealed partial class VolatileTargetedStore
             for (var i = 0; i < current.History.Count; i++)
                 history[i] = current.History[i];
             history[^1] = new RescheduledAttempt(attemptId, token, current.LeaseUntil.Value, due, fault);
+            var recoveryHistory = new AttemptRecovery[current.RecoveryHistory.Count + 1];
+            for (var i = 0; i < current.RecoveryHistory.Count; i++)
+                recoveryHistory[i] = current.RecoveryHistory[i];
+            recoveryHistory[^1] = AttemptRecovery.ForFault(history[^1]);
             var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Eligible, null, null, null)
             {
                 EligibleAt = due,
-                History = Array.AsReadOnly(history)
+                History = Array.AsReadOnly(history),
+                RecoveryHistory = Array.AsReadOnly(recoveryHistory)
+            };
+            ownerships[invocationId] = next;
+            return new(AttemptTransitionStatus.Applied, next);
+        }
+    }
+
+    public AttemptTransitionResult RecoverExpiredAsRetry(string applicationId, string submissionId, Guid invocationId,
+        Guid observedAttemptId, Guid observedToken, DateTimeOffset observedLeaseUntil, TimeSpan delay)
+    {
+        ValidateSubmissionKey(applicationId, submissionId);
+        ValidateIdentity(invocationId, nameof(invocationId));
+        ValidateIdentity(observedAttemptId, nameof(observedAttemptId));
+        ValidateIdentity(observedToken, nameof(observedToken));
+        if (delay < TimeSpan.Zero || delay == TimeSpan.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(delay), "A finite nonnegative delay is required.");
+        lock (gate)
+        {
+            var now = GetClock();
+            var current = FindOwnership(applicationId, submissionId, invocationId);
+            if (current is null)
+                return new(AttemptTransitionStatus.NotFound, null);
+            if (current.State != TargetedAttemptState.Running)
+                return new(AttemptTransitionStatus.NotEligible, current);
+            if (current.AttemptId != observedAttemptId || current.Token != observedToken || current.LeaseUntil != observedLeaseUntil)
+                return new(AttemptTransitionStatus.ObservationMismatch, current);
+            if (now < current.LeaseUntil!.Value)
+                return new(AttemptTransitionStatus.NotExpired, current);
+
+            DateTimeOffset due;
+            try { due = now.Add(delay); }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new ArgumentOutOfRangeException(nameof(delay), "Eligibility exceeds the clock range.");
+            }
+            var recoveryHistory = new AttemptRecovery[current.RecoveryHistory.Count + 1];
+            for (var i = 0; i < current.RecoveryHistory.Count; i++)
+                recoveryHistory[i] = current.RecoveryHistory[i];
+            recoveryHistory[^1] = AttemptRecovery.ForExpiry(observedAttemptId, observedToken, observedLeaseUntil, due);
+            var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Eligible, null, null, null)
+            {
+                EligibleAt = due,
+                History = current.History,
+                RecoveryHistory = Array.AsReadOnly(recoveryHistory)
             };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
