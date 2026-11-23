@@ -54,7 +54,11 @@ helpers or lambdas remain unsupported. A resource-free actor Handle whose sole
 result directly invokes a target with its own input can also use an explicit
 host-supplied dispatcher; checked actor metadata identifies this body signature.
 Recording tests cover isolated host contexts, exact results and faults. Other
-actor-body shapes and resource-crossing policy remain unimplemented. A directly awaited targetless Dispatch host
+actor-body shapes remain unimplemented. Direct or transitive actor operations
+are rejected while a locally owned `using` scope is live; without transaction
+classification this conservatively includes ordinary owned resources. Ordinary
+resource awaits and actor operations after cleanup remain supported. This is not
+a complete transaction or provider policy. A directly awaited targetless Dispatch host
 entry accepts a conservative checked message subset and yields an opaque
 publication receipt; recording tests exercise fake acceptance and host isolation.
 Actual publication, subscriptions and delivery remain unimplemented. For affected CLI
