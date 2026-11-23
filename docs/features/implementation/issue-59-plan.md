@@ -67,3 +67,53 @@ dispatcher. It cannot demonstrate crash durability or promise that competing
 callers run selection only once. Parent identities are copied for comparison,
 not validated against an invocation or attempt registry. #59 remains open for
 its full acceptance gates.
+
+## Second slice: volatile publication identity and frozen intents
+
+Base: `30521eb276387d59ec9a641aa9dd5e36ec38d578`, containing the first
+targeted bookkeeping slice and the merged #9/#14 prerequisites. Continue #59
+on its dedicated branch. Extend the same internal volatile reference in
+`src/DSharp.Runtime/VolatileTargetedStore.cs` and
+`src/DSharp.Runtime/VolatilePublicationStore.cs`; add
+`tests/runtime-features/VolatilePublicationStoreTests.cs` and update the status.
+No existing tests, public ABI, dependencies, trusted verifier or D# syntax change.
+
+Represent a publication's byte-exact reference request and a fully supplied
+frozen set of subscription IDs, public targets and selected implementations.
+Use a separate publication identity and stable `(publication, subscription)`
+delivery identity. Validate all proposed intents and identity collisions before
+mutation, permit an empty set, and atomically insert the publication and complete
+frozen set. Use the same application/submission namespace and lock as targeted
+submissions so the operation kinds cannot reuse one identity. Resolve matching
+retained requests before considering changed proposals; return the original set
+and selection, reject conflicting requests, and expose request-aware shared-key
+probes so callers can distinguish absence, a matching record and cross-kind or
+same-kind conflict before selection. Never invoke host code under the store lock.
+Snapshot mutable inputs and outputs. Unsupported canonical equality,
+durability and atomic follow-up requirements continue to fail closed.
+
+Acceptance-to-test map: zero/one/multiple frozen intents and duplicate subscription
+rejection cover all-or-none insertion; retry with changed or invalid proposals and
+changed request cover pinned identity and conflicts; concurrent matching and
+conflicting submissions and cross-operation races cover the shared namespace;
+identity collision and buffer/list mutation cover no partial state and ownership.
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`. Record actual results and any isolated-image limitation.
+
+This is reference-only byte equality and process-local atomic bookkeeping. It
+does not validate host subscriptions, authorization or canonical encoding, run
+selection, schedule or execute delivery, recover after a crash, or claim a
+durable receipt. The actual codec, provider and host orchestration remain future
+work. #59 remains open for attempts, provider conformance and its other gates.
+The probes do not reserve a key or prevent competing callers from performing
+selection concurrently; acceptance must recheck and #61 owns host orchestration.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 17 feature tests. The
+isolated local verifier could not pull its pinned MCR image (`Forbidden`); hosted
+verification is still required for that container path. Compiler verification
+passed 18 baseline and 406 feature tests from a private short-path source snapshot;
+the unchanged TRX guard accepted 506,836 bytes. The runtime source matches the
+final candidate; the subsequent runtime run covers the final bounded waits in
+the new runtime test's race barriers.
