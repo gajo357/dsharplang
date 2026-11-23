@@ -76,3 +76,16 @@ is implemented; keep #241 and #52 open.
   2 baseline and 5 feature tests from the same snapshot. The final plan/status
   wording was updated after that snapshot. Hosted exact-head checks are still
   required before merge.
+
+## Same-branch lookup correction
+
+Review found that multi-file resolution could leave a visible source type named
+`Dispatch` or `Invoke` in its original spelling and accidentally select the
+contextual actor operation. Preserve the resolved nominal identity before
+binder dispatch, including ambiguity across visible nominal kinds, while keeping
+local, generic and ordinary value lookup precedence. The receipt prepass also
+recognizes a top-level let statement in a manually supplied syntax tree even
+when the parallel bindings collection is absent. The grouped Dispatch and
+Invoke integration tests pass with added multi-file nominal-shadow, ambiguity,
+hidden-type and direct Binder regression cases. Hosted checks on the corrected
+head remain necessary.

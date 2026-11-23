@@ -249,6 +249,17 @@ internal static class MultiFileResolver
                         var callTypes = Types(call.TypeArguments, typeParameters);
                         if (scope.Contains(call.Name.Text)) return call with { Arguments = callArguments, TypeArguments = callTypes };
                         var foundCall = ValueName(call.Name);
+                        // A visible ordinary nominal name must retain its resolved
+                        // identity before the binder considers contextual actor
+                        // operations. Otherwise a renamed type named Invoke or
+                        // Dispatch would silently become the built-in operation.
+                        if (call.Name.Text is "Invoke" or "Dispatch" && !typeParameters.Contains(call.Name.Text))
+                        {
+                            var nominal = foundCall is null or { Kind: "record" }
+                                ? Lookup(call.Name, call.Name.Text, s => s.Kind is "record" or "union" or "interface" or "actor") : null;
+                            if (nominal is not null)
+                                return call with { Name = Rename(call.Name, nominal.Internal), Arguments = callArguments, TypeArguments = callTypes };
+                        }
                         // An unconstrained type parameter cannot name a service
                         // constructor; preserve the source spelling so binding
                         // applies the same rule as single-file compilation.

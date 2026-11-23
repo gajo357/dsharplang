@@ -134,9 +134,22 @@ public sealed class TargetedDispatchEntryTests
         var local = DSharpCompiler.Compile("module Demo\nfn ordinary(): int { let Dispatch: (int) -> int = (value: int) => value\n Dispatch(7) }", "local-dispatch.ds");
         Assert.Empty(local.Diagnostics);
         Assert.False(local.RequiresRuntime);
+        const string forgedShadow = "module Demo\nasync fn run() { let Dispatch: (int) -> int = (value: int) => value\n await Dispatch<int>(1) }";
+        var shadowSyntax = new Parser(Lexer.Lex(forgedShadow, "forged-shadow.ds"), "forged-shadow.ds").Parse();
+        var shadowFunction = Assert.Single(shadowSyntax.Functions);
+        var shadowBody = Assert.IsType<BlockSyntax>(shadowFunction.Body);
+        Assert.Contains(shadowBody.Statements, statement => statement is LetStatementSyntax);
+        var statementOnlyBody = shadowBody with { Bindings = Array.Empty<LetBindingSyntax>() };
+        var statementOnlyFunction = shadowFunction with { Body = statementOnlyBody, Bindings = Array.Empty<LetBindingSyntax>() };
+        var statementOnlyModule = shadowSyntax with { Functions = [statementOnlyFunction] };
+        var statementOnlyError = Assert.Throws<SourceError>(() => DSharp.Compiler.Binder.Bind(statementOnlyModule, "forged-shadow.ds"));
+        Assert.Equal("DS2027", statementOnlyError.Diagnostic.Code);
+        Assert.Equal("forged-shadow.ds", statementOnlyError.Diagnostic.Path);
         var homonym = DSharpCompiler.Compile("module Demo\ntype InvocationReceipt { value: int }\nfn ordinary(): InvocationReceipt { InvocationReceipt { value = 7 } }", "receipt-homonym.ds");
         Assert.Empty(homonym.Diagnostics);
         Assert.False(homonym.RequiresRuntime);
+
+        AssertOrdinaryNominalLookup();
 
         SourceFile[] ambiguous =
         [
@@ -175,6 +188,68 @@ public sealed class TargetedDispatchEntryTests
         var forbiddenHttp = DSharpCompiler.Compile(callback, "http-dispatch.ds");
         Assert.True(forbiddenHttp.CSharp is null && forbiddenHttp.Diagnostics.Any(d => d.Code == "DS2046" && d.Path == "http-dispatch.ds" && d.Span.Start == callback.LastIndexOf("decode,", StringComparison.Ordinal)),
             $"Expected receipt-returning HTTP binder rejection: {string.Join("; ", forbiddenHttp.Diagnostics)}");
+    }
+
+    private static void AssertOrdinaryNominalLookup()
+    {
+        (string Label, string Template)[] declarations =
+        [
+            ("record", "type NAME { value: int }"),
+            ("union", "type NAME { | Mark }"),
+            ("interface", "interface NAME { read(): int }"),
+            ("actor", "actor NAME { Handle(message: Unit): int { 1 } }")
+        ];
+        foreach (var operation in new[] { "Dispatch", "Invoke" })
+        foreach (var (label, template) in declarations)
+        foreach (var imported in new[] { false, true })
+        {
+            var declaration = template.Replace("NAME", operation, StringComparison.Ordinal);
+            var library = $"module {(imported ? "Library" : "Use")}\n{declaration}";
+            var imports = imported ? "import Library\n" : "";
+            var expression = operation == "Dispatch" ?
+                "async fn run() { await Dispatch<Worker>(()) }" :
+                "async fn run(): int { await Invoke<Worker>(()) }";
+            var source = $"module Use\n{imports}actor Worker {{ Handle(message: Unit): int {{ 1 }} }}\n{expression}";
+            SourceFile[] sources = [new("nominal.ds", library), new("use.ds", source)];
+            var result = DSharpCompiler.Compile(sources);
+            Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Path == "use.ds") && !result.RequiresRuntime,
+                $"Expected visible {label} {operation} ({(imported ? "imported" : "same module")}) to retain ordinary lookup: {string.Join("; ", result.Diagnostics)}");
+            if (operation == "Dispatch")
+                Assert.Contains(result.Diagnostics, d => d.Code == "DS2027" && d.Path == "use.ds");
+            else
+                Assert.DoesNotContain(result.Diagnostics, d => d.Code == "DS2047");
+
+            sources[1] = new("use.ds", $"module Use\n{imports}actor Worker {{ Handle(message: Unit): int {{ 1 }} }}\nfn control(): int {{ 1 }}");
+            var control = DSharpCompiler.Compile(sources);
+            Assert.True(control.CSharp is not null && control.Diagnostics.Count == 0,
+                $"Expected valid {label} {operation} declaration in scope: {string.Join("; ", control.Diagnostics)}");
+        }
+
+        foreach (var operation in new[] { "Dispatch", "Invoke" })
+        {
+            var expression = operation == "Dispatch" ?
+                "async fn run() { await Dispatch<Worker>(()) }" :
+                "async fn run(): int { await Invoke<Worker>(()) }";
+            var use = $"module Use\nimport A\nimport B\nactor Worker {{ Handle(message: Unit): int {{ 1 }} }}\n{expression}";
+            SourceFile[] ambiguous =
+            [
+                new("a.ds", $"module A\ntype {operation} {{ value: int }}"),
+                new("b.ds", $"module B\ntype {operation} {{ | Mark }}"),
+                new("use.ds", use)
+            ];
+            var result = DSharpCompiler.Compile(ambiguous);
+            Assert.True(result.CSharp is null && result.Diagnostics.Any(d => d.Code == "DS2031" && d.Path == "use.ds"),
+                $"Expected ambiguous imported {operation} nominal lookup: {string.Join("; ", result.Diagnostics)}");
+
+            SourceFile[] hidden =
+            [
+                new("hidden.ds", $"module Hidden\ntype {operation} {{ value: int }}"),
+                new("use.ds", $"module Use\nactor Worker {{ Handle(message: Unit): int {{ 1 }} }}\n{expression}")
+            ];
+            var unshadowed = DSharpCompiler.Compile(hidden);
+            Assert.True(unshadowed.CSharp is not null && unshadowed.Diagnostics.Count == 0 && unshadowed.RequiresRuntime,
+                $"An unimported {operation} nominal must not shadow the contextual operation: {string.Join("; ", unshadowed.Diagnostics)}");
+        }
     }
 
     private static async Task CheckCli(string root, string runtime, string directory)

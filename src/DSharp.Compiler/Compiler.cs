@@ -2131,8 +2131,10 @@ public static class Binder
                 functionTypeScopes[function.Name.Text].ContainsKey("Dispatch")) return true;
             var body = function.Body;
             return (body?.Bindings ?? function.Bindings).Any(binding => binding.Name.Text == "Dispatch") ||
-                body is not null && body.Statements.OfType<TupleLetStatementSyntax>()
-                    .Any(binding => binding.Pattern.Names.Any(name => name.Text == "Dispatch"));
+                body is not null && (body.Statements.OfType<LetStatementSyntax>()
+                    .Any(binding => binding.Binding.Name.Text == "Dispatch") ||
+                    body.Statements.OfType<TupleLetStatementSyntax>()
+                    .Any(binding => binding.Pattern.Names.Any(name => name.Text == "Dispatch")));
         }
         var normalizedFunctions = scopedFunctions.Select(function => function.IsAsync && function.InferReturnType &&
             sourceHttpFunctions.Contains(function.Name.Text) && DispatchResultSite(function) is not null &&
