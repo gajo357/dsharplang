@@ -264,3 +264,46 @@ short-path snapshot matching the final runtime source and tests. The unchanged
 512,000-byte TRX guard accepted the 506,836-byte feature report.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Sixth slice: volatile expiry recovery with explicit retry
+
+Base: `d14e8fd516159cb8973ed41ebfc76514b00e5992`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing issue branch. Extend the
+internal reference in `src/DSharp.Runtime/VolatileTargetedOwnership.cs`, add
+`tests/runtime-features/VolatileExpiryRetryTests.cs`, and update this plan and
+implementation status. Preserve existing tests, dependencies, verifier, public
+ABI and D# syntax.
+
+A caller may explicitly choose retry after lease loss. Under the same gate, read
+the simulated clock once; require the full targeted key, Running state, exact
+observed attempt, token and lease deadline, and `now >= leaseUntil`. Validate a
+caller-selected nonnegative delay and checked due-time arithmetic before any
+mutation. Atomically fence the old owner, persist the chosen eligibility time,
+and retain a tagged lease-expiry history entry without inventing an actor fault
+or origin. Existing terminal expiry failure stays terminal. Reclaim uses the
+existing due boundary and fresh never-reused identities, preserving invocation,
+request and selection; no default retry policy or host callback is introduced.
+
+Preserve the existing fault-only history view for compatibility, and add one
+immutable ordered view covering both reported-fault reschedules and lease-loss
+recoveries. Tagged entries must expose fault data only for reported faults; copy
+all mutable buffers and retain earlier snapshots. This does not claim canonical
+encoding, normalized fault origin, real-time or durable recovery, cancellation,
+configured retry policy, scheduler or external-effect ordering; #59 stays open.
+
+Acceptance-to-test map: just-before/exact expiry, zero/positive delay and due
+boundary exercise timing; renewed/stale observations, wrong IDs, negative and
+overflowing delays and terminal states exercise fencing; mixed multi-attempt
+history, fresh IDs and mutated outputs exercise identity and ownership; competing
+recovery, renewal, failure and claim races exercise atomic transitions. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record outcomes and any isolated-image limit.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 41 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching the final runtime source and tests. The unchanged
+512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.

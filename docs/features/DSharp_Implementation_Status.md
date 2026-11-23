@@ -13,7 +13,9 @@ The reference also exercises a simulated-clock targeted claim, lease renewal and
 explicit terminal lease-expiry failure with fenced owners, and stores copied
 opaque normal-completion bytes only for a current unexpired owner. An explicitly
 reported fault can be rescheduled with a caller-chosen delay; the reference keeps
-prior attempt data and requires fresh ownership after simulated eligibility.
+prior attempt data and requires fresh ownership after simulated eligibility. A
+caller can also select retry after an exactly observed expired lease; a tagged
+ordered history distinguishes lease loss from a reported fault.
 This is not a canonical codec, production store or durable acceptance; execution,
 result schema validation, retry policy, durable recovery and provider conformance
 remain open.
