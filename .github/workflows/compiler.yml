@@ -36,7 +36,20 @@ jobs:
             fi
           done
           test -n "$short_checkout"
-          trap 'rm -rf -- "$short_checkout"' EXIT
+          test_output_targets=""
+          trap 'rm -rf -- "$short_checkout"; if [[ -n "$test_output_targets" ]]; then rm -f -- "$test_output_targets"; fi' EXIT
+          test_output_targets="$(mktemp "$RUNNER_TEMP/dsharp-test-output.XXXXXX.targets")"
+          # VSTest repeats the absolute test assembly path in each TRX entry.
+          # Keep the same five directory levels expected by existing tests,
+          # while moving only the compiler test output to shorter components.
+          cat > "$test_output_targets" <<'EOF'
+          <Project>
+            <PropertyGroup Condition="'$(MSBuildProjectName)' == 'DSharp.Compiler.Tests'">
+              <OutputPath>../../t/a/b/c/d/</OutputPath>
+            </PropertyGroup>
+          </Project>
+          EOF
+          export CustomBeforeMicrosoftCommonTargets="$test_output_targets"
           git clone --quiet --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$short_checkout"
           git -C "$short_checkout" checkout --quiet --detach "$GITHUB_SHA"
           test "$(git -C "$short_checkout" rev-parse HEAD)" = "$GITHUB_SHA"

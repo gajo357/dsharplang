@@ -42,7 +42,10 @@ invocation receipt and shares the target route with Invoke. Recording tests
 exercise pending fake acceptance, exact receipt identity and isolated hosts.
 Receipt construction, source annotations and storage are not supported. Calls
 and captures of such entries from D#, dispatcher operations inside actor helpers
-or lambdas, and untargeted Dispatch remain unsupported. For affected CLI
+or lambdas remain unsupported. A directly awaited targetless Dispatch host
+entry accepts a conservative checked message subset and yields an opaque
+publication receipt; recording tests exercise fake acceptance and host isolation.
+Actual publication, subscriptions and delivery remain unimplemented. For affected CLI
 compilations, `DSHARP_RUNTIME_ASSEMBLY` supplies the runtime DLL copied into the
 generated project. This compiler seam does not implement dispatch or durability.
 
