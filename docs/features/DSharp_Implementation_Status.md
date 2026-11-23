@@ -44,8 +44,12 @@ Receipt construction, source annotations and storage are not supported. An
 explicitly typed ordinary async function may directly await a fully applied
 Invoke entry or another such function; generated calls forward its host-supplied
 dispatcher, including across tested qualified and recursive chains. Recording
-tests exercise interleaved hosts, pending calls and faults. Captures, partials,
-unawaited calls, receipt forwarding and dispatcher operations inside actor
+tests exercise interleaved hosts, pending calls and faults. An otherwise empty
+inferred async module function can directly await and return either opaque
+Dispatch receipt through a fully applied nongeneric relay, forwarding only data
+parameters or Unit. Recording tests cover separate receipt kinds, interleaved
+host scopes and faults. Receipt storage, captures, partials, unawaited calls and
+dispatcher operations inside actor
 helpers or lambdas remain unsupported. A resource-free actor Handle whose sole
 result directly invokes a target with its own input can also use an explicit
 host-supplied dispatcher; checked actor metadata identifies this body signature.
