@@ -98,6 +98,11 @@ An internal bound-file reader retrieves one invocation's stored requested and
 selected IDs, opaque input, target and unverified ancestry after reopen, including
 publication-derived work. It does not select implementations, decide availability,
 claim work or execute actors.
+An additional real SQLite test commits model-shaped records in one process and
+reads them from a second process after the writer exits, including pinned
+selection, encoded inputs, fault/lifecycle rows and separate application files.
+This demonstrates normal committed-file persistence, not SQLite admission,
+power-loss recovery or host availability reporting.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

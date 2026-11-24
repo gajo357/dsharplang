@@ -1,5 +1,45 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Tenth slice: verify file persistence across independent processes
+
+Base `661282f31be397916b34133ab65f889f9ccf5636` provides the application-bound
+v4 schema and pinned-work reader. Continue the #60 branch. Add a real SQLite
+feature test, `tests/sqlite-features/ActorSqliteProcessRestartTests.cs`, whose
+parent test starts a writer process, waits for its successful exit and then starts
+a separate reader process against the same local files. Each child runs just the
+same test in an explicitly selected phase, with bounded time and an unambiguous
+completion marker. Keep all existing tests, project files, trusted verification,
+schema and production behavior unchanged.
+
+The writer creates two separately bound application files and commits model-shaped
+targeted invocation, attempt, lifecycle/fault and publication/delivery records.
+The reader verifies selected IDs and opaque encoded data using the bound reader,
+and verifies the remaining persisted records and settings with real SQLite after
+the writer process has exited. It checks cross-application rejection and an empty
+publication as distinct from a missing one. This proves normal committed-file
+persistence across processes, not an actual accepted SQLite admission protocol,
+power-loss recovery, host availability reporting or durable acknowledgement;
+those boundaries remain with #61–#64 and #60 stays open until full acceptance.
+
+Run bootstrap, the full verifier, SQLite, runtime and compiler scripts, and the
+base-owned SQLite verifier when its pinned image is available. Record actual
+results and update the implementation status only for the observed behavior.
+
+### Tenth-slice verification
+
+- Bootstrap and documentation checks (135 files, 308 local links) passed, as
+  did all 46 automation tests.
+- Real SQLite passed 1 baseline and 50 feature tests. The separate writer and
+  reader process test also passed when rerun with `DOTNET_PROCESSOR_COUNT=2`.
+  Runtime passed 2 baseline and 96 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated SQLite verifier could not
+  complete locally: the pinned MCR image pull returned `Forbidden`. Hosted
+  exact-head isolated checks, including the SQLite failure/clean pilot, remain
+  required. This evidence covers orderly process exit, not abrupt failure or
+  SQLite admission; #60 remains open.
+
 ## Ninth slice: read preserved pinned work after reopen
 
 Base `c45734fe0dc92be9cfadf6b6fe3b42e51fb18d4b` contains the application-bound
