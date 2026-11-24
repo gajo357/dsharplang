@@ -86,6 +86,11 @@ An internal SQLite write-batch helper snapshots trusted statements and parameter
 before executing them in one transaction. Real-provider tests cover commit,
 rollback and a deferred-constraint commit failure; this is not an admission
 protocol, ownership fence or durable acknowledgement.
+An opt-in v3-to-v4 binding validates stored application IDs and installs ordinary
+row guards in one SQLite transaction. Tests cover reopen and competing binders;
+the host still owns path selection and existing-file provenance. The bound path
+currently rejects IDs containing NUL or unpaired UTF-16 and does not defend
+against deliberate changes to the trusted schema.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

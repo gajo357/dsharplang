@@ -13,6 +13,39 @@ internal static class ActorSqliteDatabase
     {
         // Reject an unsupported target before opening or creating a file.
         ActorSqliteSchema.ValidateVersion(version);
+        var connection = OpenConfigured(path, SqliteOpenMode.ReadWriteCreate);
+        try
+        {
+            ActorSqliteSchema.Apply(connection, version);
+            return connection;
+        }
+        catch (Exception error)
+        {
+            DisposeAfterFailure(connection, error);
+            throw;
+        }
+    }
+
+    // Opening a bound file never creates it. The caller still owns host path
+    // selection and must exclusively use the returned connection.
+    internal static SqliteConnection OpenBound(string path, string applicationId)
+    {
+        ActorSqliteApplicationBinding.ValidateApplicationId(applicationId);
+        var connection = OpenConfigured(path, SqliteOpenMode.ReadWrite);
+        try
+        {
+            ActorSqliteApplicationBinding.ValidateBound(connection, applicationId);
+            return connection;
+        }
+        catch (Exception error)
+        {
+            DisposeAfterFailure(connection, error);
+            throw;
+        }
+    }
+
+    private static SqliteConnection OpenConfigured(string path, SqliteOpenMode mode)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!Path.IsPathFullyQualified(path) || path.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
             Path.EndsInDirectorySeparator(path))
@@ -21,7 +54,7 @@ internal static class ActorSqliteDatabase
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = mode,
             Cache = SqliteCacheMode.Private,
             Pooling = false,
             ForeignKeys = true,
@@ -43,13 +76,21 @@ internal static class ActorSqliteDatabase
                 Convert.ToInt64(Scalar(connection, "PRAGMA busy_timeout"), CultureInfo.InvariantCulture) != 5000)
                 throw new InvalidOperationException("Required SQLite connection settings are unavailable.");
 
-            ActorSqliteSchema.Apply(connection, version);
             return connection;
         }
-        catch
+        catch (Exception error)
         {
-            connection.Dispose();
+            DisposeAfterFailure(connection, error);
             throw;
+        }
+    }
+
+    private static void DisposeAfterFailure(SqliteConnection connection, Exception failure)
+    {
+        try { connection.Dispose(); }
+        catch (Exception disposeError)
+        {
+            throw new AggregateException("Opening and connection disposal failed.", failure, disposeError);
         }
     }
 
