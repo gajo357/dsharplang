@@ -390,3 +390,54 @@ short-path snapshot matching the final runtime source and tests. The unchanged
 512,000-byte TRX guard accepted the 506,836-byte feature report.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Ninth slice: reusable volatile-subset conformance scenarios
+
+Base: `359ae2d066a9f7ef953aeb801cbe9e02d23c0118`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing issue branch. Add test-only
+`tests/runtime-features/RuntimeStoreConformanceHarness.cs` and
+`tests/runtime-features/RuntimeStoreConformanceTests.cs`, and update this plan
+and the implementation status. Keep existing tests, dependencies,
+verifier, production public ABI and D# syntax unchanged.
+
+Use fresh independent reference stores through a narrow adapter; scenario
+assertions must inspect actual returned identities, states and frozen intents,
+not a second implementation's internal data. Cover byte-exact targeted retry and
+conflict with pinned selection; frozen publication and shared submission keys;
+coordinated one-winner claims and stale-owner rejection; and cancellation winner
+ordering. Use bounded barriers and controlled simulated time. Explicitly report
+the supported in-process/byte-exact scope and assert durability, canonical
+equality and atomic-follow-up requirements fail closed. Do not silently count
+unsupported capabilities as passed provider conformance.
+
+Run the same reusable stale-owner scenario against both the real adapter and a
+deliberately broken test-only decorator that substitutes the live attempt and token;
+assert a specific invariant failure from the scenario and inspect the forbidden
+state mutation. This verifies the scenario detects a real violation without
+changing production behavior or weakening trusted tests. Add no test fixture to
+an old file and do not change the verifier.
+
+Acceptance-to-test map: retry/conflict and frozen fan-out exercise identity;
+concurrent claim and stale-token scenarios exercise ownership; cancellation
+exercises state winner ordering; unsupported requirements exercise fail-closed
+capabilities; the negative control demonstrates the same scenario detects a
+forbidden mutation. Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`. Record actual outcomes, including the local isolated-image
+limit and hosted failure-pilot evidence when available.
+
+This is a reusable subset for controlled in-process reference behavior, not
+provider certification or evidence of canonical semantic equality, SQLite,
+durability, restart, actual delivery, authorization, production clock behavior,
+cleanup-fault aggregation or external-effect guarantees. The publication scenario
+checks frozen identities and retries; it does not prove all-or-none behavior on a
+failed multi-intent commit. #59 stays open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 55 feature tests,
+including the negative control's expected specific violation and independently
+observed forbidden commit. Compiler verification passed 18 baseline and 406
+feature tests in a private short-path snapshot matching the final conformance
+files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
+report. The local isolated verifier could not pull its pinned MCR image
+(`Forbidden`); hosted verification is still required for that path.

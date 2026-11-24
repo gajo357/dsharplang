@@ -20,6 +20,9 @@ unexpired owner can explicitly record an opaque terminal reported fault and an
 optional caller-supplied, unverified origin invocation ID. The volatile reference
 also records cancellation winner ordering and separately retains a still-fenced
 attempt's observed normal or fault exit; it does not signal or stop execution.
+Test-side reusable scenarios exercise this in-process subset and detect a
+deliberately unfenced stale-owner commit. They are not provider certification or
+evidence of canonical equality, persistence, restart or durable delivery.
 This is not a canonical codec, production store or durable acceptance; execution,
 result schema validation, retry policy, durable recovery and provider conformance
 remain open.
