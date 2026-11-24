@@ -111,6 +111,10 @@ Another real SQLite test accepts targeted and publication records in the #59
 volatile reference, maps them to the schema in a test-owned transaction, and
 reads the saved input and pinned identities after that writer process exits.
 That test mapping is not SQLite admission or provider conformance.
+The [#60 completion audit](implementation/issue-60-plan.md) maps its schema,
+transaction, migration and normal process-reopen criteria to the real-provider
+tests. Actual durable admission remains #61; implementation availability and
+execution remain #64. Neither is implied by the schema evidence.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
