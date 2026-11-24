@@ -1,5 +1,73 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Second slice: initial actor identity schema
+
+Base `aa0832e5d3a076f7b65182113d2d37be85629386` includes the merged #10
+optional SQLite setup and its real offline verifier. #59 is closed; this reuses
+the existing #60 branch. Add a version-one, internal SQLite migration in
+`src/DSharp.Runtime.Sqlite/ActorSqliteSchema.cs`, applied through the existing
+coordinator to a caller-owned open connection. Exercise it with an additive
+`tests/sqlite-features/ActorSqliteSchemaTests.cs` against real SQLite. Preserve
+trusted base projects, locks, existing tests and verifier. Version one is an
+initial development schema; additional fields require an explicit later migration.
+
+The bounded schema records a shared `(application_id, submission_id)` identity
+and kind for targeted and publication submissions, opaque contract and payload
+bytes, distinct invocation and attempt identities, requested and selected actor
+identities, optional opaque target key, paired awaited-parent identities,
+publications and frozen delivery identities unique per publication/subscription.
+These are internal relational storage shapes, not an admission API, dispatch,
+provider implementation, codec or durability acknowledgement. Avoid assuming
+display names are stable identities. Test foreign keys with explicitly enabled
+connection settings; reject mixed kinds and partial awaited ancestry in the
+scope where the schema can check them. Keep publication with zero deliveries
+and multiple attempts per invocation valid. A delivery-sourced invocation must
+remain a root and preserve the delivery's frozen requested and selected actor
+identities. Do not claim features not enforced.
+
+Acceptance mapping: real-provider tests create a fresh file, apply twice and
+reopen, prove exact bytes and selected IDs survive, reject shared-key and
+delivery duplicates, verify distinct attempt IDs and required relationships,
+test parent pairing and invalid kinds, and prove separate application files do
+not share rows. Exercise the existing coordinator with a deliberately invalid
+second migration statement on a fresh database and verify transactional schema
+rollback and unchanged version; reject unsupported versions without mutation.
+This slice does not yet cover the complete fault/cleanup model, single-host
+settings policy, all restart semantics or provider admission and recovery; #60
+remains open. Raw SQL can leave incomplete submissions or change delivery rows;
+these tables do not prove atomic admission or immutable accepted records.
+#61–#64 own durable operational behavior, #69 owns fan-out and #78 owns codecs.
+
+Run bootstrap, documentation/automation, SQLite, runtime and compiler checks,
+including the trusted isolated SQLite verifier and its failure pilot where the
+pinned image is available. Record exact results and local environment limits.
+The commands are `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, and `git diff --check`. For the base-owned
+SQLite check use `node <trusted>/.github/ai/verify-sqlite.mjs <candidate> <reports>`;
+the merged CI job also runs its named-failure pilot.
+
+### Second-slice verification
+
+Bootstrap, documentation (135 files and 308 local links) and all 46 automation
+tests passed. Local SQLite verification passed one baseline and six feature
+tests against the pinned real provider. Runtime verification passed two baseline
+and 93 feature tests from a snapshot whose runtime source and tests match this
+branch. Independent review found and corrected a delivery identity/root
+constraint; the final SQLite run includes its positive and negative cases.
+Compiler verification passed 18 baseline and 406 feature tests from a
+short-path snapshot matching the final SQLite source and feature tests; its
+506,836-byte TRX passed the unchanged size guard.
+
+The full isolated verifier and the base-owned SQLite verifier reached the pinned
+MCR image pull, which returned `Forbidden` in this environment. They did not
+complete offline tests locally; hosted exact-head checks must provide that
+evidence. The earlier merged #10 setup's hosted SQLite failure pilot did prove its
+named failure was rejected and a clean rerun passed.
+
+
+## First-slice historical context
+
 Base: `c01adaf65a83b638b808dcd3601ba65cf419537d`. The issue's sole stated
 prerequisite, #59, was completed by merged #300. #14 and #9 provide the accepted
 store semantics and the enabled core runtime test path. The runtime project has
@@ -17,7 +85,7 @@ internal, provider-neutral migration coordinator using the pinned framework's
 open connection and trusted, pre-materialized migration descriptions. It is not a
 SQLite provider, actual actor schema, public API, dependency setup, file opener or
 durable acknowledgement. No dependency, project, lockfile, workflow or trusted
-verifier change is included. The future provider setup under #10 must pin its
+verifier change was included. The later provider setup under #10 needed to pin its
 managed SQLite provider and transitive native/RID assets, enable exact source and
 test paths and locked offline verification, demonstrate a real failing test is
 rejected, and preserve core/compiler-only paths. Real SQLite schema execution,

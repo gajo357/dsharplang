@@ -58,12 +58,16 @@ No production dispatcher or application host is implemented. #269 adds the
 bounded generated Invoke entry described below. See the
 [runtime seam plan](implementation/issue-267-plan.md).
 
-#60 adds an internal schema-version migration coordinator over a caller-supplied
-connection, tested with a deterministic fake provider. It is not a SQLite schema
-or provider and does not establish physical rollback, persistence or restart.
+#60 first added an internal schema-version migration coordinator over a
+caller-supplied connection, tested with a deterministic fake provider. That
+coordinator alone does not establish physical rollback, persistence or restart.
 The optional #10 SQLite setup exercises that coordinator against a real file,
 including transaction rollback and reopening. It does not implement an actor
 schema or establish crash durability.
+The next #60 slice adds an internal version-one SQLite identity schema for
+submissions, invocations, attempts, publications and delivery identities. Its
+real-provider tests cover relational constraints and reopening. The tables alone
+do not provide atomic admission, immutable acceptance or crash recovery.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
