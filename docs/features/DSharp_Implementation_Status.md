@@ -58,6 +58,10 @@ No production dispatcher or application host is implemented. #269 adds the
 bounded generated Invoke entry described below. See the
 [runtime seam plan](implementation/issue-267-plan.md).
 
+#60 adds an internal schema-version migration coordinator over a caller-supplied
+connection, tested with a deterministic fake provider. It is not a SQLite schema
+or provider and does not establish physical rollback, persistence or restart.
+
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
 This status describes tested implementation, not the full syntax draft.
