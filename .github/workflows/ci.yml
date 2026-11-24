@@ -92,3 +92,67 @@ jobs:
           path: ${{ runner.temp }}/runtime-pilot-reports/
           if-no-files-found: error
           retention-days: 14
+
+  sqlite-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: trusted/global.json
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: candidate/global.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Prepare SQLite verifier dependencies
+        run: |
+          set -euo pipefail
+          bash trusted/.github/ai/bootstrap.sh
+          bash candidate/.github/ai/bootstrap.sh
+      - name: Verify SQLite candidate with the base harness
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -f trusted/.github/ai/verify-sqlite.mjs && ! -L trusted/.github/ai/verify-sqlite.mjs ]]; then
+            node trusted/.github/ai/verify-sqlite.mjs "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/sqlite-base-reports"
+          elif [[ "$BASE_SHA" == "e804b222f0c83cfd834a4344eea0e78056136395" && ! -e trusted/.github/ai/verify-sqlite.mjs && ! -L trusted/.github/ai/verify-sqlite.mjs && ! -e trusted/src/DSharp.Runtime.Sqlite && ! -L trusted/src/DSharp.Runtime.Sqlite && ! -e trusted/tests/DSharp.Runtime.Sqlite.Tests && ! -L trusted/tests/DSharp.Runtime.Sqlite.Tests && ! -e trusted/tests/sqlite-features && ! -L trusted/tests/sqlite-features ]]; then
+            echo '::notice::Base revision predates SQLite setup; the proposed verifier and pilot are required below.'
+          else
+            echo '::error::Base SQLite verification setup is incomplete or unsafe.'
+            exit 1
+          fi
+      - name: Verify SQLite with the proposed harness
+        run: |
+          set -euo pipefail
+          test -f candidate/.github/ai/verify-sqlite.mjs && test ! -L candidate/.github/ai/verify-sqlite.mjs
+          node candidate/.github/ai/verify-sqlite.mjs "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/sqlite-candidate-reports"
+      - name: Prove SQLite verifier rejects a failing feature
+        run: |
+          set -euo pipefail
+          test -f candidate/.github/ai/sqlite-pilot.mjs && test ! -L candidate/.github/ai/sqlite-pilot.mjs
+          node candidate/.github/ai/sqlite-pilot.mjs "$RUNNER_TEMP/sqlite-pilot-reports"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sqlite-verification
+          path: |
+            ${{ runner.temp }}/sqlite-base-reports/
+            ${{ runner.temp }}/sqlite-candidate-reports/
+            ${{ runner.temp }}/sqlite-pilot-reports/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>DSS</AssemblyName>
+    <OutputPath>../../artifacts/s/bin/$(Configuration)/</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[17.14.1]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" PrivateAssets="all" />
+    <ProjectReference Include="../../src/DSharp.Runtime.Sqlite/DSharp.Runtime.Sqlite.csproj" />
+    <Compile Include="../sqlite-features/**/*.cs" Condition="'$(DSharpTestGroup)' == 'SqliteFeatures'" />
+    <Compile Remove="SqliteSetupTests.cs" Condition="'$(DSharpTestGroup)' == 'SqliteFeatures'" />
+  </ItemGroup>
+</Project>

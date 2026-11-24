@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="[11.0.0]" />
+    <ProjectReference Include="../DSharp.Runtime/DSharp.Runtime.csproj" />
+  </ItemGroup>
+</Project>

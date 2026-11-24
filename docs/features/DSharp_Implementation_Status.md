@@ -61,6 +61,9 @@ bounded generated Invoke entry described below. See the
 #60 adds an internal schema-version migration coordinator over a caller-supplied
 connection, tested with a deterministic fake provider. It is not a SQLite schema
 or provider and does not establish physical rollback, persistence or restart.
+The optional #10 SQLite setup exercises that coordinator against a real file,
+including transaction rollback and reopening. It does not implement an actor
+schema or establish crash durability.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
