@@ -531,3 +531,50 @@ baseline and 406 feature tests in a private short-path snapshot matching the
 final test files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte
 feature report. The local isolated verifier could not pull its pinned MCR image
 (`Forbidden`); hosted verification is still required for that path.
+
+## Twelfth slice: reusable cancellation outcome conformance
+
+Base: `85a64af272607fd03008f6f840f541d6b20cbf8d`, with #9/#14 and the
+prior #59 slices merged. Continue the existing issue branch. Add a test-local
+provider-neutral outcome adapter and shared scenarios in
+`tests/runtime-features/OutcomeConformanceHarness.cs`, plus the volatile adapter
+and negative-control facts in `tests/runtime-features/OutcomeConformanceTests.cs`.
+Update this plan and the implementation status. Preserve existing tests,
+production APIs, dependencies, trusted verifier and D# syntax.
+
+Using fresh reference stores and controlled time, verify a cancellation requested
+before an owned normal exit keeps the invocation cancelled, retains a copied
+observed exit, never delivers it as the terminal completion, preserves accepted
+identity, and remains idempotent. An opaque business-error-like payload is still
+a normal completion, with no codec interpretation. Check the corresponding owned
+reported-fault exit and supplied unverified origin, terminal-first completion and
+fault outcomes, and exact expiry after cancellation without inventing an exit or
+retry. Inspect retained snapshots and bytes to exercise copy boundaries.
+
+Run the same cancellation/normal-exit scenario through a deliberately broken
+test-only adapter that routes the cancellation to a real decoy invocation while
+forwarding the target's completion to the real store. Require a named invariant
+to catch the target's forbidden completed state and independently inspect both
+the actual target completion and the decoy cancellation. No fabricated status or
+unrelated failure counts as detection. Shared scenarios test declared capabilities
+and unsupported guarantees. Existing shared tests retain bounded concurrency
+coverage; this slice does not claim real provider, real-clock, delivery, durable,
+authorization, fault normalization or cancellation-signal behavior. #59 remains
+open.
+
+Acceptance-to-test map: owned exit versus cancellation checks winner ordering,
+observed exit and copied bytes; reported faults and origin check opaque retention;
+expiry checks cancellation without a fabricated exit or retry; the real decoy
+negative control demonstrates that the reusable scenario catches misrouted
+cancellation. Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`, recording actual results and isolated-image limits.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 65 feature tests,
+including the expected misrouted-cancellation violation and independently
+observed target and decoy states. Compiler verification passed 18 baseline and
+406 feature tests in a private short-path snapshot matching the final outcome
+test files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
+report. The local isolated verifier could not pull its pinned MCR image
+(`Forbidden`); hosted verification is still required for that path.
