@@ -1,5 +1,49 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Ninth slice: read preserved pinned work after reopen
+
+Base `c45734fe0dc92be9cfadf6b6fe3b42e51fb18d4b` contains the application-bound
+v4 schema. Continue the #60 branch and add an internal read-only SQLite
+projection of saved invocation identities and their original encoded inputs, with
+the requested and selected actor IDs, target key, operation and optional awaited
+parent/attempt. Targeted invocations resolve their submission directly; delivery
+invocations resolve it through their saved publication. Open the existing bound
+file for the specified application and read one caller-specified invocation through
+a parameterized, application-scoped query. Materialize immutable copies before returning, keeping the host responsible
+for file provenance and using only stored IDs, never reselecting an implementation.
+This is a schema/reopen substrate, not an availability decision, execution,
+admission, claim, codec, authorization, or complete RuntimeStore provider.
+
+Add `src/DSharp.Runtime.Sqlite/ActorSqlitePinnedWorkReader.cs` and a real-provider
+test in `tests/sqlite-features/ActorSqlitePinnedWorkReaderTests.cs`. Verify that
+targeted and publication-derived rows retain their distinct identities, encoded
+contracts/payload/options, target keys and ancestry after all original connections
+close; a different or missing application/file must be rejected, a zero-delivery
+publication must not create work, and callers cannot mutate later reads by changing
+returned bytes. Keep #60 open until its full acceptance, including actual host
+availability reporting, is proven; #61–#64 own operational work.
+
+Run bootstrap, the full verifier, SQLite, runtime and compiler scripts, and the
+base-owned SQLite verifier when its pinned image is available. Keep trusted tests,
+verification and the established application-bound opener unchanged. Record exact
+results and limitations in this plan and implementation status.
+
+### Ninth-slice verification
+
+- Bootstrap and documentation checks (135 files, 308 local links) passed, as
+  did all 46 automation tests.
+- The real SQLite suite passed 1 baseline and 49 feature tests; runtime passed
+  2 baseline and 96 feature tests. The new SQLite test covers bound reopen,
+  original targeted and publication data, null/empty target distinction,
+  case-sensitive wrong-application rejection, absent files and defensive copies.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and the unchanged base-owned isolated SQLite
+  verifier could not complete locally because the pinned MCR image pull returned
+  `Forbidden`. Hosted exact-head isolated checks, including the SQLite named
+  failure/clean pilot, remain required before merge. This slice does not prove
+  actual availability reporting, execution or crash durability; #60 stays open.
+
 ## Eighth slice: atomic fresh/older-file upgrade and binding
 
 Base `423e75b7222fcde77414a5474807f17faac97df5` includes explicit v1–v3
