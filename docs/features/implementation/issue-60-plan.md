@@ -1,5 +1,78 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Seventh slice: atomic per-file application binding
+
+Base `b9afd21458d0e6dbf5a324e66ee1f08b5d13bc46` includes the v1–v3 schemas
+and internal transaction helper. Continue the existing #60 branch. Add an
+explicit, internal version-four binding for an already-version-three file in
+`src/DSharp.Runtime.Sqlite/ActorSqliteApplicationBinding.cs`, with an internal
+bound-file opener in `ActorSqliteDatabase.cs` and additive real-provider tests in
+`tests/sqlite-features/ActorSqliteApplicationBindingTests.cs`. Existing v1–v3
+openers and trusted tests retain their exact behavior and reject newer files.
+Earlier versions remain upgradeable to v3 through their existing explicit
+path; binding does not claim their upgrade and v4 binding are one transaction.
+
+On a caller-owned, exclusively used open v3 connection with foreign keys enabled,
+DELETE journal and FULL synchronous settings, take an immediate write transaction.
+Recheck these settings after acquiring the lock, then validate the schema version, every existing
+actor-table application identity and foreign-key integrity before installing a
+singleton application binding and fixed, trusted insert/update guards on the
+actor tables. The binding is immutable through ordinary row operations. Advance
+`user_version` to four and commit as one transaction; any mismatch or failure
+rolls back the binding, guards and version. Rebinding the same application is
+idempotent; a different or mixed application is rejected. A bound-file opener
+validates the application ID before opening an existing file, uses the same
+connection settings as the existing opener, and rejects missing, mismatched or
+unsupported bindings without creating a new file. Caller IDs are parameterized
+data, compared case-sensitively. This opt-in slice rejects IDs containing NUL or
+unpaired UTF-16 rather than risk SQLite TEXT changing their identity; it does not
+claim to support every string accepted by the in-memory reference. Validation
+checks stored text and cannot reconstruct an identity already changed before it
+was stored; the host remains responsible for existing-file provenance. Bound
+reopen takes an immediate lock while it scans stored actor IDs, guards and foreign
+keys, so it can contend with writers. Preserve errors across rollback/disposal and
+treat commit exceptions as uncertain.
+
+Guards apply even if a later connection disables foreign keys. They protect
+ordinary row changes, not malicious changes to the trusted schema, triggers or
+filesystem. The host still selects local paths and owns process-level policy;
+this is not admission, host registration, cross-host coordination, power-loss
+recovery or durable acknowledgement. #60 stays open until its full acceptance,
+including actual unavailable/incompatible implementation reporting, is proven;
+#61–#64 retain operational behavior.
+
+Real SQLite tests cover matching populated v3 binding and v4 reopen, case-sensitive
+mismatch and mixed-application rejection without a version/data change, an empty
+v3 file, idempotent rebinding, unsupported versions and missing paths, and
+contention between two first binders. Exercise wrong-application inserts and
+updates with foreign keys disabled, singleton replacement/update/delete attempts,
+preserved prior v1/v2/v3 records, rejection of unsupported connection settings,
+and a deliberate v4 DDL conflict proving rollback.
+Keep all previous tests, version targets and the trusted verifier unchanged.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Seventh-slice verification
+
+Bootstrap, documentation (135 files and 308 local links) and all 46 automation
+tests passed. Local real-provider SQLite verification passed one baseline and
+41 feature tests, including mixed-ID rejection, missing guards, unsupported
+settings, all actor-table row guards with foreign keys disabled, and transactional
+DDL rollback. The competing-binder test passed five additional runs. Runtime
+verification passed two baseline and 93 features from a snapshot matching runtime
+source and tests. Compiler verification passed 18 baseline and 406 feature tests
+from a short-path snapshot matching the final SQLite source and tests; its
+506,836-byte feature TRX passed the unchanged size guard.
+
+The full isolated verifier and base-owned SQLite verifier could not pull the
+pinned MCR image locally (`Forbidden`), so neither completed offline tests here.
+Hosted exact-head verification must provide that evidence; prior tests and the
+trusted verifier remain unchanged. These tests do not establish power-loss
+durability, host path selection or protection against trusted-schema tampering.
+
 ## Sixth slice: atomic SQLite write batches
 
 Base `c45d612c037bab68ab40c13ae96b39f03ff05c66` contains the versioned
