@@ -94,6 +94,10 @@ against deliberate changes to the trusted schema.
 An explicit path now initializes a fresh file or upgrades a supported v1/v2
 file and binds it in the same SQLite transaction. Tests cover preserved records,
 mismatch rejection, competing binders and rollback of an intermediate upgrade.
+An internal bound-file reader retrieves one invocation's stored requested and
+selected IDs, opaque input, target and unverified ancestry after reopen, including
+publication-derived work. It does not select implementations, decide availability,
+claim work or execute actors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
