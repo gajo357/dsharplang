@@ -28,14 +28,16 @@ internal sealed class TargetedCompletion
     public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
 }
 
-// Caller-reported opaque data; this is neither a normalized diagnostic nor
-// evidence of an actor fault origin. The caller selects any retry policy.
+// Caller-reported opaque data and, optionally, caller-normalized observations.
+// The store does not normalize, redact, verify origins or select retry policy.
 internal sealed class TargetedFault
 {
     private readonly byte[] payload;
     private readonly byte[] contractMetadata;
 
-    public TargetedFault(byte[] payload, byte[] contractMetadata)
+    public TargetedFault(byte[] payload, byte[] contractMetadata) : this(payload, contractMetadata, null) { }
+
+    public TargetedFault(byte[] payload, byte[] contractMetadata, NormalizedFaultReport? report = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentNullException.ThrowIfNull(contractMetadata);
@@ -43,10 +45,12 @@ internal sealed class TargetedFault
             throw new ArgumentException("Fault contract metadata must be supplied.", nameof(contractMetadata));
         this.payload = (byte[])payload.Clone();
         this.contractMetadata = (byte[])contractMetadata.Clone();
+        Report = report;
     }
 
     public byte[] Payload => (byte[])payload.Clone();
     public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
+    public NormalizedFaultReport? Report { get; }
 }
 
 // Origin is optional caller-reported data: it is neither inferred nor validated.
@@ -57,8 +61,11 @@ internal sealed class ReportedTerminalFault
         ArgumentNullException.ThrowIfNull(fault);
         if (originInvocationId == Guid.Empty)
             throw new ArgumentException("A supplied origin must be nonempty.", nameof(originInvocationId));
+        if (originInvocationId is { } explicitOrigin && fault.Report?.OriginInvocationId is { } reportOrigin &&
+            explicitOrigin != reportOrigin)
+            throw new ArgumentException("Explicit and report origins must match when both are supplied.", nameof(originInvocationId));
         Fault = fault;
-        OriginInvocationId = originInvocationId;
+        OriginInvocationId = originInvocationId ?? fault.Report?.OriginInvocationId;
     }
 
     public TargetedFault Fault { get; }

@@ -15,7 +15,8 @@ internal enum RuntimeStoreGuarantees
     RestartSafe = 1 << 6,
     MultiHost = 1 << 7,
     RealTimeClock = 1 << 8,
-    BlockedPinnedImplementation = 1 << 9
+    BlockedPinnedImplementation = 1 << 9,
+    StructuredFaultReports = 1 << 10
 }
 
 internal readonly record struct RuntimeStoreCapabilities(RuntimeStoreGuarantees Guarantees);
@@ -42,6 +43,10 @@ internal readonly record struct RuntimeStoreCapabilities(RuntimeStoreGuarantees 
 /// write; a cancellation request that wins precedes later fenced exit/recovery,
 /// while an earlier terminal outcome remains terminal. These guarantees never
 /// imply that stale external code has stopped or its effects were rolled back.
+/// The structured-fault profile requires <see cref="RuntimeStoreGuarantees.StructuredFaultReports"/>
+/// and a caller-normalized report on each fault submission. Opaque-only faults
+/// remain a legacy compatibility path, not evidence of that profile. The store
+/// does not normalize or redact observations or authenticate their origins.
 ///
 /// Host validation, authorization, selection, actor execution and other external
 /// work must not run inside a provider transaction. Enumerating caller-provided
@@ -90,7 +95,7 @@ internal sealed partial class VolatileTargetedStore : IRuntimeStore
 {
     private const RuntimeStoreGuarantees SupportedContractGuarantees =
         RuntimeStoreGuarantees.ByteExactComparison | RuntimeStoreGuarantees.InProcessAtomicity | RuntimeStoreGuarantees.SimulatedTime |
-        RuntimeStoreGuarantees.BlockedPinnedImplementation;
+        RuntimeStoreGuarantees.BlockedPinnedImplementation | RuntimeStoreGuarantees.StructuredFaultReports;
     private const RuntimeStoreGuarantees KnownContractGuarantees = SupportedContractGuarantees |
         RuntimeStoreGuarantees.Durable | RuntimeStoreGuarantees.CanonicalSemanticEquality |
         RuntimeStoreGuarantees.AtomicCompletionFollowUps | RuntimeStoreGuarantees.RestartSafe |

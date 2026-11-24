@@ -34,17 +34,25 @@ internal enum TargetedAcceptKind
 /// canonical semantic equality; callers supply the complete comparable request
 /// representation, including encoding and schema identity in contract metadata
 /// and all acceptance-affecting options. Encoding, authorization and host
-/// validation remain separate.
+/// validation remain separate. The optional public target key is caller-supplied
+/// opaque data; its presence does not define a codec or an ordering policy.
 /// </summary>
 internal sealed class TargetedRequest
 {
     private readonly byte[] payload;
     private readonly byte[] contractMetadata;
     private readonly byte[] behaviorOptions;
+    private readonly byte[]? publicTargetKey;
 
     public TargetedRequest(string applicationId, string submissionId, TargetedOperation operation,
         string requestedTarget, byte[] payload, byte[] contractMetadata, byte[] behaviorOptions,
         string? parentInvocationId = null, string? parentAttemptId = null)
+        : this(applicationId, submissionId, operation, requestedTarget, payload, contractMetadata,
+            behaviorOptions, parentInvocationId, parentAttemptId, null) { }
+
+    public TargetedRequest(string applicationId, string submissionId, TargetedOperation operation,
+        string requestedTarget, byte[] payload, byte[] contractMetadata, byte[] behaviorOptions,
+        string? parentInvocationId, string? parentAttemptId, byte[]? publicTargetKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(submissionId);
@@ -74,6 +82,7 @@ internal sealed class TargetedRequest
         this.payload = (byte[])payload.Clone();
         this.contractMetadata = (byte[])contractMetadata.Clone();
         this.behaviorOptions = (byte[])behaviorOptions.Clone();
+        this.publicTargetKey = publicTargetKey is null ? null : (byte[])publicTargetKey.Clone();
     }
 
     public string ApplicationId { get; }
@@ -85,6 +94,7 @@ internal sealed class TargetedRequest
     public byte[] Payload => (byte[])payload.Clone();
     public byte[] ContractMetadata => (byte[])contractMetadata.Clone();
     public byte[] BehaviorOptions => (byte[])behaviorOptions.Clone();
+    public byte[]? PublicTargetKey => publicTargetKey is null ? null : (byte[])publicTargetKey.Clone();
 
     internal bool SameRequest(TargetedRequest other) =>
         string.Equals(ApplicationId, other.ApplicationId, StringComparison.Ordinal) &&
@@ -93,6 +103,8 @@ internal sealed class TargetedRequest
         string.Equals(RequestedTarget, other.RequestedTarget, StringComparison.Ordinal) &&
         string.Equals(ParentInvocationId, other.ParentInvocationId, StringComparison.Ordinal) &&
         string.Equals(ParentAttemptId, other.ParentAttemptId, StringComparison.Ordinal) &&
+        ((publicTargetKey is null && other.publicTargetKey is null) ||
+         (publicTargetKey is not null && other.publicTargetKey is not null && publicTargetKey.AsSpan().SequenceEqual(other.publicTargetKey))) &&
         payload.AsSpan().SequenceEqual(other.payload) &&
         contractMetadata.AsSpan().SequenceEqual(other.contractMetadata) &&
         behaviorOptions.AsSpan().SequenceEqual(other.behaviorOptions);

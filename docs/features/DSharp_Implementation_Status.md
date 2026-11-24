@@ -9,6 +9,8 @@ tests exercise the interface using recording fakes. #59 adds a provisional,
 single-process, volatile reference for targeted and publication identity and
 lookup: tests cover byte-exact retries and conflicts, pinned selections and frozen
 publication intents, and concurrent admission in the shared submission namespace.
+Targeted requests also retain an optional copied opaque public-target key; this
+does not define its encoding or implement ordering policy.
 The reference also exercises a simulated-clock targeted claim, lease renewal and
 explicit terminal lease-expiry failure with fenced owners, and stores copied
 opaque normal-completion bytes only for a current unexpired owner. An explicitly
@@ -18,6 +20,11 @@ caller can also select retry after an exactly observed expired lease; a tagged
 ordered history distinguishes lease loss from a reported fault. A current
 unexpired owner can explicitly record an opaque terminal reported fault and an
 optional caller-supplied, unverified origin invocation ID. The volatile reference
+can retain an optional caller-normalized structured fault report, separating a
+primary observation from ordered cleanup observations and preserving a supplied
+origin through fault retry, terminal and cancellation-inspection paths. It does not
+normalize or redact diagnostics, verify origins or propagate actor fault chains.
+The volatile reference
 also records cancellation winner ordering and separately retains a still-fenced
 attempt's observed normal or fault exit; it does not signal or stop execution.
 Test-side reusable scenarios exercise this in-process subset and detect a
