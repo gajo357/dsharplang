@@ -37,6 +37,10 @@ An internal provisional RuntimeStore interface exposes the tested admission,
 ownership and outcome operations with explicit capability validation. Reusable
 interface-driven scenarios exercise the volatile reference and detect a real
 stale-deadline recovery; they do not certify a durable provider or finalize its API.
+The volatile reference can retain eligible work as explicitly blocked when a
+host reports its pinned implementation unavailable or incompatible. Versioned
+observations and block IDs fence stale transitions; cancellation remains terminal.
+The reference does not itself assess compatibility or select a replacement.
 An explicit reference-only failure point and reusable scenarios exercise rollback
 after publication ID reservation, and simulate a lost response after committing
 the full frozen set; these are not crash or durable-transaction evidence.

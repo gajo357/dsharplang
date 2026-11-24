@@ -14,7 +14,8 @@ internal enum RuntimeStoreGuarantees
     AtomicCompletionFollowUps = 1 << 5,
     RestartSafe = 1 << 6,
     MultiHost = 1 << 7,
-    RealTimeClock = 1 << 8
+    RealTimeClock = 1 << 8,
+    BlockedPinnedImplementation = 1 << 9
 }
 
 internal readonly record struct RuntimeStoreCapabilities(RuntimeStoreGuarantees Guarantees);
@@ -65,6 +66,14 @@ internal interface IRuntimeStore
         string parentSubmissionId, Guid parentInvocationId, Guid parentAttemptId, Guid parentToken);
 
     TargetedOwnership? GetOwnership(string applicationId, string submissionId, Guid invocationId);
+    // Providers that do not advertise BlockedPinnedImplementation must reject
+    // these optional operations rather than silently ignoring a block request.
+    AttemptTransitionResult BlockEligible(string applicationId, string submissionId, Guid invocationId,
+        long expectedEligibilityVersion, string expectedSelectedImplementation, Guid blockId, BlockReason reason) =>
+        throw new NotSupportedException("Blocked pinned implementations are not supported.");
+    AttemptTransitionResult Unblock(string applicationId, string submissionId, Guid invocationId,
+        Guid expectedBlockId, string expectedSelectedImplementation) =>
+        throw new NotSupportedException("Blocked pinned implementations are not supported.");
     AttemptTransitionResult Claim(string applicationId, string submissionId, Guid invocationId, Guid attemptId, Guid token, TimeSpan duration);
     AttemptTransitionResult Renew(string applicationId, string submissionId, Guid invocationId, Guid attemptId, Guid token, TimeSpan duration);
     AttemptTransitionResult Complete(string applicationId, string submissionId, Guid invocationId, Guid attemptId, Guid token, TargetedCompletion completion);
@@ -80,7 +89,8 @@ internal interface IRuntimeStore
 internal sealed partial class VolatileTargetedStore : IRuntimeStore
 {
     private const RuntimeStoreGuarantees SupportedContractGuarantees =
-        RuntimeStoreGuarantees.ByteExactComparison | RuntimeStoreGuarantees.InProcessAtomicity | RuntimeStoreGuarantees.SimulatedTime;
+        RuntimeStoreGuarantees.ByteExactComparison | RuntimeStoreGuarantees.InProcessAtomicity | RuntimeStoreGuarantees.SimulatedTime |
+        RuntimeStoreGuarantees.BlockedPinnedImplementation;
     private const RuntimeStoreGuarantees KnownContractGuarantees = SupportedContractGuarantees |
         RuntimeStoreGuarantees.Durable | RuntimeStoreGuarantees.CanonicalSemanticEquality |
         RuntimeStoreGuarantees.AtomicCompletionFollowUps | RuntimeStoreGuarantees.RestartSafe |
