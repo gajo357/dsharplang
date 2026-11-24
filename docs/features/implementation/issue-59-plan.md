@@ -485,3 +485,49 @@ feature tests in a private short-path snapshot matching the final runtime source
 and tests. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
 report. The local isolated verifier could not pull its pinned MCR image
 (`Forbidden`); hosted verification is still required for that path.
+
+## Eleventh slice: reusable lease and retry conformance
+
+Base: `e904d33a57879bcbb0c51a47dfe1aa45d9654e5e`, with #9/#14 and prior
+#59 slices merged. Continue the existing issue branch. Add the test-only
+provider-neutral adapter and shared scenarios in
+`tests/runtime-features/LeaseRetryConformanceHarness.cs` and the reference and
+negative-control facts in `tests/runtime-features/LeaseRetryConformanceTests.cs`;
+update this plan and status.
+Preserve old tests, dependencies, verifier, production provider ABI and D# syntax.
+
+Use fresh stores and controlled time. Shared scenarios must check an old observed
+deadline after renewal, both before and after the renewed deadline; delayed retry
+eligibility just before and at its boundary; fresh attempt/token identity, pinned
+invocation and selection, and immutable retained lease-loss history. Bounded
+concurrent recovery/claim and renewal/completion races must allow all coherent
+serial outcomes rather than require a particular winner. Explicitly describe the
+reference subset and reject unsupported guarantees instead of certifying them.
+
+Run the same stale-deadline scenario against the real adapter and a deliberately
+broken test-only decorator that substitutes the current deadline into the real
+store's recovery call. After the renewed deadline has expired this causes a real
+forbidden transition to eligible. Assert the specific stale-observation invariant
+and independently inspect the backing state and lease-loss history; do not count
+an unrelated exception or fabricated status as detection.
+
+Acceptance-to-test map: old versus renewed observations and exact expiry exercise
+fencing; delayed eligibility and fresh IDs exercise retry state; copied tagged
+history and pinned selection exercise preservation; bounded races exercise
+atomicity; the negative control proves the same scenario detects a real stale
+recovery. Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual results and isolated-image limits.
+
+These tests cover controlled single-process reference behavior, not real provider
+clock changes, configured retry policy, restart, durability, authorization,
+multi-host fencing or external-effect guarantees. #59 remains open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 62 feature tests,
+including the expected stale-observation violation and independently observed
+forbidden recovery in the negative control. Compiler verification passed 18
+baseline and 406 feature tests in a private short-path snapshot matching the
+final test files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte
+feature report. The local isolated verifier could not pull its pinned MCR image
+(`Forbidden`); hosted verification is still required for that path.
