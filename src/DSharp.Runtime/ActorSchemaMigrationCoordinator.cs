@@ -72,21 +72,7 @@ internal sealed class ActorSchemaMigrationCoordinator
         Exception? failure = null;
         try
         {
-            var storedVersion = ReadNonnegativeInteger(connection, transaction, ReadVersionSql, "schema version");
-            if (storedVersion > migrations.Count)
-                throw new InvalidOperationException("The stored schema version is newer than this coordinator supports.");
-            if (storedVersion == 0 && ReadNonnegativeInteger(connection, transaction, CountUserObjectsSql, "schema object count") != 0)
-                throw new InvalidOperationException("A nonempty unversioned database cannot be initialized.");
-
-            if (storedVersion < migrations.Count)
-            {
-                for (var index = (int)storedVersion; index < migrations.Count; index++)
-                    foreach (var statement in migrations[index].Statements)
-                        Execute(connection, transaction, statement, command => command.ExecuteNonQuery());
-
-                var finalVersion = migrations.Count.ToString(CultureInfo.InvariantCulture);
-                Execute(connection, transaction, $"PRAGMA user_version = {finalVersion}", command => command.ExecuteNonQuery());
-            }
+            ApplyWithinTransaction(connection, transaction);
             transaction.Commit();
         }
         catch (Exception error)
@@ -107,6 +93,35 @@ internal sealed class ActorSchemaMigrationCoordinator
         }
         if (failure is not null)
             ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    // The caller owns this live transaction, including commit, rollback and
+    // disposal. This permits a provider to include additional trusted work in
+    // the same atomic boundary without nesting or committing early.
+    internal void ApplyWithinTransaction(DbConnection connection, DbTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (connection.State != ConnectionState.Open)
+            throw new InvalidOperationException("The caller must supply an open connection.");
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new InvalidOperationException("The transaction must belong to the supplied open connection.");
+
+        var storedVersion = ReadNonnegativeInteger(connection, transaction, ReadVersionSql, "schema version");
+        if (storedVersion > migrations.Count)
+            throw new InvalidOperationException("The stored schema version is newer than this coordinator supports.");
+        if (storedVersion == 0 && ReadNonnegativeInteger(connection, transaction, CountUserObjectsSql, "schema object count") != 0)
+            throw new InvalidOperationException("A nonempty unversioned database cannot be initialized.");
+
+        if (storedVersion < migrations.Count)
+        {
+            for (var index = (int)storedVersion; index < migrations.Count; index++)
+                foreach (var statement in migrations[index].Statements)
+                    Execute(connection, transaction, statement, command => command.ExecuteNonQuery());
+
+            var finalVersion = migrations.Count.ToString(CultureInfo.InvariantCulture);
+            Execute(connection, transaction, $"PRAGMA user_version = {finalVersion}", command => command.ExecuteNonQuery());
+        }
     }
 
     private static long ReadNonnegativeInteger(DbConnection connection, DbTransaction transaction, string sql, string description)
