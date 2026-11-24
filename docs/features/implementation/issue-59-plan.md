@@ -628,3 +628,59 @@ runtime source; that snapshot predates the test-only await correction, which
 was covered by the final runtime run. The unchanged 512,000-byte TRX guard
 accepted the 506,836-byte feature report. The local isolated verifier could not
 pull its pinned MCR image (`Forbidden`); hosted verification is still required.
+
+## Fourteenth slice: provisional provider contract and conformance entry point
+
+Base: `6514a031240ad458b1b238e1403638b5894baca1`, with #9/#14 and the
+prior #59 slices merged. Continue the existing issue branch. Add an internal,
+provisional provider-neutral operation contract and capability validation in
+`src/DSharp.Runtime/RuntimeStoreContract.cs`; adapt the existing volatile store
+without changing its prior concrete operations or tests. Add a new reusable
+interface-driven scenario harness and volatile reference/negative-control tests
+under `tests/runtime-features`, and update this plan and implementation status.
+No public API, new dependency, old-test migration or verifier edit is authorized.
+
+Expose the existing opaque request and snapshot types and atomic targeted and
+publication probe/admission, parent-fenced Invoke, ownership, renewal, outcome,
+recovery and cancellation operations through the internal contract. Keep the
+legacy raw acceptance path explicitly named unvalidated: actor-parent validity
+and host authorization cannot be inferred from it. Document transaction boundaries,
+request/response snapshot ownership, lookup before reselection, fenced writes and
+cancellation winner semantics, with no external work held across a transaction.
+Expose an immutable capability descriptor and fail-closed known-bit requirement
+validation. The volatile reference declares byte-exact comparison, in-process
+atomic operations and controlled simulated time only; it rejects durability,
+canonical semantic equality, atomic completion/follow-ups, restart/multi-host and
+real-clock guarantees. Clock control and failure injection remain test fixtures,
+not production provider operations. Success on this reference is never a durable
+acknowledgement; a future durable provider may acknowledge only after its declared
+commit. This internal synchronous shape is provisional, not the finalized provider
+or D# protocol.
+
+Run reusable scenarios directly against the interface returned by a factory, with
+separately controlled reference clock: shared namespace and pinned retries, frozen
+publication identity/intents, parent-fenced admission, claims/renewal/stale-token
+and expiry boundaries, cancellation/outcome bookkeeping and unsupported capability
+requests. Use fresh stores and bounded concurrency. A test-only interface decorator
+must cause a real forbidden stale-observation recovery in the backing store; the
+same scenario must catch its specific invariant and independent inspection must
+confirm the wrong eligible state and retained history. Existing harnesses remain
+unchanged. Explicitly record which guarantees the suite does not certify and leave
+#59 open unless every acceptance criterion is actually proven. SQLite/restart,
+codec and compatibility policy, fault-chain normalization and atomic follow-ups
+remain with their respective owners.
+
+Map each surface and advertised guarantee to the reusable tests. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual results and isolated-image limits.
+
+Verification: bootstrap, documentation and all 31 automation tests passed.
+Runtime verification passed 2 baseline and 71 feature tests, including the
+interface-driven scenarios and the expected real stale-recovery negative control.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching the final contract source; the snapshot predates the
+final scenario files, which were covered by the final runtime run. The unchanged
+512,000-byte TRX guard accepted the 506,836-byte feature report. The local
+isolated verifier could not pull its pinned MCR image (`Forbidden`); hosted
+verification is still required for that path.
