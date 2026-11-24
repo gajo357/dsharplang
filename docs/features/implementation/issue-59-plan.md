@@ -731,3 +731,94 @@ tests in a private short-path snapshot matching the final changed runtime source
 and feature test. The unchanged 512,000-byte TRX guard accepted the 506,836-byte
 feature report. The local isolated verifier could not pull its pinned MCR image
 (`Forbidden`); hosted verification is still required for that path.
+
+## Sixteenth slice: structured fault record retention
+
+Base: `405663965096616e21ffc1e62b059391db88eefa`, with #9/#14 and prior
+#59 slices merged. Continue the existing branch. Extend the internal opaque fault
+value with an optional immutable caller-normalized report in new runtime source;
+adapt the provisional capability declaration and existing terminal-fault value
+only as needed for consistent origin retention. Add new runtime feature tests,
+and update this plan and status. Existing opaque-only operations/tests remain
+compatible; no public fault syntax, codec, dependency or verifier is selected.
+
+Carry an optional opaque public-target routing key as an explicit copied field in
+the targeted request, preserving the difference between absent and present-empty;
+include it in request identity/conflict comparisons and retain it through attempts.
+No key encoding, scheduler, ordering policy or public syntax is selected.
+
+The report contains a caller-supplied optional primary observation, an ordered
+immutable list of cleanup observations, and an optional nonempty original
+invocation ID. At least one observation is required. Each observation has a
+nonblank caller-supplied classification and copied opaque diagnostic bytes and
+metadata. Construct and validate/copy the report outside the store gate; the store
+never reflects on CLR exceptions or runs caller enumeration under a transaction.
+Preserve supplied origin and distinguish unknown origin; reject conflicting
+explicit terminal versus report origins. A cleanup-only report is a fault, while
+cleanup observations never replace an existing primary. Integrate this immutable
+value into the existing fenced terminal, retry-history and cancellation-observed
+fault paths without changing their winner, ownership, expiry or retry behavior.
+Expose an explicit optional capability for storing structured reports; do not
+claim the store has normalized, redacted, authenticated or propagated the caller's
+input. Host normalization/authorization, actual cleanup execution, fault-chain
+propagation (#243), codec and durable/restart proof remain with their owners.
+
+Acceptance-to-test map: absent, empty and populated routing keys, copied bytes,
+conflicts and retention across retry; primary plus multiple cleanup and cleanup-only reports,
+missing/invalid components/origin and conflict rejection; copied input/output
+buffers and retained snapshots; same invocation/selection and exact report/origin
+through reschedule and fresh retry; terminal and cancellation-winner inspection;
+wrong/stale/expired owners and bounded competing outcomes. Exercise operations
+through the provisional interface and explicitly state legacy opaque-only behavior.
+Add a reusable structured-fault provider profile that requires the capability,
+checks report/origin retention through terminal, retry and cancellation paths,
+and catches a real report-stripping fault adapter by inspecting backing state.
+The legacy opaque path remains for compatibility; a caller seeking this profile
+must provide a structured report and require the corresponding capability.
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual outcomes and image limits. Close #59 only when
+all four actual issue acceptance criteria are demonstrated and the draft merges;
+SQLite implementation is explicitly downstream (#60–#64), not a prerequisite.
+
+### Issue #59 acceptance evidence and closure boundary
+
+1. Atomic contract and distinct invocation/attempt identities: the provisional
+   `RuntimeStoreContract.cs` states transaction, capability and acknowledgement
+   boundaries; `RuntimeStoreContractScenarios.cs`, `RuntimeStoreConformanceHarness.cs`
+   and the ownership, lease/retry, blocked and cancellation tests exercise
+   admission, frozen publication, claims, renewal, outcomes and stale fencing.
+2. Retained input, target/key, selection, parent attempt, result metadata and
+   structured fault/origin: targeted admission/owned Invoke and target-key tests,
+   `VolatileTargetedCompletionTests.cs`, and the structured fault reference and
+   provider-profile scenarios check copying and retention. Full structured-fault
+   conformance requires callers to supply a report and providers to advertise
+   `StructuredFaultReports`; opaque-only legacy calls are not that profile.
+3. Stable `(publication, subscription)` identity and uncertain acknowledgement:
+   `PublicationFailureConformanceTests.cs` tests the frozen set, retry and fixed
+   rollback boundary, including a real partial-record negative control. This is
+   in-process failure simulation, not crash recovery evidence.
+4. Deterministic reference and reusable conformance: the interface, admission,
+   lease, outcome, structured-fault and publication scenario suites exercise
+   idempotence, concurrent claims, stale owners, frozen fan-out, state transitions
+   and explicit unsupported guarantees. The contract states that a durable provider
+   can acknowledge only after its declared commit; the volatile provider never
+   advertises durability.
+
+These criteria describe an internal reference contract, not actual provider
+certification. #60–#64 own SQLite and restart proof; #78 owns wire encoding and
+compatibility interpretation; #243 owns fault-chain propagation; #65/#66 own
+ordering policy; #68 owns atomic completion/follow-ups. The host owns actual
+normalization, authorization, selection and execution. Closing #59 after a verified
+merge does not claim any of those downstream behaviors.
+
+Verification: bootstrap, documentation and all 31 automation tests passed.
+The first combined runtime run exposed an ambiguous new request-constructor
+overload; requiring the three new-overload arguments preserved the old calls.
+After that correction runtime verification passed 2 baseline and 84 feature tests,
+including the structured-report profile and real report-stripping negative control.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching all final changed runtime sources and feature tests.
+The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted exact-head verification is still required.
