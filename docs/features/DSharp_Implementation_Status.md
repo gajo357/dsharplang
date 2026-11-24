@@ -23,6 +23,9 @@ attempt's observed normal or fault exit; it does not signal or stop execution.
 Test-side reusable scenarios exercise this in-process subset and detect a
 deliberately unfenced stale-owner commit. They are not provider certification or
 evidence of canonical equality, persistence, restart or durable delivery.
+An explicit reference-only failure point and reusable scenarios exercise rollback
+after publication ID reservation, and simulate a lost response after committing
+the full frozen set; these are not crash or durable-transaction evidence.
 This is not a canonical codec, production store or durable acceptance; execution,
 result schema validation, retry policy, durable recovery and provider conformance
 remain open.

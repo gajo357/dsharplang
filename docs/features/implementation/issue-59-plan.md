@@ -441,3 +441,47 @@ feature tests in a private short-path snapshot matching the final conformance
 files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
 report. The local isolated verifier could not pull its pinned MCR image
 (`Forbidden`); hosted verification is still required for that path.
+
+## Tenth slice: publication rollback and lost-ack scenarios
+
+Base: `34cbec564a771d723120e3c04057d0cafe9f8ea0`, with #9/#14 and prior
+#59 slices merged. Continue the existing issue branch. Extend the internal
+`src/DSharp.Runtime/VolatilePublicationStore.cs` with a fixed, explicitly invoked
+test failure point; add `tests/runtime-features/PublicationFailureConformanceTests.cs`
+and update this plan and status. Existing tests,
+dependencies, trusted verifier, public provider ABI and D# syntax stay unchanged.
+
+The ordinary acceptance path must remain unchanged. A separate internal
+conformance entry invokes the same acceptance core with a closed failure point
+that throws a dedicated sentinel immediately after reserving a publication ID,
+inside the existing rollback region and before publishing the complete frozen
+record. No host callback runs under the gate. Validate unknown failure points
+before mutation. A reusable scenario must observe the exact sentinel, confirm no
+publication or cross-kind key is retained, then successfully reuse the same ID
+and key for the full intended set. A test-only broken adapter deliberately
+commits only a prefix before reporting the same failure; the same scenario must
+reject its specific partial-record invariant and an independent backing-store
+inspection must observe that real forbidden state.
+
+Simulate a lost acknowledgement outside the store gate by discarding a
+successfully committed response in the test adapter. A retry with changed
+proposals must recover the original ID and complete frozen set; a changed request
+must conflict. This is a response-loss simulation, not a crash or durable commit.
+Test concurrent matching calls, throwing intent enumeration and unchanged normal
+semantics without assuming which caller wins. Run `bash .github/ai/bootstrap.sh`,
+`bash .github/ai/verify.sh`, `bash scripts/verify-compiler.sh`,
+`bash scripts/verify-runtime.sh`, and `git diff --check`; record actual results.
+
+These tests exercise one in-process reference rollback boundary and simulated
+response loss. They do not establish arbitrary mid-transaction failures,
+durability, restart, real delivery, canonical equality, provider certification,
+authorization or external-effect guarantees. #59 remains open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 59 feature tests,
+including the expected partial-commit negative-control violation and independently
+observed forbidden record. Compiler verification passed 18 baseline and 406
+feature tests in a private short-path snapshot matching the final runtime source
+and tests. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
+report. The local isolated verifier could not pull its pinned MCR image
+(`Forbidden`); hosted verification is still required for that path.
