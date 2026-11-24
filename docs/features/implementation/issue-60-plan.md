@@ -1,5 +1,72 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Sixth slice: atomic SQLite write batches
+
+Base `c45d612c037bab68ab40c13ae96b39f03ff05c66` contains the versioned
+identity, outcome and lifecycle tables. Continue the existing #60 branch. Add
+an internal batch helper in `src/DSharp.Runtime.Sqlite/ActorSqliteWriteBatch.cs`
+and additive real-provider tests in
+`tests/sqlite-features/ActorSqliteWriteBatchTests.cs`. It accepts an already-open
+caller-owned SQLite connection and a pre-materialized batch of trusted,
+transaction-compatible single SQL statements with named parameters. Before the
+transaction begins, validate and copy the batch, names, expected affected-row
+counts and supported null/string/integer/BLOB values, including cloning BLOBs.
+Require foreign-key enforcement on the open connection, then bind each command
+and all parameters to one transaction, execute in order,
+and return counts only after successful commit. An expected-count mismatch is a
+failure and rolls back the batch. The helper does not invoke host callbacks or
+enumerate caller objects while the transaction is active, and it does not close
+the connection. The caller must exclusively use the non-thread-safe connection
+throughout the operation.
+
+The SQL is trusted internal input. Statements must not control transactions,
+attach databases, modify transaction-affecting settings or perform external
+effects. Connection-registered functions and schema triggers are also trusted;
+SQLite can invoke them when executing a statement. These preconditions are not
+enforced by an incomplete SQL parser and the helper is
+not an application SQL interface. On execution or count failure, attempt
+rollback, preserve the original error and any rollback/disposal errors, and never
+report success when commit or disposal fails. Commit or post-commit disposal
+exceptions may leave the outcome uncertain, so a caller must re-read before
+retrying. This helper does not implement read-check-write admission, ownership
+fencing, host callbacks, a public business transaction or durable acknowledgement.
+Host routing still owns choosing a distinct local file per application; no
+in-file application binding is claimed.
+
+Real SQLite tests cover a committed linked multi-row batch and reopen, rollback
+on a later constraint failure and expected-count mismatch, a usable caller
+connection after failure, parameterized SQL-shaped text and null/empty BLOB
+distinctions, immutable batch snapshots, duplicate/invalid input before a
+transaction, independent files, and a deferred foreign-key failure at commit
+that verifies rollback and connection usability. Preserve old schema/test behavior
+and the trusted verifier. Real SQLite proves the tested atomic behavior, not hardware
+power-loss or commit-acknowledgement semantics. #60 remains open until its
+remaining host/availability and other acceptance criteria are demonstrated;
+#61–#64 own admission, claims and execution.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Sixth-slice verification
+
+Bootstrap, documentation (135 files and 308 local links) and all 46 automation
+tests passed. Local real-provider SQLite verification passed one baseline and
+31 feature tests, including rollback after an actual deferred-foreign-key failure
+at commit and subsequent connection reuse. Runtime verification passed two
+baseline and 93 features from a snapshot matching runtime source and tests.
+Independent review checked input snapshots, trusted-connection boundaries and
+cleanup; the final implementation attempts transaction disposal in `finally`
+before allocating any aggregate exception.
+Compiler verification passed 18 baseline and 406 feature tests from a
+short-path snapshot matching the final SQLite source and tests; its 506,836-byte
+feature TRX passed the unchanged size guard.
+The full isolated verifier and base-owned SQLite verifier could not pull the
+pinned MCR image locally (`Forbidden`), so neither completed offline tests here.
+Hosted exact-head verification must provide that evidence; prior tests and
+the trusted verifier remain unchanged.
+
 ## Fifth slice: opt-in version-three lifecycle storage
 
 Base `3ae335353beb8f9142236f60ea7c5c5279e6f53e` includes the explicit v1/v2

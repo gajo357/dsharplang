@@ -82,6 +82,10 @@ An opt-in version-three migration adds raw lifecycle and ordered recovery
 records, including separate lease-expiry and reported-fault tags. It preserves
 prior schema targets; it does not implement state transitions, fencing or host
 availability checks.
+An internal SQLite write-batch helper snapshots trusted statements and parameters
+before executing them in one transaction. Real-provider tests cover commit,
+rollback and a deferred-constraint commit failure; this is not an admission
+protocol, ownership fence or durable acknowledgement.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
