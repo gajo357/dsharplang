@@ -578,3 +578,53 @@ observed target and decoy states. Compiler verification passed 18 baseline and
 test files. The unchanged 512,000-byte TRX guard accepted the 506,836-byte feature
 report. The local isolated verifier could not pull its pinned MCR image
 (`Forbidden`); hosted verification is still required for that path.
+
+## Thirteenth slice: fenced parent-aware Invoke admission
+
+Base: `ad4f2a673f92d01abf6f174c44a823af849bcc93`, with #9/#14 and
+prior #59 slices merged. Continue the existing issue branch. Add an internal,
+opt-in parent-aware admission operation in a new partial runtime source file,
+new feature tests in `tests/runtime-features/VolatileOwnedInvokeTests.cs`, and
+update this plan and implementation status. Preserve legacy bookkeeping, existing
+tests, dependencies, trusted verifier and public APIs.
+
+For an Invoke only, require a same-application parent submission, nonempty parent
+invocation/attempt/token IDs, and a child request whose parent strings equal the
+canonical `Guid.ToString("D")` invocation and attempt IDs. Reject malformed or
+mismatched input without mutation. Under the existing gate and one simulated clock
+read, require the parent record to be Running with that exact unexpired
+attempt/token before performing the existing shared-key acceptance atomically.
+Pending cancellation alone does not revoke a still-current owner in this reference;
+terminal state or `now >= leaseUntil` does. No callbacks, selection or external
+work run under the gate. A still-current matching retry retains the first child ID
+and selection; mismatches and cross-kind keys conflict. This opt-in operation
+checks the owner before returning an existing record or inserting a new one.
+A separately authorized host may use the existing request-aware probe to resolve
+an uncertain acknowledgement, including after ownership loss; the probe itself
+is not authorization. This local conservative API choice does not decide a public
+status or retry protocol.
+
+Map valid parent and immutable child metadata, matching and conflicting retry,
+shared namespace, GUID collision and argument validation to new tests. Cover
+cross-application/wrong-key/wrong-token, expired and superseded owners, and
+terminal parent without creating a child. Bounded concurrent child submissions
+and a parent terminal transition must permit either coherent serial outcome and
+prove no partial child. Run `bash .github/ai/bootstrap.sh`,
+`bash .github/ai/verify.sh`, `bash scripts/verify-compiler.sh`,
+`bash scripts/verify-runtime.sh`, and `git diff --check`; record actual results.
+
+The earlier raw `Accept` remains unvalidated bookkeeping for compatibility and
+is not an enforcement boundary. This addition proves only its explicit opt-in
+path in a volatile single-process model; it is not host authorization, durable
+admission, canonical encoding, parent completion plus atomic follow-ups, wait
+cycle/permit handling, or fault-chain propagation. #59 stays open.
+
+Verification: bootstrap, documentation and all 31 automation tests passed.
+The first runtime run caught an xUnit analyzer error in the new race test;
+after replacing blocking task-result access with awaits, runtime verification
+passed 2 baseline and 69 feature tests. Compiler verification passed 18 baseline
+and 406 feature tests in a private short-path snapshot matching the final new
+runtime source; that snapshot predates the test-only await correction, which
+was covered by the final runtime run. The unchanged 512,000-byte TRX guard
+accepted the 506,836-byte feature report. The local isolated verifier could not
+pull its pinned MCR image (`Forbidden`); hosted verification is still required.
