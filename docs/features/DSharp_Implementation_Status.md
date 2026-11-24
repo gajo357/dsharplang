@@ -107,6 +107,10 @@ An internal bound-file reader can also retrieve a saved publication, including
 one with no deliveries, and an individual delivery's frozen requested/selected
 IDs after reopen. Separate reads are separate snapshots; this does not perform
 publication admission, fanout or execution.
+Another real SQLite test accepts targeted and publication records in the #59
+volatile reference, maps them to the schema in a test-owned transaction, and
+reads the saved input and pinned identities after that writer process exits.
+That test mapping is not SQLite admission or provider conformance.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
