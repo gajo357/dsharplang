@@ -2,7 +2,11 @@ namespace DSharp.Runtime;
 
 // Provisional single-process state only. Lease expiry does not imply that the
 // actor threw or that a stale process stopped executing.
-internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed, FailedReportedFault, Cancelled }
+internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed, FailedReportedFault, Cancelled, Blocked }
+
+// Readiness is reported by the host; this reference does not verify it.
+internal enum BlockReason { ImplementationUnavailable, Incompatible }
+internal sealed record TargetedBlock(Guid BlockId, string SelectedImplementation, BlockReason Reason);
 
 // Opaque bytes only. Supplying metadata is not a codec or schema compatibility check.
 internal sealed class TargetedCompletion
@@ -119,6 +123,8 @@ internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAtte
     Guid? AttemptId, Guid? Token, DateTimeOffset? LeaseUntil, TargetedCompletion? Completion = null)
 {
     public DateTimeOffset? EligibleAt { get; init; }
+    public long EligibilityVersion { get; init; }
+    public TargetedBlock? Block { get; init; }
     public ReportedTerminalFault? TerminalFault { get; init; }
     public bool CancellationRequested { get; init; }
     public CancellationExit? ObservedCancellationExit { get; init; }
@@ -140,7 +146,7 @@ internal sealed partial class VolatileTargetedStore
 {
     private DateTimeOffset? simulatedTime;
     private readonly Dictionary<Guid, TargetedOwnership> ownerships = new();
-    // Shared across both roles, so no prior attempt ID can later become a token or vice versa.
+    // Shared by attempts, tokens and blocks, so none can be reused in another role.
     private readonly HashSet<Guid> usedOwnershipIds = new();
 
     // This clock exists only for deterministic reference bookkeeping. It has no
@@ -195,12 +201,12 @@ internal sealed partial class VolatileTargetedStore
                 return new(CancellationRequestStatus.NotFound, null);
             if (current.State == TargetedAttemptState.Cancelled || current.CancellationRequested)
                 return new(CancellationRequestStatus.AlreadyRequested, current);
-            if (current.State is not (TargetedAttemptState.Eligible or TargetedAttemptState.Running))
+            if (current.State is not (TargetedAttemptState.Eligible or TargetedAttemptState.Running or TargetedAttemptState.Blocked))
                 return new(CancellationRequestStatus.AlreadyTerminal, current);
             var next = current with
             {
                 CancellationRequested = true,
-                State = current.State == TargetedAttemptState.Eligible ? TargetedAttemptState.Cancelled : current.State
+                State = current.State is TargetedAttemptState.Eligible or TargetedAttemptState.Blocked ? TargetedAttemptState.Cancelled : current.State
             };
             ownerships[invocationId] = next;
             return new(CancellationRequestStatus.Applied, next);
@@ -230,6 +236,7 @@ internal sealed partial class VolatileTargetedStore
             var deadline = AddLease(now, duration);
             var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Running, attemptId, token, deadline)
             {
+                EligibilityVersion = current.EligibilityVersion,
                 History = current.History,
                 RecoveryHistory = current.RecoveryHistory
             };
@@ -396,6 +403,7 @@ internal sealed partial class VolatileTargetedStore
             recoveryHistory[^1] = AttemptRecovery.ForFault(history[^1]);
             var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Eligible, null, null, null)
             {
+                EligibilityVersion = checked(current.EligibilityVersion + 1),
                 EligibleAt = due,
                 History = Array.AsReadOnly(history),
                 RecoveryHistory = Array.AsReadOnly(recoveryHistory)
@@ -446,6 +454,7 @@ internal sealed partial class VolatileTargetedStore
             recoveryHistory[^1] = AttemptRecovery.ForExpiry(observedAttemptId, observedToken, observedLeaseUntil, due);
             var next = new TargetedOwnership(current.Invocation, TargetedAttemptState.Eligible, null, null, null)
             {
+                EligibilityVersion = checked(current.EligibilityVersion + 1),
                 EligibleAt = due,
                 History = current.History,
                 RecoveryHistory = Array.AsReadOnly(recoveryHistory)

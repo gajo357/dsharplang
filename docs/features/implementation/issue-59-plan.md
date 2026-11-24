@@ -684,3 +684,50 @@ final scenario files, which were covered by the final runtime run. The unchanged
 512,000-byte TRX guard accepted the 506,836-byte feature report. The local
 isolated verifier could not pull its pinned MCR image (`Forbidden`); hosted
 verification is still required for that path.
+
+## Fifteenth slice: explicit blocked pinned implementation
+
+Base: `5713dddbd4d268cd0c2dafe33b5b7ff283b61013`, with #9/#14 and prior
+#59 slices merged. Continue the existing branch. Add provisional internal
+provider-contract operations and volatile reference support for explicitly
+blocking eligible work whose *pinned* implementation the host reports unavailable
+or incompatible. Add new runtime feature tests and update this plan and status.
+Preserve existing tests, dependencies, verifier and public APIs. This models the
+DEC-04 blocked state without implementing host availability checks, authorization,
+automatic reselection, compatibility interpretation or scheduling policy.
+
+A caller can block only an eligible invocation after comparing the exact retained
+selection and an eligibility-version observation. Assign each successful block a
+fresh nonempty block ID that cannot be reused in the invocation/attempt/token ID
+domain; roll back its reservation if the state update fails. Record the explicit
+host-reported reason. Unblocking requires the active block ID and exact pinned
+selection and creates a new eligibility version, so stale observations cannot
+block or unblock a later eligible episode (including claim/reschedule ABA).
+Propagate and checked-increment eligibility versions on each transition back to
+eligible. Preserve original invocation, request, selection, prior history and retry
+due time; no callback or selection runs under the gate. Claim rejects blocked
+work. Cancellation of blocked work becomes immediately terminal and cannot be
+undone by an unblock. Block/unblock, claim and cancellation serialize; running or
+terminal work cannot be blocked. These operations are provisional internal
+bookkeeping, not a public or durable provider contract.
+
+Acceptance-to-test map: exact retained identity/selection and matching retry;
+blocked claim rejection and restored eligibility/due/history; reported reason and
+wrong selection; stale versions/blocks and ID collisions; blocked cancellation;
+bounded competing block/claim and cancellation/unblock races with both valid
+serial outcomes. Exercise the operation through IRuntimeStore as well as the
+volatile reference. An explicit capability advertises this optional behavior;
+other providers inherit fail-closed methods. No external compatibility check or
+provider certification is claimed. Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`. Record actual results and isolated-image limits. #59 remains
+open until all its criteria are met.
+
+Verification: bootstrap, documentation and all 31 automation tests passed.
+Runtime verification passed 2 baseline and 75 feature tests. Its build retried a
+transient file-copy contention warning caused by concurrent local verification;
+the retry succeeded. Compiler verification passed 18 baseline and 406 feature
+tests in a private short-path snapshot matching the final changed runtime sources
+and feature test. The unchanged 512,000-byte TRX guard accepted the 506,836-byte
+feature report. The local isolated verifier could not pull its pinned MCR image
+(`Forbidden`); hosted verification is still required for that path.
