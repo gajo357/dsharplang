@@ -27,6 +27,9 @@ Additional controlled-clock scenarios cover lease renewal, stale observations,
 delayed retry eligibility and bounded ownership races. A negative control detects
 an actual stale-deadline recovery in the reference store; it does not establish
 real-clock or multi-host behavior.
+Test-side outcome scenarios also cover cancellation ordering against normal and
+reported-fault exits and controlled lease expiry, including a misrouted-request
+negative control. They exercise bookkeeping rather than signalling execution.
 An explicit reference-only failure point and reusable scenarios exercise rollback
 after publication ID reservation, and simulate a lost response after committing
 the full frozen set; these are not crash or durable-transaction evidence.
