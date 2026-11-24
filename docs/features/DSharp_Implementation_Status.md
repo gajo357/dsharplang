@@ -33,6 +33,10 @@ negative control. They exercise bookkeeping rather than signalling execution.
 An opt-in reference operation fences an owned parent attempt while recording an
 awaited Invoke child. The existing raw acceptance path still does not validate
 parent ownership; neither path implements host authorization or durable admission.
+An internal provisional RuntimeStore interface exposes the tested admission,
+ownership and outcome operations with explicit capability validation. Reusable
+interface-driven scenarios exercise the volatile reference and detect a real
+stale-deadline recovery; they do not certify a durable provider or finalize its API.
 An explicit reference-only failure point and reusable scenarios exercise rollback
 after publication ID reservation, and simulate a lost response after committing
 the full frozen set; these are not crash or durable-transaction evidence.
