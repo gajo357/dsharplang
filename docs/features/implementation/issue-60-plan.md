@@ -1,5 +1,64 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Fifth slice: opt-in version-three lifecycle storage
+
+Base `3ae335353beb8f9142236f60ea7c5c5279e6f53e` includes the explicit v1/v2
+schema targets and attempt-exit tables. Continue the existing #60 branch. Add a
+caller-selected version-three migration through the same coordinator and opener,
+preserving the existing v1 and v2 targets, defaults, rejection behavior, prior
+tests and trusted verification. This is an internal storage substrate, not a
+provider, transition API or change to the default host schema.
+
+Add raw invocation lifecycle and ordered attempt-recovery tables in
+`src/DSharp.Runtime.Sqlite/ActorSqliteSchema.cs`, with an additive
+`tests/sqlite-features/ActorSqliteLifecycleTests.cs`. Persist the documented
+eligible, running, blocked, completed, reported-fault, lease-expired and cancelled
+states, eligibility revision/time, cancellation marker, an optional paired
+attempt/token/lease tuple, and optional block identity/reason. Use the pinned
+selected actor already stored on the invocation; do not reselect or authenticate
+it. Cancellation before claim has no tuple; after claim, completed, faulted,
+lease-expired or cancelled states can retain one. A cancellation of a blocked
+invocation can retain the block. Represent recovery history separately with
+ordered reported-fault versus lease-expiry tags and the observed ownership/time
+data; lease expiry alone must not manufacture an actor fault. Store time as UTC
+ticks in integer fields and document that choice as internal SQLite representation.
+Keep checks limited to structural facts supported by the #59 model. The future
+writer must enforce token/attempt/block freshness, valid transitions and
+monotonic revisions, reporting a pinned implementation's actual availability,
+fencing, history linkage, timestamp interpretation and durable operations.
+The raw ordinal permits gaps; a future writer must enforce contiguous history.
+
+Real SQLite tests cover populated v1/v2-to-v3 upgrades, selected identities and
+prior outcome preservation, explicit target rejection and v1/v2 fail-closed
+behavior on v3, and idempotent reopen. Exercise cancellation before and after an
+attempt, terminal rows retaining the ownership tuple, blocked cancellation,
+lease-expiry without a fault, ordered recovery tags, malformed structural shapes
+and cross-invocation foreign keys. Force a real second-v3-statement conflict and
+prove the earlier statement and schema version roll back while existing records
+survive. #60 stays open for actual host/availability reporting, transaction and
+durability criteria; #61–#64 own admission, claim and execution behavior.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Fifth-slice verification
+
+Bootstrap, documentation (135 files and 308 local links), and all 46 automation
+tests passed. Local real-provider SQLite verification passed one baseline and
+23 feature tests, covering the upgrade, rollback, cancellation/terminal/block
+shapes, distinct recovery tags and UTC tick boundaries. Runtime verification
+passed two baseline and 93 feature tests from a snapshot matching runtime source
+and tests. Independent review found no further scoped defect.
+Compiler verification passed 18 baseline and 406 feature tests from a
+short-path snapshot matching the final SQLite source and tests; its 506,836-byte
+feature TRX passed the unchanged size guard.
+The full isolated verifier and base-owned SQLite verifier could not pull the
+pinned MCR image locally (`Forbidden`), so neither completed offline tests here.
+Hosted exact-head verification must provide that evidence; prior tests and
+the trusted verifier remain unchanged.
+
 ## Fourth slice: opt-in version-two attempt-exit storage
 
 Base `236911a9cc90063cbc67907238506aad1d2f7040` includes the version-one

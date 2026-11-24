@@ -78,6 +78,10 @@ ordered fault-observation tables. Real SQLite tests exercise upgrades, rollback
 and reopen while the default version-one path continues to reject newer files.
 These tables do not implement a writer, ownership fencing, normalization or
 typed validation of fault origins.
+An opt-in version-three migration adds raw lifecycle and ordered recovery
+records, including separate lease-expiry and reported-fault tags. It preserves
+prior schema targets; it does not implement state transitions, fencing or host
+availability checks.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
