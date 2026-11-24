@@ -1,5 +1,68 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Fourth slice: opt-in version-two attempt-exit storage
+
+Base `236911a9cc90063cbc67907238506aad1d2f7040` includes the version-one
+identity schema, its file opener and trusted SQLite tests. Continue on the
+existing #60 branch. Preserve `ActorSqliteSchema.Apply(connection)` and
+`ActorSqliteDatabase.Open(path)` as explicit version-one compatibility paths:
+they reject newer files. Add an internal caller-selected version target for
+version two, using the same transactional coordinator and the same file
+settings; never select a target based on tests or environment. Validate an
+unsupported target before opening or creating a file. Version two is opt-in and
+does not change the default host integration or any existing trusted test.
+
+Add a version-two migration in `src/DSharp.Runtime.Sqlite/ActorSqliteSchema.cs`
+and target selection in `src/DSharp.Runtime.Sqlite/ActorSqliteDatabase.cs`, with
+new real-provider tests in `tests/sqlite-features/ActorSqliteOutcomeTests.cs`.
+Store per-attempt normal versus reported-fault exits separately, as opaque payload
+and nonempty contract metadata, with an optional unverified reported fault origin.
+Retain optional caller-normalized reports separately from an absent report,
+including their own optional unverified origin, an optional primary observation
+and ordered cleanup observations. Diagnostic and observation metadata bytes may
+be empty. A cleanup-only report is valid. An attempt exit is not automatically an
+invocation terminal outcome: cancellation can win while a later exit is recorded,
+and retry history and lease loss must remain distinct. Raw rows do not provide
+fencing, atomic acceptance, normalization, redaction, typed origin parsing and
+equality, nonblank classification, contiguous cleanup ordering, report-child
+existence or fault-chain
+propagation; future writers must
+enforce the relevant invariants. Do not implement those downstream operations or
+claim a codec, production execution or crash durability.
+
+Real SQLite tests cover fresh v0-to-v2, populated v1-to-v2 with preserved
+identities and opaque bytes, both explicit targets and idempotent reopen, v1
+rejection of v2 and v2 rejection of v3, invalid target before file creation,
+normal versus reported-fault shapes, empty payloads, both optional origins,
+primary/ordered cleanup and cleanup-only reports, malformed shapes and
+foreign-key relationships. Force a real conflict in the second v2 DDL statement
+on an existing populated v1 file and prove the first statement and version update
+roll back while old records remain. Preserve all existing tests and the trusted
+verifier. #60 stays open pending its full outcome/host/availability and other
+acceptance criteria; #61–#64 own durable execution.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Fourth-slice verification
+
+Bootstrap and the documentation/automation tests passed (135 files, 308 links,
+46 automation tests). Local real-provider SQLite verification passed one
+baseline and 17 feature tests; runtime verification passed two baseline and 93
+features from a snapshot matching the runtime source and tests. Independent
+review caught a text-equality constraint that could reject equivalent Guid
+spellings; it was removed, with typed equality left to the future writer and
+both preserved spellings covered by the final SQLite run.
+Compiler verification passed 18 baseline and 406 feature tests from a
+short-path snapshot matching the final SQLite source and tests; its 506,836-byte
+feature TRX passed the unchanged size guard.
+The full isolated verifier and base-owned SQLite verifier could not pull the
+pinned MCR image locally (`Forbidden`), so neither completed offline tests here.
+Hosted exact-head verification must provide that evidence; all prior tests and
+the trusted verifier remain unchanged.
+
 ## Third slice: file-backed single-host connection settings
 
 Base `5568706794414744c8d9e1282270aacf28b604d1` includes the version-one
