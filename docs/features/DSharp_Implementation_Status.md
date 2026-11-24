@@ -73,6 +73,11 @@ keys, FULL synchronous mode and an initial busy timeout before applying that
 schema. Tests check these settings and preserved records across reopen. The host
 still owns local file selection and process ownership; callers control the
 returned connection.
+An opt-in version-two migration adds raw per-attempt normal/fault exit and
+ordered fault-observation tables. Real SQLite tests exercise upgrades, rollback
+and reopen while the default version-one path continues to reject newer files.
+These tables do not implement a writer, ownership fencing, normalization or
+typed validation of fault origins.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

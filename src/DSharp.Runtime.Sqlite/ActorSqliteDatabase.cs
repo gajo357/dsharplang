@@ -7,8 +7,12 @@ namespace DSharp.Runtime.Sqlite;
 // mapping from application to local path and any process ownership policy.
 internal static class ActorSqliteDatabase
 {
-    internal static SqliteConnection Open(string path)
+    internal static SqliteConnection Open(string path) => Open(path, ActorSqliteSchemaVersion.V1);
+
+    internal static SqliteConnection Open(string path, ActorSqliteSchemaVersion version)
     {
+        // Reject an unsupported target before opening or creating a file.
+        ActorSqliteSchema.ValidateVersion(version);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!Path.IsPathFullyQualified(path) || path.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
             Path.EndsInDirectorySeparator(path))
@@ -39,7 +43,7 @@ internal static class ActorSqliteDatabase
                 Convert.ToInt64(Scalar(connection, "PRAGMA busy_timeout"), CultureInfo.InvariantCulture) != 5000)
                 throw new InvalidOperationException("Required SQLite connection settings are unavailable.");
 
-            ActorSqliteSchema.Apply(connection);
+            ActorSqliteSchema.Apply(connection, version);
             return connection;
         }
         catch

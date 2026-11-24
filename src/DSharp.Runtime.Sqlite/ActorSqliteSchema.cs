@@ -3,8 +3,12 @@ using Microsoft.Data.Sqlite;
 
 namespace DSharp.Runtime.Sqlite;
 
-// Internal version-one identity substrate only. It does not perform actor
-// admission, delivery, claims, codecs, or durable acknowledgement.
+// A target version is explicitly selected by each internal caller. V1 remains
+// the compatibility default; newer files are rejected by a V1 caller.
+internal enum ActorSqliteSchemaVersion { V1 = 1, V2 = 2 }
+
+// Internal schema substrate only. It does not perform actor admission,
+// delivery, claims, codecs, fault normalization, or durable acknowledgement.
 internal static class ActorSqliteSchema
 {
     private static readonly string[] InitialStatements =
@@ -87,11 +91,79 @@ internal static class ActorSqliteSchema
         """
     ];
 
-    internal static void Apply(SqliteConnection connection) => ApplyMigration(connection, InitialStatements);
+    private static readonly string[] AttemptExitStatements =
+    [
+        """
+        CREATE TABLE actor_attempt_exits (
+          application_id TEXT NOT NULL,
+          invocation_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL,
+          outcome_kind TEXT NOT NULL CHECK (outcome_kind IN ('normal', 'reported_fault')),
+          payload BLOB NOT NULL CHECK (typeof(payload) = 'blob'),
+          contract BLOB NOT NULL CHECK (typeof(contract) = 'blob' AND length(contract) > 0),
+          origin_invocation_id TEXT CHECK (origin_invocation_id IS NULL OR (typeof(origin_invocation_id) = 'text' AND length(origin_invocation_id) > 0)),
+          report_present INTEGER NOT NULL CHECK (typeof(report_present) = 'integer' AND report_present IN (0, 1)),
+          report_origin_invocation_id TEXT CHECK (report_origin_invocation_id IS NULL OR (typeof(report_origin_invocation_id) = 'text' AND length(report_origin_invocation_id) > 0)),
+          CHECK (outcome_kind = 'reported_fault' OR (origin_invocation_id IS NULL AND report_present = 0 AND report_origin_invocation_id IS NULL)),
+          CHECK (report_present = 1 OR report_origin_invocation_id IS NULL),
+          PRIMARY KEY (application_id, invocation_id, attempt_id),
+          UNIQUE (application_id, invocation_id, attempt_id, outcome_kind, report_present),
+          FOREIGN KEY (application_id, invocation_id, attempt_id)
+            REFERENCES actor_attempts (application_id, invocation_id, attempt_id)
+        )
+        """,
+        """
+        CREATE TABLE actor_fault_observations (
+          application_id TEXT NOT NULL,
+          invocation_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL,
+          outcome_kind TEXT NOT NULL DEFAULT 'reported_fault' CHECK (outcome_kind = 'reported_fault'),
+          report_present INTEGER NOT NULL DEFAULT 1 CHECK (typeof(report_present) = 'integer' AND report_present = 1),
+          ordinal INTEGER NOT NULL CHECK (typeof(ordinal) = 'integer' AND ordinal >= -1),
+          classification TEXT NOT NULL CHECK (typeof(classification) = 'text' AND length(classification) > 0),
+          diagnostic BLOB NOT NULL CHECK (typeof(diagnostic) = 'blob'),
+          metadata BLOB NOT NULL CHECK (typeof(metadata) = 'blob'),
+          PRIMARY KEY (application_id, invocation_id, attempt_id, ordinal),
+          FOREIGN KEY (application_id, invocation_id, attempt_id, outcome_kind, report_present)
+            REFERENCES actor_attempt_exits (application_id, invocation_id, attempt_id, outcome_kind, report_present)
+        )
+        """
+    ];
+
+    internal static void ValidateVersion(ActorSqliteSchemaVersion version)
+    {
+        if (version is not ActorSqliteSchemaVersion.V1 and not ActorSqliteSchemaVersion.V2)
+            throw new ArgumentOutOfRangeException(nameof(version), version, "Unsupported SQLite schema target.");
+    }
+
+    internal static void Apply(SqliteConnection connection) => Apply(connection, ActorSqliteSchemaVersion.V1);
+
+    internal static void Apply(SqliteConnection connection, ActorSqliteSchemaVersion version)
+    {
+        ValidateVersion(version);
+        EnsureReady(connection);
+        var migrations = version switch
+        {
+            ActorSqliteSchemaVersion.V1 => new[] { new ActorSchemaMigration(1, InitialStatements) },
+            ActorSqliteSchemaVersion.V2 => new[]
+            {
+                new ActorSchemaMigration(1, InitialStatements),
+                new ActorSchemaMigration(2, AttemptExitStatements)
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(version))
+        };
+        new ActorSchemaMigrationCoordinator(migrations).Apply(connection);
+    }
 
     // Only trusted, transaction-compatible statements may be passed. This is an
     // internal migration primitive, not an application-provided SQL interface.
     internal static void ApplyMigration(SqliteConnection connection, IReadOnlyList<string> statements)
+    {
+        EnsureReady(connection);
+        new ActorSchemaMigrationCoordinator([new ActorSchemaMigration(1, statements)]).Apply(connection);
+    }
+
+    private static void EnsureReady(SqliteConnection connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
         if (connection.State != ConnectionState.Open)
@@ -102,6 +174,5 @@ internal static class ActorSqliteSchema
             if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 1)
                 throw new InvalidOperationException("SQLite foreign key enforcement must be enabled on this connection.");
         }
-        new ActorSchemaMigrationCoordinator([new ActorSchemaMigration(1, statements)]).Apply(connection);
     }
 }
