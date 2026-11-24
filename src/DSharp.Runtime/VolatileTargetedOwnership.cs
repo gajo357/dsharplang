@@ -2,7 +2,7 @@ namespace DSharp.Runtime;
 
 // Provisional single-process state only. Lease expiry does not imply that the
 // actor threw or that a stale process stopped executing.
-internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed, FailedReportedFault }
+internal enum TargetedAttemptState { Eligible, Running, FailedLeaseExpired, Completed, FailedReportedFault, Cancelled }
 
 // Opaque bytes only. Supplying metadata is not a codec or schema compatibility check.
 internal sealed class TargetedCompletion
@@ -61,6 +61,25 @@ internal sealed class ReportedTerminalFault
     public Guid? OriginInvocationId { get; }
 }
 
+internal enum CancellationExitKind { Normal, ReportedFault }
+
+// An inspected attempt exit is separate from the cancelled caller outcome.
+internal sealed class CancellationExit
+{
+    private CancellationExit(CancellationExitKind kind, TargetedCompletion? completion, ReportedTerminalFault? fault)
+    {
+        Kind = kind;
+        Completion = completion;
+        Fault = fault;
+    }
+
+    internal static CancellationExit ForNormal(TargetedCompletion completion) => new(CancellationExitKind.Normal, completion, null);
+    internal static CancellationExit ForFault(ReportedTerminalFault fault) => new(CancellationExitKind.ReportedFault, null, fault);
+    public CancellationExitKind Kind { get; }
+    public TargetedCompletion? Completion { get; }
+    public ReportedTerminalFault? Fault { get; }
+}
+
 internal sealed record RescheduledAttempt(Guid AttemptId, Guid Token, DateTimeOffset LeaseUntil,
     DateTimeOffset EligibleAt, TargetedFault Fault);
 
@@ -101,6 +120,8 @@ internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAtte
 {
     public DateTimeOffset? EligibleAt { get; init; }
     public ReportedTerminalFault? TerminalFault { get; init; }
+    public bool CancellationRequested { get; init; }
+    public CancellationExit? ObservedCancellationExit { get; init; }
     // This pre-existing view contains only explicitly reported faults.
     public IReadOnlyList<RescheduledAttempt> History { get; init; } = Array.Empty<RescheduledAttempt>();
     // Complete ordered rescheduling history, including lease loss; snapshots own their buffers.
@@ -109,9 +130,11 @@ internal sealed record TargetedOwnership(TargetedRecord Invocation, TargetedAtte
 internal enum AttemptTransitionStatus
 {
     Applied, NotFound, NotEligible, InvalidOwner, Expired, ObservationMismatch,
-    NotExpired, IdentityCollision, NotExtended, NotYetEligible
+    NotExpired, IdentityCollision, NotExtended, NotYetEligible, CancellationFinalized
 }
 internal sealed record AttemptTransitionResult(AttemptTransitionStatus Status, TargetedOwnership? Ownership);
+internal enum CancellationRequestStatus { Applied, AlreadyRequested, AlreadyTerminal, NotFound }
+internal sealed record CancellationRequestResult(CancellationRequestStatus Status, TargetedOwnership? Ownership);
 
 internal sealed partial class VolatileTargetedStore
 {
@@ -156,6 +179,31 @@ internal sealed partial class VolatileTargetedStore
         {
             _ = GetClock();
             return FindOwnership(applicationId, submissionId, invocationId);
+        }
+    }
+
+    // Bookkeeping only: the host is responsible for authorization and signalling.
+    public CancellationRequestResult RequestCancellation(string applicationId, string submissionId, Guid invocationId)
+    {
+        ValidateSubmissionKey(applicationId, submissionId);
+        ValidateIdentity(invocationId, nameof(invocationId));
+        lock (gate)
+        {
+            _ = GetClock();
+            var current = FindOwnership(applicationId, submissionId, invocationId);
+            if (current is null)
+                return new(CancellationRequestStatus.NotFound, null);
+            if (current.State == TargetedAttemptState.Cancelled || current.CancellationRequested)
+                return new(CancellationRequestStatus.AlreadyRequested, current);
+            if (current.State is not (TargetedAttemptState.Eligible or TargetedAttemptState.Running))
+                return new(CancellationRequestStatus.AlreadyTerminal, current);
+            var next = current with
+            {
+                CancellationRequested = true,
+                State = current.State == TargetedAttemptState.Eligible ? TargetedAttemptState.Cancelled : current.State
+            };
+            ownerships[invocationId] = next;
+            return new(CancellationRequestStatus.Applied, next);
         }
     }
 
@@ -246,6 +294,16 @@ internal sealed partial class VolatileTargetedStore
                 return new(AttemptTransitionStatus.InvalidOwner, current);
             if (now >= current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.Expired, current);
+            if (current.CancellationRequested)
+            {
+                var cancelled = current with
+                {
+                    State = TargetedAttemptState.Cancelled,
+                    ObservedCancellationExit = CancellationExit.ForNormal(completion)
+                };
+                ownerships[invocationId] = cancelled;
+                return new(AttemptTransitionStatus.CancellationFinalized, cancelled);
+            }
             var next = current with { State = TargetedAttemptState.Completed, Completion = completion };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
@@ -272,6 +330,16 @@ internal sealed partial class VolatileTargetedStore
                 return new(AttemptTransitionStatus.InvalidOwner, current);
             if (now >= current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.Expired, current);
+            if (current.CancellationRequested)
+            {
+                var cancelled = current with
+                {
+                    State = TargetedAttemptState.Cancelled,
+                    ObservedCancellationExit = CancellationExit.ForFault(fault)
+                };
+                ownerships[invocationId] = cancelled;
+                return new(AttemptTransitionStatus.CancellationFinalized, cancelled);
+            }
             var next = current with { State = TargetedAttemptState.FailedReportedFault, TerminalFault = fault };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
@@ -300,6 +368,17 @@ internal sealed partial class VolatileTargetedStore
                 return new(AttemptTransitionStatus.InvalidOwner, current);
             if (now >= current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.Expired, current);
+
+            if (current.CancellationRequested)
+            {
+                var cancelled = current with
+                {
+                    State = TargetedAttemptState.Cancelled,
+                    ObservedCancellationExit = CancellationExit.ForFault(new ReportedTerminalFault(fault))
+                };
+                ownerships[invocationId] = cancelled;
+                return new(AttemptTransitionStatus.CancellationFinalized, cancelled);
+            }
 
             DateTimeOffset due;
             try { due = now.Add(delay); }
@@ -348,6 +427,13 @@ internal sealed partial class VolatileTargetedStore
             if (now < current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.NotExpired, current);
 
+            if (current.CancellationRequested)
+            {
+                var cancelled = current with { State = TargetedAttemptState.Cancelled };
+                ownerships[invocationId] = cancelled;
+                return new(AttemptTransitionStatus.CancellationFinalized, cancelled);
+            }
+
             DateTimeOffset due;
             try { due = now.Add(delay); }
             catch (ArgumentOutOfRangeException)
@@ -388,6 +474,12 @@ internal sealed partial class VolatileTargetedStore
                 return new(AttemptTransitionStatus.ObservationMismatch, current);
             if (now < current.LeaseUntil!.Value)
                 return new(AttemptTransitionStatus.NotExpired, current);
+            if (current.CancellationRequested)
+            {
+                var cancelled = current with { State = TargetedAttemptState.Cancelled };
+                ownerships[invocationId] = cancelled;
+                return new(AttemptTransitionStatus.CancellationFinalized, cancelled);
+            }
             var next = current with { State = TargetedAttemptState.FailedLeaseExpired };
             ownerships[invocationId] = next;
             return new(AttemptTransitionStatus.Applied, next);
