@@ -23,6 +23,10 @@ attempt's observed normal or fault exit; it does not signal or stop execution.
 Test-side reusable scenarios exercise this in-process subset and detect a
 deliberately unfenced stale-owner commit. They are not provider certification or
 evidence of canonical equality, persistence, restart or durable delivery.
+Additional controlled-clock scenarios cover lease renewal, stale observations,
+delayed retry eligibility and bounded ownership races. A negative control detects
+an actual stale-deadline recovery in the reference store; it does not establish
+real-clock or multi-host behavior.
 An explicit reference-only failure point and reusable scenarios exercise rollback
 after publication ID reservation, and simulate a lost response after committing
 the full frozen set; these are not crash or durable-transaction evidence.
