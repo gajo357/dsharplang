@@ -68,6 +68,11 @@ The next #60 slice adds an internal version-one SQLite identity schema for
 submissions, invocations, attempts, publications and delivery identities. Its
 real-provider tests cover relational constraints and reopening. The tables alone
 do not provide atomic admission, immutable acceptance or crash recovery.
+An internal file opener now checks DELETE journal mode and configures foreign
+keys, FULL synchronous mode and an initial busy timeout before applying that
+schema. Tests check these settings and preserved records across reopen. The host
+still owns local file selection and process ownership; callers control the
+returned connection.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

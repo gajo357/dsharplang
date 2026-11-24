@@ -1,5 +1,62 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Third slice: file-backed single-host connection settings
+
+Base `5568706794414744c8d9e1282270aacf28b604d1` includes the version-one
+identity schema and the merged trusted SQLite verifier. Continue on the existing
+#60 branch. Add an internal `src/DSharp.Runtime.Sqlite/ActorSqliteDatabase.cs`
+opener and additive `tests/sqlite-features/ActorSqliteDatabaseTests.cs`. It takes
+an explicit absolute file path, opens a non-pooled private-cache SQLite
+connection with foreign keys enabled, validates that its journal mode is DELETE,
+sets and reads back connection-local synchronous FULL and a bounded busy timeout,
+and calls the unchanged version-one schema coordinator. Reject memory/URI/relative
+paths and unsupported settings; dispose the connection on initialization failure
+without deleting the caller's file. Inspect rather than change persistent journal
+mode before schema validation, so an unsupported or newer file is not silently
+converted. Path syntax does not establish file type or storage locality. The host
+remains responsible for selecting a distinct local file per application and for
+process ownership; this does not prove cross-process exclusion,
+filesystem durability, power-loss recovery, actor admission or a public API.
+Settings are checked at open time; callers control the returned connection and
+may change them or override a command timeout. This is not a lifetime bound.
+
+Real-provider tests map the scoped criteria to evidence: fresh open and reopen,
+actual per-connection setting readback and enforced foreign keys, persistent
+version-one records, distinct application files, rejected relative/memory paths,
+and failure/disposal with existing data and journal mode preserved for unsupported
+files. Preserve all existing tests, the existing schema version and trusted
+verification. Cross-kind invocation/attempt/token identity freshness is an
+operation-level obligation for the future admission/claim provider, not something
+these raw tables enforce. #60 remains open for outcome storage, migration,
+host/availability and other outstanding criteria; #61–#64 own durable behavior.
+The currently trusted SQLite feature tests explicitly assert version one and
+reject version two. A later version needs a scoped transition that preserves
+unsupported-version coverage and trusted verification; this slice leaves both
+the existing tests and version behavior intact.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Third-slice verification
+
+Bootstrap, documentation (135 files and 308 local links) and all 46 automation
+tests passed. Local real-provider SQLite verification passed one baseline and
+12 feature tests, including setting readback after reopen, foreign-key enforcement,
+independent files, a semicolon in the filename and rejected WAL/newer files with
+logical records and journal mode retained. Runtime verification passed two
+baseline and 93 feature tests from a snapshot matching the runtime source/tests.
+Independent review checked the scoped connection policy and its limits.
+Compiler verification passed 18 baseline and 406 feature tests from a
+short-path snapshot matching the final opener source and tests; its 506,836-byte
+TRX passed the unchanged size guard.
+
+The full isolated verifier and base-owned SQLite verifier could not pull the
+pinned MCR image locally (`Forbidden`); neither completed offline tests here.
+Hosted exact-head verification must provide that evidence. Existing tests and
+the base-owned verifier remain unchanged.
+
 ## Second slice: initial actor identity schema
 
 Base `aa0832e5d3a076f7b65182113d2d37be85629386` includes the merged #10
