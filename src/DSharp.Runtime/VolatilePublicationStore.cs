@@ -65,6 +65,13 @@ internal enum PublicationAcceptKind { Created, Existing, Conflict, PublicationId
 internal sealed record PublicationAcceptResult(PublicationAcceptKind Kind, PublicationRecord? Record);
 internal sealed record PublicationProbeResult(SubmissionProbeKind Kind, PublicationRecord? Record);
 
+// An explicitly invoked conformance seam for this in-memory reference only.
+internal enum PublicationFailurePoint { None, AfterIdentityReservation }
+internal sealed class PublicationInjectedFailureException : Exception
+{
+    public PublicationInjectedFailureException() : base("Injected publication failure after identity reservation.") { }
+}
+
 internal sealed partial class VolatileTargetedStore
 {
     private readonly Dictionary<(string ApplicationId, string SubmissionId), PublicationRecord> publications = new();
@@ -95,7 +102,20 @@ internal sealed partial class VolatileTargetedStore
     }
 
     public PublicationAcceptResult AcceptPublication(PublicationRequest request, Guid publicationId,
-        IEnumerable<PublicationIntent>? intents)
+        IEnumerable<PublicationIntent>? intents) =>
+        AcceptPublicationCore(request, publicationId, intents, PublicationFailurePoint.None);
+
+    // This entry point is a deterministic conformance probe, not a production failure policy.
+    public PublicationAcceptResult AcceptPublicationForConformance(PublicationRequest request, Guid publicationId,
+        IEnumerable<PublicationIntent>? intents, PublicationFailurePoint failurePoint)
+    {
+        if (failurePoint is not (PublicationFailurePoint.None or PublicationFailurePoint.AfterIdentityReservation))
+            throw new ArgumentOutOfRangeException(nameof(failurePoint));
+        return AcceptPublicationCore(request, publicationId, intents, failurePoint);
+    }
+
+    private PublicationAcceptResult AcceptPublicationCore(PublicationRequest request, Guid publicationId,
+        IEnumerable<PublicationIntent>? intents, PublicationFailurePoint failurePoint)
     {
         ArgumentNullException.ThrowIfNull(request);
         var key = (request.ApplicationId, request.SubmissionId);
@@ -148,6 +168,8 @@ internal sealed partial class VolatileTargetedStore
                 publicationIds.Add(publicationId);
                 try
                 {
+                    if (failurePoint == PublicationFailurePoint.AfterIdentityReservation)
+                        throw new PublicationInjectedFailureException();
                     publications.Add(key, record);
                 }
                 catch
