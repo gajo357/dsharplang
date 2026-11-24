@@ -1,5 +1,46 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Twelfth slice: round-trip actual reference-model records across processes
+
+Base `9aabb290a9939bafb3ba05debf343e65e2d435d1` contains the application-bound
+SQLite schema and readers. Continue the #60 branch and add a real-provider
+feature test in `tests/sqlite-features/ActorSqliteReferenceRoundTripTests.cs`.
+Its separate writer process accepts targeted and publication requests using the
+merged #59 volatile reference model, then explicitly maps the returned records
+into SQLite in a test-owned transaction and exits. A second process opens the
+same file, uses the existing bound readers and verifies the stored invocation,
+publication and each frozen delivery identity and all opaque request data.
+Use reflection in the test only to reach the internal #59 reference from the
+separate SQLite test assembly; do not change friend assemblies or test projects.
+The helper maps data for this test and is not a SQLite admission implementation.
+
+This verifies that actual accepted #59 reference records can be represented and
+survive normal writer-process exit, complementing earlier direct SQL and
+cross-process tests. It does not prove atomic admission, deduplication, host
+selection/availability, power-loss recovery or a durable RuntimeStore provider;
+#61, #64 and #69 retain those boundaries and #60 stays open until its full
+acceptance. Preserve all previous tests, schema and trusted verification. Run
+bootstrap, full verification, SQLite, runtime and compiler scripts, and the
+exact-base isolated SQLite verifier where the pinned image is available. Record
+actual results and status without claiming untested runtime behavior.
+
+### Twelfth-slice verification
+
+- Bootstrap and documentation checks (135 files, 308 local links) passed, as
+  did all 46 automation tests.
+- Real SQLite passed 1 baseline and 52 feature tests, including the new test
+  that accepts targeted/publication records in the reference writer process,
+  maps them in a test-owned transaction and reads them after that process exits.
+  Runtime passed 2 baseline and 96 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated SQLite verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head verification, including the SQLite failure/clean pilot,
+  remains required before merge. This evidence does not implement admission,
+  host availability reporting, provider conformance or power-loss recovery;
+  #60 remains open.
+
 ## Eleventh slice: read preserved publication and delivery identities
 
 Base `376490463e85e3252b2bff86a2ebed085d79167a` includes the application-bound
