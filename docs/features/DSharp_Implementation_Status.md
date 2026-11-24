@@ -91,6 +91,9 @@ row guards in one SQLite transaction. Tests cover reopen and competing binders;
 the host still owns path selection and existing-file provenance. The bound path
 currently rejects IDs containing NUL or unpaired UTF-16 and does not defend
 against deliberate changes to the trusted schema.
+An explicit path now initializes a fresh file or upgrades a supported v1/v2
+file and binds it in the same SQLite transaction. Tests cover preserved records,
+mismatch rejection, competing binders and rollback of an intermediate upgrade.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

@@ -37,7 +37,15 @@ internal static class ActorSqliteApplicationBinding
     // Bind an already-version-three database, or revalidate a version-four
     // binding. The caller owns the open connection and must use it exclusively.
     // All validation and schema changes run under the same immediate lock.
-    internal static void BindVersion3(SqliteConnection connection, string applicationId)
+    internal static void BindVersion3(SqliteConnection connection, string applicationId) =>
+        Bind(connection, applicationId, allowUpgrade: false);
+
+    // Explicitly opt into upgrading a fresh or older supported file and binding
+    // it in the same transaction. The legacy v3-only entry point stays strict.
+    internal static void BindWithUpgrade(SqliteConnection connection, string applicationId) =>
+        Bind(connection, applicationId, allowUpgrade: true);
+
+    private static void Bind(SqliteConnection connection, string applicationId, bool allowUpgrade)
     {
         ValidateApplicationId(applicationId);
         EnsureReady(connection);
@@ -49,14 +57,18 @@ internal static class ActorSqliteApplicationBinding
             // changed it after the initial preflight, before this lock.
             EnsureSettings(connection, transaction);
             var version = ReadLong(connection, transaction, "PRAGMA user_version");
-            if (version is not (3 or 4))
-                throw new InvalidOperationException("Only a version-three database can be bound.");
             if (version == 4)
             {
                 CheckBound(connection, transaction, applicationId);
             }
             else
             {
+                if (version != 3 && (!allowUpgrade || version is not (0 or 1 or 2)))
+                    throw new InvalidOperationException("The database version is not supported for this binding operation.");
+                if (version is 1 or 2)
+                    CheckExistingRows(connection, transaction, applicationId, (int)version);
+                if (version is 0 or 1 or 2)
+                    ActorSqliteSchema.ApplyWithinTransaction(connection, transaction, ActorSqliteSchemaVersion.V3);
                 CheckExistingRows(connection, transaction, applicationId);
                 Execute(connection, transaction, """
                     CREATE TABLE actor_application_binding (
@@ -169,14 +181,18 @@ internal static class ActorSqliteApplicationBinding
             throw new InvalidOperationException("An application binding guard is missing.");
     }
 
-    private static void CheckExistingRows(SqliteConnection connection, SqliteTransaction transaction, string applicationId)
+    private static void CheckExistingRows(SqliteConnection connection, SqliteTransaction transaction, string applicationId, int version = 3)
     {
-        foreach (var table in ActorTables)
+        var tableCount = version switch { 1 => 5, 2 => 7, 3 => ActorTables.Length, _ => throw new ArgumentOutOfRangeException(nameof(version)) };
+        for (var index = 0; index < tableCount; index++)
+        {
+            var table = ActorTables[index];
             if (ReadLong(connection, transaction, $"""
                 SELECT COUNT(*) FROM {table}
                 WHERE typeof(application_id) <> 'text' OR application_id IS NOT $application COLLATE BINARY
                 """, applicationId) != 0)
                 throw new InvalidOperationException("Existing actor records belong to another application.");
+        }
         if (ReadLong(connection, transaction, "SELECT COUNT(*) FROM pragma_foreign_key_check") != 0)
             throw new InvalidOperationException("Existing actor records violate foreign keys.");
     }

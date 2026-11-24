@@ -1,5 +1,61 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Eighth slice: atomic fresh/older-file upgrade and binding
+
+Base `423e75b7222fcde77414a5474807f17faac97df5` includes explicit v1–v3
+schemas and opt-in v3-to-v4 application binding. Continue the existing #60
+branch. Add an internal caller-owned-transaction migration entry point to
+`src/DSharp.Runtime/ActorSchemaMigrationCoordinator.cs`, with additive core tests
+in `tests/runtime-features/ActorSchemaMigrationTransactionTests.cs`. It requires
+a live transaction on the supplied open connection, checks connection identity,
+and relies on the provider to reject inactive transactions. It performs the same
+version checks/migrations inside the transaction and never commits, rolls back or
+disposes it. The existing coordinator entry point retains its current behavior
+and trusted tests.
+
+Use that entry point from an explicit new fresh/older-file binding path in
+`src/DSharp.Runtime.Sqlite/ActorSqliteSchema.cs`,
+`ActorSqliteApplicationBinding.cs` and `ActorSqliteDatabase.cs`; add real-provider
+tests in `tests/sqlite-features/ActorSqliteApplicationUpgradeTests.cs`. Under a
+single immediate SQLite transaction, validate existing v1/v2/v3 actor identities
+and foreign keys, upgrade their schema to v3, install the v4 application binding
+and guards, and commit. An empty unversioned database can follow the same path;
+a nonempty unversioned database, wrong/mixed IDs, corruption or unsupported newer
+version must fail without partial schema/version changes. Existing v3-only
+binding and v1–v3/default opener contracts remain unchanged. Validate an app ID
+before file creation. Keep the v4 identity limitations and host responsibility
+for path/provenance from the preceding slice; do not claim authentication,
+malicious-schema resistance, actual host availability, admission or crash
+durability. #60 remains open pending its full acceptance criteria.
+
+Real SQLite tests cover fresh creation, populated v1 and v2 upgrades retaining
+records, same/different-app reopen, wrong and mixed identities without intermediate
+upgrade, invalid IDs before file creation, nonempty unversioned/newer/corrupt files,
+same/different concurrent first binders, and a real later-DDL conflict that rolls
+back both intermediate migrations and binding. Core tests verify caller-owned
+transaction behavior, connection mismatch and no implicit commit/rollback/dispose.
+Preserve all prior tests, old entry points, trusted verifiers and safeguards.
+
+Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-sqlite.sh`, `bash scripts/verify-runtime.sh`,
+`bash scripts/verify-compiler.sh`, the base-owned isolated SQLite verifier where
+the pinned image is available, and `git diff --check`. Record actual results.
+
+### Eighth-slice verification
+
+- Bootstrap, documentation checks (135 files and 308 local links), and all 46
+  automation tests passed.
+- The real SQLite suite passed 1 baseline and 48 feature tests, including the
+  inactive-transaction rejection; the competing-upgrade test also passed five
+  additional runs. Runtime passed 2 baseline and 96 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the existing report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and base-owned isolated SQLite verifier could not
+  complete locally: the pinned MCR image pull returned `Forbidden`. Hosted
+  exact-head isolated verification, including the SQLite failure-detection pilot,
+  remains required before merge. These local results do not prove durability or
+  host availability; #60 remains open.
+
 ## Seventh slice: atomic per-file application binding
 
 Base `b9afd21458d0e6dbf5a324e66ee1f08b5d13bc46` includes the v1–v3 schemas

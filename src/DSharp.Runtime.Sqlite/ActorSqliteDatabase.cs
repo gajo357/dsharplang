@@ -44,6 +44,24 @@ internal static class ActorSqliteDatabase
         }
     }
 
+    // Explicitly initialize or upgrade an older supported file and bind it in
+    // one transaction. Invalid application IDs are rejected before opening.
+    internal static SqliteConnection OpenAndBind(string path, string applicationId)
+    {
+        ActorSqliteApplicationBinding.ValidateApplicationId(applicationId);
+        var connection = OpenConfigured(path, SqliteOpenMode.ReadWriteCreate);
+        try
+        {
+            ActorSqliteApplicationBinding.BindWithUpgrade(connection, applicationId);
+            return connection;
+        }
+        catch (Exception error)
+        {
+            DisposeAfterFailure(connection, error);
+            throw;
+        }
+    }
+
     private static SqliteConnection OpenConfigured(string path, SqliteOpenMode mode)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);

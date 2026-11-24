@@ -186,6 +186,25 @@ internal static class ActorSqliteSchema
     {
         ValidateVersion(version);
         EnsureReady(connection);
+        Coordinator(version).Apply(connection);
+    }
+
+    // The binding path owns the surrounding immediate transaction and commits
+    // only after both upgrade and application binding have succeeded.
+    internal static void ApplyWithinTransaction(SqliteConnection connection, SqliteTransaction transaction,
+        ActorSqliteSchemaVersion version)
+    {
+        ValidateVersion(version);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new InvalidOperationException("The transaction must belong to the supplied open connection.");
+        EnsureReady(connection, transaction);
+        Coordinator(version).ApplyWithinTransaction(connection, transaction);
+    }
+
+    private static ActorSchemaMigrationCoordinator Coordinator(ActorSqliteSchemaVersion version)
+    {
         var migrations = version switch
         {
             ActorSqliteSchemaVersion.V1 => new[] { new ActorSchemaMigration(1, InitialStatements) },
@@ -202,7 +221,7 @@ internal static class ActorSqliteSchema
             },
             _ => throw new ArgumentOutOfRangeException(nameof(version))
         };
-        new ActorSchemaMigrationCoordinator(migrations).Apply(connection);
+        return new ActorSchemaMigrationCoordinator(migrations);
     }
 
     // Only trusted, transaction-compatible statements may be passed. This is an
@@ -213,13 +232,14 @@ internal static class ActorSqliteSchema
         new ActorSchemaMigrationCoordinator([new ActorSchemaMigration(1, statements)]).Apply(connection);
     }
 
-    private static void EnsureReady(SqliteConnection connection)
+    private static void EnsureReady(SqliteConnection connection, SqliteTransaction? transaction = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         if (connection.State != ConnectionState.Open)
             throw new InvalidOperationException("The caller must supply an open connection.");
         using (var command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = "PRAGMA foreign_keys";
             if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 1)
                 throw new InvalidOperationException("SQLite foreign key enforcement must be enabled on this connection.");
