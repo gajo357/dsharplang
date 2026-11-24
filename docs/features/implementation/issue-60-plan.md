@@ -1,5 +1,47 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Eleventh slice: read preserved publication and delivery identities
+
+Base `376490463e85e3252b2bff86a2ebed085d79167a` includes the application-bound
+v4 schema, pinned invocation reader and normal cross-process persistence test.
+Continue the #60 branch. Add an internal, parameterized bound-file reader for
+one saved publication and one exact `(publication, subscription)` delivery.
+The publication snapshot retains its submission identity and copied opaque
+contract, payload and options even when no deliveries exist. The delivery
+snapshot retains its frozen requested and selected implementation IDs; absence
+of a specific delivery is distinct from an existing empty publication. Each
+query is a separate SQLite snapshot, not a multi-query atomic view or an
+enumeration/fanout API. Keep the host's path/provenance responsibilities and
+the bound opener's existing behavior; never reselect an implementation.
+
+Add `src/DSharp.Runtime.Sqlite/ActorSqlitePublicationReader.cs` and real-provider
+tests in `tests/sqlite-features/ActorSqlitePublicationReaderTests.cs` covering
+reopen, opaque bytes and defensive copies, multiple pinned identities, a real
+zero-delivery publication, missing IDs, parameterized apostrophes, wrong
+application and missing-file rejection. These are schema/reopen reads, not
+publication acceptance, registry selection, delivery execution, a codec or
+durable acknowledgement; #69 owns fanout and #60 remains open pending its full
+acceptance. Preserve prior tests, schema, trusted verification and protections.
+
+Run bootstrap, the full verifier, SQLite, runtime and compiler scripts, and the
+exact-base SQLite verifier when its pinned image is available. Record actual
+results and precisely tested behavior in this plan and the status document.
+
+### Eleventh-slice verification
+
+- Bootstrap and documentation checks (135 files, 308 local links) passed, as
+  did all 46 automation tests.
+- Real SQLite passed 1 baseline and 51 feature tests, including the new
+  publication and delivery reopen test and the previous cross-process test.
+  Runtime passed 2 baseline and 96 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated SQLite verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head verification, including the SQLite failure/clean pilot,
+  remains required before merge. These reads do not establish admission, host
+  availability, fanout or power-loss recovery; #60 remains open.
+
 ## Tenth slice: verify file persistence across independent processes
 
 Base `661282f31be397916b34133ab65f889f9ccf5636` provides the application-bound

@@ -103,6 +103,10 @@ reads them from a second process after the writer exits, including pinned
 selection, encoded inputs, fault/lifecycle rows and separate application files.
 This demonstrates normal committed-file persistence, not SQLite admission,
 power-loss recovery or host availability reporting.
+An internal bound-file reader can also retrieve a saved publication, including
+one with no deliveries, and an individual delivery's frozen requested/selected
+IDs after reopen. Separate reads are separate snapshots; this does not perform
+publication admission, fanout or execution.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
