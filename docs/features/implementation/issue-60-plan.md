@@ -1,5 +1,89 @@
 # Issue #60: SQLite actor schema and migrations
 
+## Completion audit plan
+
+Base `c44cac8936a5b9c7156ecfef4435920aa4bdf0bc` includes all twelve #60
+slices and the real-provider reference-model round trip. Reconcile the live
+#60 acceptance criteria against the merged schema and named tests below. Update
+this plan and the implementation status only; make no production, test,
+dependency or verification changes. Run bootstrap, full verification, SQLite,
+runtime and compiler scripts; record exact results and request hosted exact-head
+checks. The completion draft may close #60 only on a subsequent eligible merge.
+
+The earlier per-slice statements that #60 remains open describe their historical
+partial scope. In particular, actual durable admission and acknowledgement are
+owned by #61, while resolving a recorded implementation and reporting a missing
+or incompatible one are owned by #64. Both are downstream of #60: requiring
+their completed implementations to close the schema issue would reverse the
+documented dependency order. This audit does not declare either downstream issue
+or the shared #101 integration checks complete.
+
+### Acceptance-to-evidence map
+
+1. **Invocation, attempt, publication and delivery records, opaque contracts,
+   outcomes and ancestry.** `ActorSqliteSchema` defines application-scoped
+   submission, invocation, attempt, publication and delivery tables, v2 attempt
+   exits and ordered fault observations, and v3 lifecycle/recovery records.
+   `ActorSqliteSchemaTests.SchemaIsIdempotentAndPreservesOpaqueBytesAndSelectionOnReopen`,
+   `AttemptsAncestryAndFrozenDeliveryRelationshipsRemainDistinct`,
+   `ActorSqliteOutcomeTests.AttemptExitsPreserveNormalFaultAndDistinctOriginsWithOrderedObservations`
+   and `ActorSqliteLifecycleTests.RecoveryHistoryKeepsFaultAndLeaseLossDistinctAndOrdered`
+   exercise those stored shapes with real SQLite. Requested and selected IDs
+   are stored as caller-supplied identities; no inference from source/display
+   names or host registry behavior is claimed.
+2. **Uniqueness and transaction/version helpers.** `SharedCaseSensitiveKeysAndKindsEnforceOwnership`
+   and `AttemptsAncestryAndFrozenDeliveryRelationshipsRemainDistinct` verify
+   shared submission keys, distinct attempts and publication/subscription
+   delivery identities and relationships. `ActorSqliteWriteBatchTests` covers
+   committed linked writes, rollback on later constraint or row-count failure,
+   and an actual deferred-foreign-key commit failure. The version coordinator
+   rejects unsupported versions; its caller-owned transaction is covered by
+   `ActorSchemaMigrationTransactionTests` and the real SQLite inactive-transaction
+   test. These helpers are substrate, not #59 provider conformance.
+3. **Fresh setup, reopen, atomic failure and upgrades.**
+   `ActorSqliteApplicationUpgradeTests.FreshFileIsInitializedAndBoundAndInvalidIdCreatesNothing`,
+   `PopulatedV1AndV2UpgradeAndBindWithoutLosingRecords`,
+   `LaterDdlConflictRollsBackIntermediateUpgradeAndBinding` and
+   `UnversionedNonemptyNewerAndCorruptFilesFailWithoutMutation`, along with the
+   v2/v3 migration-failure tests, exercise supported setup and upgrades with
+   real files and prove rollback and unsupported-version rejection.
+4. **Application isolation, selected settings and preserved records.**
+   `ActorSqliteDatabaseTests` checks the file settings; the v4 binding tests
+   verify wrong/mixed IDs, guard enforcement and competing binders.
+   `ActorSqliteProcessRestartTests.CommittedActorRecordsSurviveWriterProcessExit`
+   verifies two separate application files, settings, selected IDs, ancestry
+   and stored fault/lifecycle data after a writer process exits.
+   `ActorSqliteReferenceRoundTripTests.ActualAcceptedReferenceRecordsCanBeStoredAndReadAfterWriterExit`
+   uses accepted #59 reference records and a **test-owned** SQLite mapping,
+   then reads their pinned identities and encoded data after the writer exits.
+   This proves the schema can preserve those records, not that an SQLite
+   admission path exists. #61 owns that path; #64 owns actual compatibility
+   decisions and blocked/failed reporting, and #243/#71 own diagnostic chains
+   and inspection. The host remains responsible for application-to-path mapping
+   and file provenance. The current bound path rejects NUL and unpaired UTF-16
+   application IDs and does not defend against deliberate trusted-schema edits.
+
+This is normal committed-file persistence and atomic setup evidence, not a
+claim of power-loss recovery, at-least-once execution, codec correctness,
+authorization or a complete durable `RuntimeStore`. Those remain downstream.
+Hosted CI #353 and Compiler #346 passed on the merged #313 head; the trusted
+SQLite run executed the baseline and 52 feature tests and rejected its named
+deliberate failure before a clean rerun. A new hosted run is still needed for
+the completion draft itself. #60 remains open until that draft is merged.
+
+### Completion-audit verification
+
+- Bootstrap and documentation checks (135 files, 309 local links) passed, as
+  did all 46 automation tests. No implementation or test files changed.
+- Real SQLite passed 1 baseline and 52 feature tests, including both process
+  tests. Runtime passed 2 baseline and 96 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated SQLite verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the SQLite failure/clean pilot, remain
+  required for this draft.
+
 ## Twelfth slice: round-trip actual reference-model records across processes
 
 Base `9aabb290a9939bafb3ba05debf343e65e2d435d1` contains the application-bound
