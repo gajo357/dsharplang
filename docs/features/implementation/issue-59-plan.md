@@ -346,3 +346,47 @@ short-path snapshot matching the final runtime source and tests. The unchanged
 512,000-byte TRX guard accepted the 506,836-byte feature report.
 The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
 hosted verification is still required for that container path.
+
+## Eighth slice: volatile cancellation winner bookkeeping
+
+Base: `8ee328f5b2c833e9263896e2902f3a1fca7cda20`, with #9/#14 and the
+preceding #59 slices merged. Continue the existing issue branch. Extend the
+internal reference in `src/DSharp.Runtime/VolatileTargetedOwnership.cs`, add
+`tests/runtime-features/VolatileCancellationTests.cs`, and update this plan and
+status. Preserve existing tests, dependencies, verifier, public ABI and D# syntax.
+
+Serialize the reference cancellation request with existing operations under the
+same gate. An eligible invocation becomes Cancelled before claim; a running one
+retains an idempotent request marker for a host to observe. A terminal result or
+failure that committed first remains unchanged. If a request wins first, a
+still-fenced normal or reported-fault exit finalizes Cancelled and preserves its
+actual copied exit separately for inspection; it is not a delivered result or a
+retry. This includes `RescheduleAfterFault`, which must not schedule another
+attempt. Both expiry-recovery variants retain their exact observed fence and
+finalize Cancelled without a retry or invented exit after a request, including
+when the request arrived after lease expiry. Stale or expired owners cannot record
+an exit, and renewal remains subject to the normal exact-owner, unexpired fence.
+No host callbacks, authorization or signal delivery are added under the gate.
+
+Acceptance-to-test map: pending/delayed requests and competing claim exercise
+winner ordering; repeated requests and terminal-first cases exercise idempotence;
+normal, business-error-like and reported-fault exits exercise separately retained
+copied observations; wrong or expired owners and exact observed expiry exercise
+fencing; bounded cancellation versus exit, reschedule, claim and recovery races
+exercise single outcomes and preserved prior histories. Run
+`bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
+`bash scripts/verify-compiler.sh`, `bash scripts/verify-runtime.sh`, and
+`git diff --check`; record actual results and isolated-image limits.
+
+This is volatile state bookkeeping for #59 conformance, not authorization,
+cooperative signaling, provider durability, wait delivery, physical process
+termination, rollback of external effects, or complete cleanup-fault aggregation.
+Execution and cancellation delivery belong to #67 and waiting to #57; #59 stays open.
+
+Verification: bootstrap and documentation checks passed; all 31 automation
+tests passed. Runtime verification passed 2 baseline and 52 feature tests.
+Compiler verification passed 18 baseline and 406 feature tests in a private
+short-path snapshot matching the final runtime source and tests. The unchanged
+512,000-byte TRX guard accepted the 506,836-byte feature report.
+The local isolated verifier could not pull its pinned MCR image (`Forbidden`);
+hosted verification is still required for that container path.
