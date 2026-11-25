@@ -116,6 +116,12 @@ transaction, migration and normal process-reopen criteria to the real-provider
 tests. Actual durable admission remains #61; implementation availability and
 execution remain #64. Neither is implied by the schema evidence.
 
+The first #78 slice adds internal JSON scalar primitives for bool, int32 and
+string, including explicit nullable variants and redacted root-path decode
+errors. Tests cover type, range, Unicode and malformed-input rejection. This is
+not an adopted public API, composite/Option encoding, canonical durable codec
+or actor admission support; #78 remains open.
+
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
 This status describes tested implementation, not the full syntax draft.
