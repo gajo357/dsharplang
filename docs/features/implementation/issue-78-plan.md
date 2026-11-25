@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirteenth slice: nullable elements in internal union arrays
+
+Base `f796e4c1df2cf78223dbf782c0360f04f36d84cf` includes #328's
+internal union arrays. Extend record fields with required and nullable/optional
+arrays whose union elements may be null. Keep a distinct immutable array type
+with exact union descriptor identity, copied inputs and no nullable-element
+coercion into existing required-element arrays. Preserve missing, null-array,
+empty-array, null-element and unit-case distinctions; propagate redacted indexed
+errors and retain the combined 64-level bound.
+
+Change `src/DSharp.Runtime/JsonScalarRecordCodec.cs`, add
+`tests/runtime-features/JsonNullableUnionArrayTests.cs`, and update status.
+Map round trips and nested compositions to AC1/AC3; missing/null/empty and
+foreign values to AC2/AC3; indexed redaction and depth boundaries to AC4.
+This remains provisional internal work, not an adopted Option, public D# API,
+schema evolution policy or durable wire format. #78 remains open. Preserve
+existing tests, projects, dependencies and trusted verification. Run bootstrap,
+full verifier, runtime, SQLite and compiler regressions and the exact-base
+isolated runtime verifier where available; record results in this plan.
+
+### Thirteenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK on `PATH`.
+- `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 52 automation tests, then the isolated compiler stage could not pull the
+  pinned MCR image (`Forbidden`). The exact-base isolated runtime verifier hit
+  the same image-pull failure. Hosted exact-head checks and the trusted runtime
+  intentional-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 164 feature tests;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged report guard accepted 508,460 bytes.
+
 ## Twelfth slice: internal arrays of tagged unions
 
 Base `84503abaa229aca9ece32ed7bafe1b70fc496dc1` contains the internal

@@ -154,6 +154,8 @@ Internal record scalar arrays also support exact-number tokens, including nullab
 elements and nullable or optional array fields, with indexed redacted errors.
 Internal record fields can also contain arrays of one exact tagged-union
 descriptor, with nullable or optional array presence and redacted indexed errors.
+Separate internal union-array descriptors also support nullable elements while
+preserving null-array, missing-field and union-case distinctions.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
