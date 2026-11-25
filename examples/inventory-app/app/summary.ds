@@ -1,0 +1,7 @@
+module InventorySummary
+
+import Inventory
+
+fn available(): int {
+    remaining(50, 8)
+}

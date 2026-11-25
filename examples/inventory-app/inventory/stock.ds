@@ -1,0 +1,5 @@
+module Inventory
+
+fn remaining(received: int, sold: int): int {
+    received - sold
+}

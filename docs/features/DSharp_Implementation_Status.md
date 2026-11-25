@@ -155,6 +155,10 @@ elements and nullable or optional array fields, with indexed redacted errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
+
+The inventory application example uses the current multi-file compiler subset;
+its verifier checks and compiles the actual sources and executes the generated
+pure calculation. It does not demonstrate an actor runtime or an SDK scaffold.
 This status describes tested implementation, not the full syntax draft.
 
 The [pipes, partial application and logging specification](DSharp_Pipes_and_Logging.md)
