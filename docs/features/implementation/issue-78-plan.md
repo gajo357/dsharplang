@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifth slice: internal arrays of records
+
+Base `fa968f88bf87b867d3d390846e317e274e6577a5` includes nested record
+descriptors. Extend the existing internal record codec to describe fields holding
+arrays of records of one exact child descriptor, including a nullable array with
+optional presence. Elements are non-null independently owned record snapshots;
+copy the typed input array and reject descriptor mismatches. No external
+constructors, converters or mutable foreign objects run. Preserve all existing
+tests and reuse #9's enabled runtime paths and pinned framework without changes
+to dependencies, projects or trusted verifiers.
+
+Decode nested arrays with schema-owned, escaped field paths and generated array
+indexes. Reject wrong types, null elements, missing, duplicate and unknown child
+fields with redacted errors and no partial result. Account for both array and
+object levels in the existing 64-level parser bound. Tests cover empty and
+multiple arrays, optional missing versus explicit null, array snapshots and
+descriptor identity, nested failures and the exact supported depth boundary.
+This is partial #78 AC1–AC4 evidence, not a public D# collection/record API,
+union or Option representation, schema evolution or canonical durable format.
+#78 remains open. Run bootstrap, full verification, runtime, SQLite regression,
+compiler checks and the exact-base isolated runtime verifier when available;
+record actual evidence and update status only for tested behavior.
+
+### Fifth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did 46 automation tests. Dependencies, projects and trusted verifiers did not
+  change.
+- Runtime passed 2 baseline and 125 feature tests, including five new record
+  array tests. SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot; the unchanged report-size guard passed (506,836-byte feature TRX).
+- The full isolated verifier and the exact-base isolated runtime verifier could
+  not complete locally: the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks and the trusted runtime failure/clean pilot remain
+  required. This is a bounded internal slice; #78 remains open.
+
 ## Fourth slice: nested internal record descriptors
 
 Base `6411186f94b9e373aed9f90961cb2a5d6074ba9a` includes the provisional

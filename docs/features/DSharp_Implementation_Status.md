@@ -131,9 +131,11 @@ redacted schema-field error paths. Its case, unknown-field and duplicate-field
 policies are provisional; it does not construct application records or establish
 a public record, Option or durable schema-evolution format.
 The same internal descriptor now supports nested record snapshots up to depth
-64, including nullable nested fields and escaped nested error paths. It does not
-yet compose records with arrays, construct D# records or define union/Option
-or durable encoding contracts.
+64, including nullable nested fields and escaped nested error paths. Internal
+fields can also contain arrays of explicitly described records, with nullable
+array presence and redacted indexed child paths. Elements must be non-null
+snapshots of the exact child descriptor. This does not construct D# records or
+define union/Option or durable encoding contracts.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
