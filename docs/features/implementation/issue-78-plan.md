@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixth slice: scalar array fields in internal records
+
+Base `0c0924cad9cbfe063fad5efc9f8100998373acc5` contains scalar and record
+array building blocks. Extend the existing internal record descriptor to hold
+arrays of non-null bool, int32 or string elements, with explicit nullable array
+fields and optional missing versus null. Typed array inputs become copied,
+read-only snapshots; strings retain the existing UTF-16 validation and foreign
+objects or null elements are rejected. Preserve existing tests, paths, pinned
+dependencies and trusted verifiers from #9.
+
+Add runtime feature tests covering each kind, nullable presence, empty arrays,
+snapshot ownership, wrong types, invalid Unicode, escaped field/index error
+paths, redaction, and the JSON depth boundary. Account for each array level in
+the 64-level descriptor bound. This is partial #78 AC1–AC4 evidence, not a
+public D# codec, nullable elements, union/Option, durable wire contract or
+schema-evolution policy; #78 remains open. Run bootstrap, full verification,
+runtime, SQLite regression, compiler checks and the exact-base isolated runtime
+verifier when available, and record actual results.
+
+### Sixth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No dependency, project or trusted verifier
+  changed.
+- Runtime passed 2 baseline and 130 feature tests, including five new scalar
+  array field tests; SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests in a private short-path
+  snapshot; the unchanged report guard passed (506,836-byte feature TRX).
+- Full isolated verification and the exact-base isolated runtime verifier could
+  not complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 stays open for its complete codec and integration criteria.
+
 ## Fifth slice: internal arrays of records
 
 Base `fa968f88bf87b867d3d390846e317e274e6577a5` includes nested record
