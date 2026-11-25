@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Explicit internal scalar descriptors, not reflection or a public D# schema.
-internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue }
+internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue, NullableFieldValue }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null, JsonTaggedUnionSchema? UnionSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -59,7 +59,7 @@ internal sealed class JsonScalarRecordSchema
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
         JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or
-        JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray;
+        JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray or JsonRecordFieldKind.NullableFieldValue;
 
     // Only schema-owned names appear in paths, JSON-escaped to keep control
     // characters and punctuation safe. Unknown input names are never echoed.
@@ -134,6 +134,7 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.NullableInteger => value is null or int,
         JsonRecordFieldKind.NullableString => value is null or string,
         JsonRecordFieldKind.FieldValue => value is JsonFieldValue,
+        JsonRecordFieldKind.NullableFieldValue => value is null || value is JsonFieldValue { Kind: not JsonFieldValueKind.Null },
         JsonRecordFieldKind.ExactNumber => value is JsonExactNumber,
         JsonRecordFieldKind.NullableExactNumber => value is null or JsonExactNumber,
         JsonRecordFieldKind.Record => value is JsonScalarRecord record && ReferenceEquals(record.Schema, field.NestedSchema),
@@ -487,6 +488,8 @@ internal static class JsonScalarRecordCodec
         JsonRecordFieldKind.NullableInteger => Box(JsonScalarCodec.ReadNullableInteger(value)),
         JsonRecordFieldKind.NullableString => Box(JsonScalarCodec.ReadNullableString(value)),
         JsonRecordFieldKind.FieldValue => Box(JsonFieldValueCodec.Read(value, "$")),
+        JsonRecordFieldKind.NullableFieldValue => value.ValueKind == JsonValueKind.Null
+            ? JsonScalarResult<object?>.Success(null) : Box(JsonFieldValueCodec.Read(value, "$")),
         JsonRecordFieldKind.ExactNumber => Box(JsonExactNumber.Read(value)),
         JsonRecordFieldKind.NullableExactNumber => value.ValueKind == JsonValueKind.Null
             ? JsonScalarResult<object?>.Success(null) : Box(JsonExactNumber.Read(value)),
@@ -521,7 +524,8 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.NullableInteger: writer.WriteNumberValue((int)value); break;
             case JsonRecordFieldKind.String:
             case JsonRecordFieldKind.NullableString: writer.WriteStringValue((string)value); break;
-            case JsonRecordFieldKind.FieldValue: writer.WriteRawValue(JsonFieldValueCodec.Encode((JsonFieldValue)value)); break;
+            case JsonRecordFieldKind.FieldValue:
+            case JsonRecordFieldKind.NullableFieldValue: writer.WriteRawValue(JsonFieldValueCodec.Encode((JsonFieldValue)value)); break;
             case JsonRecordFieldKind.ExactNumber:
             case JsonRecordFieldKind.NullableExactNumber: writer.WriteRawValue(((JsonExactNumber)value).Token); break;
             case JsonRecordFieldKind.Record:

@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixteenth slice: optional nullable tree fields
+
+Base `2384177339bd6903b8afc84254d447a79e615a60` integrates private JSON
+value trees with records and unions but requires tree fields to be present. Add
+an explicit nullable tree field kind that may also be optional. Preserve three
+distinct states: absent, present JSON null, and present non-null tree. As with
+other nullable fields, represent present null as CLR null; reject a separate
+`JsonFieldValue.Null()` wrapper in this kind so one decoded null has one internal
+representation. The existing required `FieldValue` kind remains unchanged.
+
+Update the private record codec and add runtime feature tests for missing/null/
+empty/nested values, non-null precision, type mismatch and duplicate/redacted
+errors, construction snapshots and combined depth bounds through unions. This
+advances #78 AC1–AC4, especially nullable presence (AC2), without adopting
+Option, public D# APIs, logging or durable schema semantics. Preserve existing
+tests, dependencies, projects and trusted verification. Run bootstrap, full
+verifier, runtime, SQLite and compiler regressions and exact-base isolated runtime
+verification where available; record actual results. #78 remains open.
+
+### Sixteenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed using the pinned SDK. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  52 automation tests; the isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 179 feature tests,
+  including five new presence/composition tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Fifteenth slice: compose value trees with records and unions
 
 Base `9ecb11044950c9199943fa01bcb0f322dff7ec92` includes the private
