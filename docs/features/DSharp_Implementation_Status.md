@@ -159,6 +159,8 @@ preserving null-array, missing-field and union-case distinctions.
 An independent internal JSON value tree supports heterogeneous nested scalar
 lists and string-keyed maps, exact number spellings, owned snapshots, a bounded
 depth and redacted indexed errors. It is not yet a public D# or logging API.
+Explicit internal record fields can hold those value trees through nested records
+and unions, with a combined 64-container bound and redacted nested errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

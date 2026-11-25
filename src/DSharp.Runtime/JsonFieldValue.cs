@@ -98,7 +98,7 @@ internal static class JsonFieldValueCodec
         }
         catch (JsonException) { return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidJson); }
     }
-    private static JsonScalarResult<JsonFieldValue> Read(JsonElement element, string path)
+    internal static JsonScalarResult<JsonFieldValue> Read(JsonElement element, string path)
     {
         switch (element.ValueKind)
         {

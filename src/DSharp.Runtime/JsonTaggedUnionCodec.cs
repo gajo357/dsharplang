@@ -52,6 +52,7 @@ internal sealed class JsonTaggedUnion
     internal JsonTaggedUnionSchema Schema { get; }
     internal int CaseIndex { get; }
     internal JsonScalarRecord? Payload { get; }
+    internal int Depth => 1 + (Payload?.Depth ?? 0);
 
     internal static JsonTaggedUnion Create(JsonTaggedUnionSchema schema, int caseIndex, JsonScalarRecord? payload = null)
     {
@@ -60,6 +61,7 @@ internal sealed class JsonTaggedUnion
         var descriptor = schema.CaseAt(caseIndex).Payload;
         if (descriptor is null ? payload is not null : payload is null || !ReferenceEquals(payload.Schema, descriptor))
             throw new ArgumentException("Union payload must match its case descriptor.", nameof(payload));
+        if (1 + (payload?.Depth ?? 0) > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", nameof(payload));
         return new JsonTaggedUnion(schema, caseIndex, payload);
     }
 }

@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifteenth slice: compose value trees with records and unions
+
+Base `9ecb11044950c9199943fa01bcb0f322dff7ec92` includes the private
+heterogeneous value tree and typed record/union snapshots. Allow an explicit
+required record field to hold a tree, including its explicit JSON null, so a
+typed record or union payload can carry nested field data. Preserve exact number
+tokens, immutable snapshots and redacted indexed paths. Track actual container
+depth through records, unions and their arrays so programmatic construction and
+decoding enforce the same 64-container limit across both representations.
+
+Modify the existing private record/union and tree codecs; add runtime feature
+tests for nested record/union round trips, exact numbers, invalid/duplicate and
+redacted paths, null and foreign values, and mixed depth boundaries (partial
+AC1–AC4). Preserve prior tests, dependencies, project files and trusted
+verification. This does not define optional tree fields, public D# APIs, Option
+wire semantics, logging delivery or durable schemas; #78 remains open. Run
+bootstrap, full verifier, runtime, SQLite and compiler regressions and the
+exact-base isolated runtime verifier where available; record actual results.
+
+### Fifteenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed using the pinned SDK. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  52 automation tests; the isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 174 feature tests,
+  including five composition tests. `bash scripts/verify-sqlite.sh` passed
+  1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Fourteenth slice: heterogeneous scalar lists and maps
 
 Base `a79ac681b202df0654bb484b09a9a7545561ec2a` contains the internal
