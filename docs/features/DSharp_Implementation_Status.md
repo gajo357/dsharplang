@@ -152,6 +152,8 @@ integers and decimal/exponent spellings without binary floating-point conversion
 This does not establish numeric comparison or a canonical durable format.
 Internal record scalar arrays also support exact-number tokens, including nullable
 elements and nullable or optional array fields, with indexed redacted errors.
+Internal record fields can also contain arrays of one exact tagged-union
+descriptor, with nullable or optional array presence and redacted indexed errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
