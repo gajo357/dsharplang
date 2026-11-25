@@ -1,5 +1,41 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Tenth slice: lossless internal JSON number tokens
+
+Base `7be57e920e8674c770a0b4e00a5cda1862549a26` contains the provisional
+internal record/union codecs. Add a separate immutable exact JSON number token
+building block and explicit nullable/non-null internal record field kinds. Parse
+with the existing strict JSON parser, retain the valid number spelling without a
+binary-floating-point or bounded-decimal conversion, and write it as a JSON
+number. Copy input into immutable storage, reject malformed/trailing input,
+non-numbers and foreign values, and preserve redacted field errors. This supports
+large integer/decimal precision required by the logging target without claiming
+numeric comparison, arbitrary D# numeric types or a canonical durable format.
+
+Test large integers and decimal/exponent spellings including trailing zeros and
+negative zero; malformed, non-number and Unicode/trailing input; input ownership;
+nullable/missing record presence; nested redacted paths; descriptor type safety;
+and repeatable round trips. This is partial #78 AC1–AC4 evidence only; public
+D# APIs, Option, schema evolution and durable wire adoption remain open. Use
+#9's existing runtime source/tests and pinned framework; preserve prior tests,
+dependencies, projects and trusted verifiers. Run bootstrap, full verifier,
+runtime, SQLite regression, compiler checks and exact-base isolated runtime
+verification where available, and record actual results. #78 remains open.
+
+### Tenth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No dependency, project or trusted verifier
+  changed.
+- Runtime passed 2 baseline and 150 feature tests, including five new exact
+  number tests; SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot; the unchanged report guard passed (506,836-byte feature TRX).
+- Full isolated verification and the exact-base isolated runtime verifier could
+  not complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 remains open and no durable numeric format is adopted.
+
 ## Ninth slice: compose internal records and tagged unions
 
 Base `e5cea4a10b8cadefe30c0faf904cc0e75cdd4da6` includes the experimental
