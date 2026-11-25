@@ -1,5 +1,37 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: example-matched quick reference
+
+Base `dd10fb9ac8835f9f3f467ee3e927dba231a1d300` contains the verified
+application example and Claude import check. The requested version-matched
+cheatsheet has no AI-01 artifact on this base. Add a deliberately narrow
+`examples/inventory-app/CHEATSHEET.md` describing only the example's actual
+checked compiler subset and linking the current pinned SDK, implementation
+status, source files and verifier. Link it from the example's project-owned
+`AGENTS.md` and direct scaffold users to a version-matched reference when one
+exists. Do not claim a packaged SDK, initialization, actor runtime, or general
+syntax compatibility; the broader AI-01/02/04 work remains separate.
+
+Map source and executable claims to the existing example check/build/execute
+verifier. Add a small automation test that compares every displayed D# block
+with its actual source file and checks local links so the reference cannot
+silently drift. Preserve existing tests, trusted verification, dependencies and
+the pinned SDK. Run the new test, example verifier, bootstrap, full verifier and
+compiler regression, then record exact results. #326 remains open while broader
+documentation coordination is outstanding.
+
+### Quick-reference results
+
+- The new source/link automation test passed; the existing example verifier,
+  run from `examples/inventory-app`, checked and compiled both D# files and
+  executed the generated calculation as 42.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100 on `PATH`.
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 51 automation tests. Its isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`); hosted exact-head verification remains necessary.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Follow-on: version-specific Claude import evidence
 
 Base `b64e7c60fd98d287a1dc1908257d6360510e283c` contains the application
