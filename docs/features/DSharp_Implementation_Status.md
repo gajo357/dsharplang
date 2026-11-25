@@ -163,6 +163,8 @@ Explicit internal record fields can hold those value trees through nested record
 and unions, with a combined 64-container bound and redacted nested errors.
 Nullable tree fields can also be optional, retaining missing, explicit null and
 present non-null values as distinct internal states.
+Explicit internal adapters map typed record and union snapshots to JSON value
+trees and back using a supplied descriptor and the existing provisional codecs.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
