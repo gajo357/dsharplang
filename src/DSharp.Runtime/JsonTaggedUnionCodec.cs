@@ -18,6 +18,7 @@ internal sealed class JsonTaggedUnionSchema
         this.cases = (JsonTaggedUnionCase[])cases.Clone();
         if (this.cases.Length == 0) throw new ArgumentException("At least one case is required.", nameof(cases));
         indexes = new(StringComparer.Ordinal);
+        var depth = 1;
         for (var index = 0; index < this.cases.Length; index++)
         {
             var item = this.cases[index];
@@ -26,12 +27,15 @@ internal sealed class JsonTaggedUnionSchema
             JsonScalarCodec.ValidateUtf16(item.Name);
             if (item.Payload is { Depth: > 63 })
                 throw new ArgumentException("Union descriptor depth exceeds the supported limit.", nameof(cases));
+            if (item.Payload is { } payload) depth = Math.Max(depth, checked(payload.Depth + 1));
             if (!indexes.TryAdd(item.Name, index))
                 throw new ArgumentException("Case names must be distinct.", nameof(cases));
         }
+        Depth = depth;
     }
 
     internal int Count => cases.Length;
+    internal int Depth { get; }
     internal JsonTaggedUnionCase CaseAt(int index) => cases[index];
     internal bool TryFind(string name, out int index) => indexes.TryGetValue(name, out index);
 }

@@ -144,6 +144,9 @@ An internal experimental tagged-union codec composes explicit case descriptors
 with optional record payload snapshots and redacted path-aware failures. Its
 object shape is provisional and does not adopt a public D# union, Option or
 durable message format.
+Internal record fields can compose that union descriptor in either direction,
+including through record arrays, with exact descriptor identity, nullable
+presence and redacted nested paths under the combined depth limit.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
