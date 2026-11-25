@@ -1,5 +1,39 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Seventeenth slice: explicit typed-value tree mapping
+
+Base `f245cc9a3890e45151aadc06d18c7a0663fa6209` has private typed
+record/union codecs and heterogeneous immutable JSON trees. Add explicit
+internal adapters in both directions between a typed record or tagged union and
+a tree, using the existing provisional codec representations and an explicitly
+supplied descriptor on the reverse path. This connects those codecs end to end
+without reflection, application constructors or an inferred schema. Retain exact
+numbers, nullable/missing distinctions, descriptor identity, bounded depth and
+redacted typed decode errors. Do not silently map Option or adopt a public or
+durable format; the current union shape remains experimental.
+
+Add a private mapping source and runtime feature tests. Cover nested record and
+union round trips (AC1/AC3), missing and null fields (AC2), wrong shape, unknown
+fields/tags and redaction (AC2/AC4), immutable snapshots and depth boundaries.
+Preserve prior tests, SDK, dependencies, project files and trusted verification.
+Run bootstrap, full verifier, runtime, SQLite and compiler checks and the
+exact-base isolated runtime verifier where available; record results. #78 remains
+open for public typed integration, approved Option and durable/version contracts.
+
+### Seventeenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  52 automation tests; the isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 184 feature tests,
+  including five typed mapping tests. `bash scripts/verify-sqlite.sh` passed
+  1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Sixteenth slice: optional nullable tree fields
 
 Base `2384177339bd6903b8afc84254d447a79e615a60` integrates private JSON
