@@ -123,8 +123,13 @@ not an adopted public API, composite/Option encoding, canonical durable codec
 or actor admission support; #78 remains open.
 The next internal slice handles arrays of these scalar and nullable element
 types, including two-level int32 arrays, with generated indexed error paths and
-read-only decoded collections. It does not establish a D# collection codec or
-extend the provisional scalar format to records, unions or Option.
+read-only decoded collections. This array slice does not establish a D#
+collection codec or define union or Option encodings.
+An additional internal descriptor handles records of the supported scalar
+kinds, preserving missing versus explicit-null optional fields and returning
+redacted schema-field error paths. Its case, unknown-field and duplicate-field
+policies are provisional; it does not construct application records or establish
+a public record, Option or durable schema-evolution format.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

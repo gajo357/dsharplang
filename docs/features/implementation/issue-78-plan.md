@@ -1,5 +1,54 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Third slice: explicit internal scalar-record descriptors
+
+Base `47d4b04606ebe28a377c713499df62f09967b480` includes scalar and bounded
+array primitives. Continue #78 on its existing branch using #9's already enabled
+runtime and feature-test paths and the pinned net11.0 framework. Add an internal
+explicit descriptor for records containing only bool, int32, string and their
+nullable variants. Encode/decode immutable scalar snapshots without invoking
+application constructors, setters, converters or arbitrary object methods.
+Reject foreign/mutable objects by exact supported type rather than reflecting
+over them; copy input arrays and do not promise a coherent snapshot if callers
+mutate those arrays concurrently.
+
+The provisional descriptor uses ordinal case-sensitive declared field names.
+Required fields must be present; optional fields must be nullable and preserve
+the distinction between an omitted field and an explicit null. Unknown or
+duplicate input fields are rejected; unknown names are not echoed. Wrong types,
+integer/Unicode failures and missing/duplicate known fields carry a safely
+escaped path based only on the declared schema name. Malformed JSON and unknown
+names report `$`, without input values or parser text. A successful decode
+returns independently owned immutable scalar data, never a partial result.
+
+Add `src/DSharp.Runtime/JsonScalarRecordCodec.cs` and new tests in
+`tests/runtime-features/JsonScalarRecordCodecTests.cs`. Extend the internal
+error-code vocabulary for these record failures without changing existing
+scalar/array behavior or tests. Exercise round trips, supported scalar kinds,
+explicit null versus missing, required/duplicate/unknown fields, case and
+escaping, redaction, unsupported objects, invalid descriptors and snapshots.
+This is a proposed bounded internal schema policy, not an adopted D# record API,
+general reflection deserializer, Option or union format, durable canonical wire
+contract, schema evolution mechanism, HTTP integration or actor admission.
+#78 remains open. Preserve existing tests, dependencies and trusted verifiers.
+Run bootstrap, full verification, runtime, SQLite regression and compiler
+scripts, plus the exact-base isolated runtime verifier where its pinned image is
+available; record actual results.
+
+### Third-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No package, project or trusted verifier changed.
+- Runtime passed 2 baseline and 115 feature tests, including six new record
+  tests and all prior scalar/array tests. The real SQLite regression suite passed
+  1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated runtime verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 remains open for full codec and integration acceptance.
+
 ## Second slice: internal scalar arrays and indexed decode errors
 
 Base `2a0a966d4e4ed16a5d8111edd1d41bac7883bcc2` includes #315's internal
