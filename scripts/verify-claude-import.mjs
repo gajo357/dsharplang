@@ -9,7 +9,15 @@ import { fileURLToPath } from 'node:url';
 
 const executable = process.argv[2] && resolve(process.argv[2]);
 assert.ok(executable, 'Pass the Claude Code 2.1.332 executable path.');
-assert.equal(execFileSync(executable, ['--version'], { encoding: 'utf8' }).trim(), '2.1.332 (Claude Code)');
+let version;
+try {
+  version = execFileSync(executable, ['--version'], {
+    encoding: 'utf8', env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'ignore']
+  }).trim();
+} catch {
+  throw new Error('Unable to read the Claude Code version.');
+}
+assert.ok(version === '2.1.332 (Claude Code)', 'Expected Claude Code 2.1.332.');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const temp = mkdtempSync(join(tmpdir(), 'dsharp-claude-import-'));
 
@@ -41,8 +49,8 @@ async function check(directory, marker, withImport) {
   await new Promise((ok, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', ok); });
   try {
     const address = `http://127.0.0.1:${server.address().port}`;
-    // Explicit environment excludes real credentials and sends HTTP(S) through
-    // the local mock; the mock never forwards requests.
+    // The explicit environment excludes caller credentials and configures the
+    // local mock as the endpoint and proxy. It is not a network sandbox.
     const env = { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: join(temp, 'config'),
       ANTHROPIC_BASE_URL: address, ANTHROPIC_API_KEY: 'local-test-only',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1',
@@ -50,14 +58,14 @@ async function check(directory, marker, withImport) {
     const result = await new Promise((ok, fail) => {
       const child = spawn(executable, ['--print', '--strict-mcp-config', '--setting-sources', 'project',
         '--model', 'test', '--max-turns', '1', 'Reply OK'], { cwd: fixture, env, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '', stderr = '';
+      let stdout = '';
       child.stdout.on('data', chunk => { stdout += chunk; });
-      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.stderr.resume();
       const timeout = setTimeout(() => child.kill('SIGKILL'), 30000);
       child.on('error', error => { clearTimeout(timeout); fail(error); });
-      child.on('close', code => { clearTimeout(timeout); ok({ code, stdout, stderr }); });
+      child.on('close', code => { clearTimeout(timeout); ok({ code, stdout }); });
     });
-    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.code, 0, 'Claude did not complete the local mock run.');
     assert.match(result.stdout, /OK/);
     assert.ok(requests > 0, 'Claude did not call the local mock.');
     assert.equal(sawMarker, withImport, `${directory}: unexpected import behavior`);

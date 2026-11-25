@@ -10,7 +10,7 @@ Add `scripts/verify-claude-import.mjs`: copy the actual guidance/import files to
 private temporary fixtures, run the specified version with a dummy key against
 an in-process loopback mock, and verify the request context contains the
 guidance. A negative control with a non-importing CLAUDE.md must omit it. No
-real service, account or project data is used. Check both the example and
+real service, account or private project data is used. Check both the example and
 scaffold imports, and document the exact command, version, binary digest,
 results and limitation. The source's CLI startup and mock-context evidence
 check import loading, not model behavior or SDK generation.
@@ -35,12 +35,28 @@ tests, the pinned SDK, dependencies and trusted checks.
   the import. The subprocess used an isolated config, dummy key and local mock;
   it did not use a real account or call an AI service. This verifies this
   version and environment, not every Claude version or model behavior.
+  The configured endpoint and proxies are not a network sandbox. Both the
+  version probe and test runs exclude caller credentials; failure output omits
+  subprocess diagnostics and captured request content.
 - `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100 on `PATH`.
   `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
   all 47 automation tests; its isolated compiler stage could not pull the pinned
   MCR image (`Forbidden`). Hosted exact-head verification remains necessary.
 - `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
   a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+- Review repair: the version probe now receives only `PATH`, version and test
+  subprocess diagnostics are suppressed on failure, and the local endpoint and
+  proxy configuration is explicitly described as no network sandbox. The three
+  `claude-import-safety.test.mjs` regressions passed for synthetic caller-secret
+  exclusion, failed-run stderr redaction, and version stdout/stderr redaction.
+  The real 2.1.332 positive/negative checks also passed through a wrapper that
+  rejects a synthetic caller secret. An initial regression exposed version
+  stderr; it was fixed before the passing rerun. Bootstrap passed, documentation
+  validation passed (137 files, 309 links), and all 50 automation tests passed.
+  The full verifier again stopped on the pinned MCR image pull (`Forbidden`).
+  The compiler regression passed 18 baseline and 406 features before the final
+  JavaScript-only redaction change, with a 509,272-byte guarded TRX. Hosted
+  exact-head checks remain necessary for the repaired branch.
 
 Base: `838aa91dd054abe9977efdc91915be76e58293cb`. #326 is P0 and
 independent of the still-open JSON codec issue. It calls for a supported-compiler
