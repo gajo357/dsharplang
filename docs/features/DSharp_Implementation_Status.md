@@ -136,6 +136,9 @@ fields can also contain arrays of explicitly described records, with nullable
 array presence and redacted indexed child paths. Elements must be non-null
 snapshots of the exact child descriptor. This does not construct D# records or
 define union/Option or durable encoding contracts.
+Internal record fields also support non-null bool, int32 and string arrays,
+including nullable array presence, with copied snapshots and redacted indexed
+errors. Nullable elements and public collection mappings remain future work.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

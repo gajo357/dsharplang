@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Explicit internal scalar descriptors, not reflection or a public D# schema.
-internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray }
+internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -29,10 +29,13 @@ internal sealed class JsonScalarRecordSchema
                 throw new ArgumentException("The field descriptor is not supported.", nameof(fields));
             var isArray = field.Kind is JsonRecordFieldKind.RecordArray or JsonRecordFieldKind.NullableRecordArray;
             var isRecord = isArray || field.Kind is JsonRecordFieldKind.Record or JsonRecordFieldKind.NullableRecord;
+            var isScalarArray = JsonRecordScalarArray.ElementKind(field.Kind) is not null;
             if (isRecord != (field.NestedSchema is not null))
                 throw new ArgumentException("Nested fields require exactly one child descriptor.", nameof(fields));
             if (field.NestedSchema is { } nested)
                 depth = Math.Max(depth, checked(nested.Depth + (isArray ? 2 : 1)));
+            else if (isScalarArray)
+                depth = Math.Max(depth, 2);
             if (depth > 64)
                 throw new ArgumentException("Record descriptor depth exceeds the supported limit.", nameof(fields));
             if (!indexes.TryAdd(field.Name, index))
@@ -46,7 +49,8 @@ internal sealed class JsonScalarRecordSchema
     internal JsonRecordField FieldAt(int index) => fields[index];
     internal bool TryFind(string name, out int index) => indexes.TryGetValue(name, out index);
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
-        JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray;
+        JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or
+        JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray;
 
     // Only schema-owned names appear in paths, JSON-escaped to keep control
     // characters and punctuation safe. Unknown input names are never echoed.
@@ -107,7 +111,47 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.NullableRecord => value is null || value is JsonScalarRecord record && ReferenceEquals(record.Schema, field.NestedSchema),
         JsonRecordFieldKind.RecordArray => value is JsonRecordArray array && ReferenceEquals(array.Schema, field.NestedSchema),
         JsonRecordFieldKind.NullableRecordArray => value is null || value is JsonRecordArray array && ReferenceEquals(array.Schema, field.NestedSchema),
+        JsonRecordFieldKind.BooleanArray or JsonRecordFieldKind.IntegerArray or JsonRecordFieldKind.StringArray =>
+            value is JsonRecordScalarArray scalarArray && scalarArray.Kind == JsonRecordScalarArray.ElementKind(field.Kind),
+        JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray =>
+            value is null || value is JsonRecordScalarArray scalarArray && scalarArray.Kind == JsonRecordScalarArray.ElementKind(field.Kind),
         _ => false
+    };
+}
+
+internal enum JsonRecordScalarArrayKind { Boolean, Integer, String }
+
+// The only accepted elements are immutable primitive values copied from typed arrays.
+internal sealed class JsonRecordScalarArray
+{
+    private readonly Array values;
+    private JsonRecordScalarArray(JsonRecordScalarArrayKind kind, Array values) { Kind = kind; this.values = values; }
+    internal JsonRecordScalarArrayKind Kind { get; }
+    internal int Count => values.Length;
+    internal object At(int index) => values.GetValue(index)!;
+    internal static JsonRecordScalarArray Create(bool[] values) => new(JsonRecordScalarArrayKind.Boolean, Copy(values));
+    internal static JsonRecordScalarArray Create(int[] values) => new(JsonRecordScalarArrayKind.Integer, Copy(values));
+    internal static JsonRecordScalarArray Create(string[] values)
+    {
+        var snapshot = Copy(values);
+        foreach (var item in snapshot)
+        {
+            if (item is null) throw new ArgumentException("String array elements cannot be null.", nameof(values));
+            JsonScalarCodec.ValidateUtf16(item);
+        }
+        return new JsonRecordScalarArray(JsonRecordScalarArrayKind.String, snapshot);
+    }
+    private static T[] Copy<T>(T[] values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return (T[])values.Clone();
+    }
+    internal static JsonRecordScalarArrayKind? ElementKind(JsonRecordFieldKind kind) => kind switch
+    {
+        JsonRecordFieldKind.BooleanArray or JsonRecordFieldKind.NullableBooleanArray => JsonRecordScalarArrayKind.Boolean,
+        JsonRecordFieldKind.IntegerArray or JsonRecordFieldKind.NullableIntegerArray => JsonRecordScalarArrayKind.Integer,
+        JsonRecordFieldKind.StringArray or JsonRecordFieldKind.NullableStringArray => JsonRecordScalarArrayKind.String,
+        _ => null
     };
 }
 
@@ -191,6 +235,12 @@ internal static class JsonScalarRecordCodec
                     ? JsonScalarResult<object?>.Success(null)
                     : Box(ReadRecordArray(field.NestedSchema!, property.Value, path));
             }
+            else if (JsonRecordScalarArray.ElementKind(field.Kind) is { } scalarKind)
+            {
+                value = JsonScalarRecordSchema.IsNullable(field.Kind) && property.Value.ValueKind == JsonValueKind.Null
+                    ? JsonScalarResult<object?>.Success(null)
+                    : Box(ReadScalarArray(scalarKind, property.Value, path));
+            }
             else
             {
                 var scalar = ReadValue(property.Value, field.Kind);
@@ -205,6 +255,34 @@ internal static class JsonScalarRecordCodec
             if (!present[index] && !schema.FieldAt(index).Optional)
                 return JsonScalarResult<JsonScalarRecord>.Failure(JsonScalarErrorCode.MissingField, objectPath + schema.PathAt(index)[1..]);
         return JsonScalarResult<JsonScalarRecord>.Success(JsonScalarRecord.Create(schema, values, present));
+    }
+
+    private static JsonScalarResult<JsonRecordScalarArray> ReadScalarArray(JsonRecordScalarArrayKind kind, JsonElement element, string path)
+    {
+        if (element.ValueKind != JsonValueKind.Array)
+            return JsonScalarResult<JsonRecordScalarArray>.Failure(JsonScalarErrorCode.TypeMismatch, path);
+        return kind switch
+        {
+            JsonRecordScalarArrayKind.Boolean => ReadScalarItems(element, path, JsonScalarCodec.ReadBoolean, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.Integer => ReadScalarItems(element, path, JsonScalarCodec.ReadInteger, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.String => ReadScalarItems(element, path, JsonScalarCodec.ReadString, JsonRecordScalarArray.Create),
+            _ => throw new InvalidOperationException("Unsupported scalar array descriptor.")
+        };
+    }
+
+    private static JsonScalarResult<JsonRecordScalarArray> ReadScalarItems<T>(JsonElement element, string path,
+        Func<JsonElement, JsonScalarResult<T>> read, Func<T[], JsonRecordScalarArray> create)
+    {
+        var values = new List<T>();
+        foreach (var item in element.EnumerateArray())
+        {
+            var result = read(item);
+            if (!result.IsSuccess)
+                return JsonScalarResult<JsonRecordScalarArray>.Failure(result.Error!.Value.Code,
+                    path + "[" + values.Count.ToString(CultureInfo.InvariantCulture) + "]");
+            values.Add(result.Value);
+        }
+        return JsonScalarResult<JsonRecordScalarArray>.Success(create(values.ToArray()));
     }
 
     private static JsonScalarResult<JsonRecordArray> ReadRecordArray(JsonScalarRecordSchema schema, JsonElement element, string path)
@@ -269,6 +347,26 @@ internal static class JsonScalarRecordCodec
                 var array = (JsonRecordArray)value;
                 writer.WriteStartArray();
                 for (var index = 0; index < array.Count; index++) WriteRecord(writer, array.At(index));
+                writer.WriteEndArray();
+                break;
+            case JsonRecordFieldKind.BooleanArray:
+            case JsonRecordFieldKind.IntegerArray:
+            case JsonRecordFieldKind.StringArray:
+            case JsonRecordFieldKind.NullableBooleanArray:
+            case JsonRecordFieldKind.NullableIntegerArray:
+            case JsonRecordFieldKind.NullableStringArray:
+                var scalars = (JsonRecordScalarArray)value;
+                writer.WriteStartArray();
+                for (var index = 0; index < scalars.Count; index++)
+                {
+                    switch (scalars.Kind)
+                    {
+                        case JsonRecordScalarArrayKind.Boolean: writer.WriteBooleanValue((bool)scalars.At(index)); break;
+                        case JsonRecordScalarArrayKind.Integer: writer.WriteNumberValue((int)scalars.At(index)); break;
+                        case JsonRecordScalarArrayKind.String: writer.WriteStringValue((string)scalars.At(index)); break;
+                        default: throw new InvalidOperationException("Unsupported scalar array descriptor.");
+                    }
+                }
                 writer.WriteEndArray();
                 break;
             default: throw new InvalidOperationException("Unsupported record descriptor.");
