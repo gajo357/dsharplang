@@ -1,5 +1,48 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fourth slice: nested internal record descriptors
+
+Base `6411186f94b9e373aed9f90961cb2a5d6074ba9a` includes the provisional
+scalar-record descriptor. Continue #78 on its owning branch, extending only the
+internal descriptor to contain explicitly described nested records and nullable
+nested records. Reuse the existing #9 runtime source/test paths and pinned
+net11.0 framework; change no package, manifest or trusted verifier. Preserve
+all existing scalar, array and record tests and their policies.
+
+In `src/DSharp.Runtime/JsonScalarRecordCodec.cs`, nested fields carry a specific
+immutable child descriptor, and values must be independently owned record
+snapshots of that exact descriptor. Nullable optional nested fields retain the
+distinction between missing and explicit null. A bounded descriptor depth (64,
+matching the existing `JsonDocument` default) prevents unbounded recursion.
+Decoding must preserve generated schema-field paths through nested records;
+unknown names report the containing object path without echoing input, while
+wrong values, duplicate names and missing required fields report the escaped
+declared child path. No application constructors, setters or converters execute.
+
+Add `tests/runtime-features/JsonNestedRecordCodecTests.cs` for nested round
+trips, optional presence, descriptor mismatch, unsupported inputs/depth,
+redacted nested paths, missing/duplicate/unknown fields, wrong types and
+malformed JSON. This is partial #78 AC1–AC4 evidence only: it is not a public
+D# record API, arbitrary reflection, record-array integration, Option or union
+encoding, canonical durable wire contract or schema-evolution policy. #78 stays
+open. Run bootstrap, full verification, runtime, SQLite regression and compiler
+scripts, plus the exact-base isolated runtime verifier where the pinned image is
+available; record actual results and update status only for tested behavior.
+
+### Fourth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No package, project or trusted verifier changed.
+- Runtime passed 2 baseline and 120 feature tests, including five new nested
+  record tests and all prior scalar, array and record tests. The real SQLite
+  regression suite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated runtime verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 remains open for full codec and integration acceptance.
+
 ## Third slice: explicit internal scalar-record descriptors
 
 Base `47d4b04606ebe28a377c713499df62f09967b480` includes scalar and bounded
