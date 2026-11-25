@@ -1,5 +1,41 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twelfth slice: internal arrays of tagged unions
+
+Base `84503abaa229aca9ece32ed7bafe1b70fc496dc1` contains the internal
+record, union and array building blocks from merged #323–#325. Compose an
+immutable array of values from one exact union descriptor into required and
+nullable/optional record fields. Preserve array ownership, reject null or
+foreign elements and descriptor mismatches, retain missing/null/empty
+distinctions, redact indexed nested failures, and count array, union and record
+containers under the existing 64-level bound.
+
+Change `src/DSharp.Runtime/JsonScalarRecordCodec.cs`, add
+`tests/runtime-features/JsonUnionArrayTests.cs`, and update implementation
+status. Test unit/payload cases and nested round trips (AC1/AC3), nullable and
+missing fields plus malformed/foreign values (AC2/AC3), indexed redacted paths
+and depth limits (AC4). This only advances provisional internals: public D#
+APIs, nullable union elements, Option, schema versioning and durable format
+adoption remain out of scope; #78 remains open. Preserve existing tests,
+dependencies, projects and trusted verifier. Run bootstrap, full verifier,
+runtime, SQLite and compiler checks and exact-base isolated runtime verifier
+where available; record results before publishing the draft.
+
+### Twelfth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK on `PATH`.
+- `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 47 automation tests, then its isolated compiler stage could not pull the
+  pinned MCR image (`Forbidden`). The exact-base isolated runtime verifier hit
+  the same image-pull failure. Hosted exact-head checks, including the trusted
+  runtime intentional-failure/clean pilot, remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 159 feature tests. An
+  initial test incorrectly expected `InvalidInteger` for a JSON string; after
+  correcting it to `TypeMismatch`, the full runtime suite passed.
+- `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged report guard accepted 508,460 bytes.
+
 ## Eleventh slice: exact-number arrays in internal records
 
 Base `de1031f0417132f45c022912061f80ca2332b2ae` adds exact-number
