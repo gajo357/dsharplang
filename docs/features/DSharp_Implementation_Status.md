@@ -161,6 +161,7 @@ The matrix below includes subsequent implemented feature slices.
 The inventory application example uses the current multi-file compiler subset;
 its verifier checks and compiles the actual sources and executes the generated
 pure calculation. It does not demonstrate an actor runtime or an SDK scaffold.
+Its quick reference reproduces those source files and is checked for drift.
 The example and scaffold relative Claude imports were checked with Claude Code
 2.1.332 against a local mock, including controls without imports.
 This status describes tested implementation, not the full syntax draft.
