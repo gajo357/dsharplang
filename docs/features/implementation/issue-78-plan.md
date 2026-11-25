@@ -1,5 +1,41 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Eighth slice: provisional internal tagged union codec
+
+Base `da39d198fb1ab0a05e597a3b40c4af9f0911dce5` supplies internal record
+snapshots. Add a separate internal tagged-union codec with an explicitly supplied
+immutable set of distinct case names and either no payload or an exact internal
+record payload descriptor. For this private experiment only, encode an object
+with `case` and, for a record case, `value`; require exactly those fields on
+decode. Preserve case-sensitive identity, reject unknown/duplicate/missing fields
+and unknown tags without echoing input, and prepend the fixed payload path to
+record errors. No application constructors, reflection or external converters
+run. A union and its record payload together obey the existing 64-level bound.
+
+Test every case and both property orders, null/missing/wrong payloads, unknown
+and duplicate names/tags, invalid Unicode and malformed input, snapshot/schema
+identity, nested redacted paths, and the exact depth boundary. This is a
+provisional internal representation and partial #78 AC1–AC4 evidence: it does
+not establish an adopted D# union, Option, public JSON or durable wire contract
+or schema evolution policy. Keep #78 open. Preserve previous tests, dependencies,
+projects and trusted verifiers; use #9's existing runtime paths. Run bootstrap,
+full verification, runtime, SQLite regression, compiler checks and the exact-base
+isolated runtime verifier when available, and record actual results.
+
+### Eighth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No dependency, project or trusted verifier
+  changed.
+- Runtime passed 2 baseline and 140 feature tests, including five new tagged
+  union tests; SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot; the unchanged report guard passed (506,836-byte feature TRX).
+- Full isolated verification and the exact-base isolated runtime verifier could
+  not complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. The tagged shape is experimental and #78 remains open.
+
 ## Seventh slice: nullable elements in internal scalar array fields
 
 Base `d70abdb08782a2131c98efa9fd0b01d12b92fd05` contains non-null scalar

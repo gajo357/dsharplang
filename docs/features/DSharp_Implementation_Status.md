@@ -140,6 +140,10 @@ Internal record fields also support non-null bool, int32 and string arrays,
 including nullable array presence, with copied snapshots and redacted indexed
 errors. Separate internal descriptors support nullable scalar elements as well,
 independently of array nullability; public collection mappings remain future work.
+An internal experimental tagged-union codec composes explicit case descriptors
+with optional record payload snapshots and redacted path-aware failures. Its
+object shape is provisional and does not adopt a public D# union, Option or
+durable message format.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
