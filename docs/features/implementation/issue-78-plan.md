@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fourteenth slice: heterogeneous scalar lists and maps
+
+Base `a79ac681b202df0654bb484b09a9a7545561ec2a` contains the internal
+record, union, array and exact-number building blocks. Implement a separate
+internal immutable JSON value tree for nested heterogeneous lists and
+string-keyed maps of null, booleans, strings and exact number tokens. This
+advances the logging target's explicitly described field shapes and #78 AC1/AC3;
+it does not implement logging, UUID/time conversion, record/union/Option mapping,
+a public D# API or a durable schema. Preserve exact numeric spelling, copied
+container ownership, valid Unicode and the existing 64-container nesting bound.
+Reject duplicate map keys, malformed values and foreign data without invoking
+application code; errors use generated indexes rather than untrusted map keys,
+and never contain input values (AC2/AC4). Test nested round trips, copies,
+malformed and duplicate input, Unicode, redaction, and the depth boundary.
+
+Add runtime source and feature tests in the existing #9 paths, update status,
+and preserve dependencies, prior tests and trusted verification. Run bootstrap,
+full verifier, runtime, SQLite and compiler regressions and exact-base isolated
+runtime verification where available. Record actual evidence before publishing
+the draft. #78 remains open for the adopted full codec and integration.
+
+### Fourteenth-slice verification
+
+- Bootstrap passed with the pinned SDK on `PATH`. Full verification passed
+  documentation (137 files, 309 links) and all 52 automation tests, then the
+  pinned MCR image pull returned `Forbidden` in the isolated compiler stage.
+  Exact-base isolated runtime verification reached the same image-pull failure;
+  hosted exact-head checks and the trusted runtime failure/clean pilot remain
+  necessary. A first invocation of the exact-base harness lacked its locked
+  Node dependencies; after installing them the harness reached the image pull.
+- Runtime passed 2 baseline and 169 feature tests; SQLite passed 1 baseline
+  and 52 feature tests. A sandbox proxy connection failure during the first
+  runtime restore was resolved by the managed network retry.
+- Compiler passed 18 baseline and 406 feature tests in a short-path snapshot;
+  the unchanged report guard accepted 508,460 bytes. An initial invocation
+  stopped silently after restore; its ordinary retry passed.
+
 ## Thirteenth slice: nullable elements in internal union arrays
 
 Base `f796e4c1df2cf78223dbf782c0360f04f36d84cf` includes #328's
