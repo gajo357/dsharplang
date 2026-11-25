@@ -161,6 +161,8 @@ lists and string-keyed maps, exact number spellings, owned snapshots, a bounded
 depth and redacted indexed errors. It is not yet a public D# or logging API.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
+Nullable tree fields can also be optional, retaining missing, explicit null and
+present non-null values as distinct internal states.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
