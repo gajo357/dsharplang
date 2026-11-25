@@ -156,6 +156,9 @@ Internal record fields can also contain arrays of one exact tagged-union
 descriptor, with nullable or optional array presence and redacted indexed errors.
 Separate internal union-array descriptors also support nullable elements while
 preserving null-array, missing-field and union-case distinctions.
+An independent internal JSON value tree supports heterogeneous nested scalar
+lists and string-keyed maps, exact number spellings, owned snapshots, a bounded
+depth and redacted indexed errors. It is not yet a public D# or logging API.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
