@@ -1,5 +1,40 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Ninth slice: compose internal records and tagged unions
+
+Base `e5cea4a10b8cadefe30c0faf904cc0e75cdd4da6` includes the experimental
+internal tagged-union codec. Extend internal record fields to hold a union of
+one exact union descriptor, including nullable and optional fields, and allow
+that record to be an existing union's payload or a record-array element. Both
+directions retain immutable snapshot/schema identity and distinguish missing,
+null and a unit-like union case. Reject foreign descriptors and malformed,
+unknown, duplicate or invalid nested content without exposing input values.
+Combine record, array and union depths under the existing 64-level limit.
+
+Add new runtime feature tests for nested union/record composition, case and
+payload round trips, nullable presence, schema mismatch, escaped nested/indexed
+error paths and redaction, and the exact supported depth boundary. Use #9's
+existing runtime paths and pinned framework; preserve all existing tests,
+dependencies, projects and trusted verifiers. This is partial #78 AC1–AC4
+evidence for provisional internals only, not an adopted public D# union,
+Option, schema evolution or durable wire contract; #78 remains open. Run
+bootstrap, full verifier, runtime, SQLite regression, compiler checks and the
+exact-base isolated runtime verifier where available; record actual evidence.
+
+### Ninth-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No dependency, project or trusted verifier
+  changed.
+- Runtime passed 2 baseline and 145 feature tests, including five new nested
+  union composition tests; SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot; the unchanged report guard passed (506,836-byte feature TRX).
+- Full isolated verification and the exact-base isolated runtime verifier could
+  not complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. The union shape is experimental and #78 remains open.
+
 ## Eighth slice: provisional internal tagged union codec
 
 Base `da39d198fb1ab0a05e597a3b40c4af9f0911dce5` supplies internal record
