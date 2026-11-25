@@ -1,5 +1,35 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: bound verified-example claims
+
+Base `8f2bd25501a2f302b9ecc4523f79e45a19c02b41` includes the inventory
+quick reference and its source comparison. The example guidance currently calls
+the entire examples directory verified, although its verifier executes only the
+two inventory sources. Link those two explicitly instead. The reference test
+compares marked D# blocks with source, but an extra unmarked D# block could evade
+that comparison. Add an independent automation guard for all D# fences, with
+negative examples showing that unmarked samples fail. Keep the existing test and
+behavior verifier unchanged, and preserve other examples and trusted checks.
+
+This addresses the issue's claims and automatically verified-example criteria
+for the inventory application; it does not imply verification of other examples,
+SDK packaging or runtime behavior. Run the guard and existing example verifier,
+bootstrap, full verifier and compiler regression; record exact results. Broader
+AI-01/02/04 coordination remains outside this slice and #326 remains open.
+
+### Verified-claim results
+
+- The new guard passed on the reference and rejected unmarked `dsharp`, `DS`
+  and `d#` fenced examples. The existing source/link comparison passed as well.
+- The documented example verifier, run from its application root, checked and
+  compiled the two actual files and executed the calculation as 42.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100 on `PATH`.
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 52 automation tests, then could not pull the pinned MCR image (`Forbidden`)
+  for the isolated compiler stage. Hosted exact-head verification remains needed.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Follow-on: example-matched quick reference
 
 Base `dd10fb9ac8835f9f3f467ee3e927dba231a1d300` contains the verified
