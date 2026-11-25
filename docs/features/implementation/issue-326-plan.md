@@ -1,5 +1,47 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: version-specific Claude import evidence
+
+Base `b64e7c60fd98d287a1dc1908257d6360510e283c` contains the application
+and scaffold guidance from #327. Verify the existing relative imports using the
+published Linux x64 Claude Code 2.1.332 release as a concrete compatibility
+baseline, without adopting a package dependency or claiming other versions.
+Add `scripts/verify-claude-import.mjs`: copy the actual guidance/import files to
+private temporary fixtures, run the specified version with a dummy key against
+an in-process loopback mock, and verify the request context contains the
+guidance. A negative control with a non-importing CLAUDE.md must omit it. No
+real service, account or project data is used. Check both the example and
+scaffold imports, and document the exact command, version, binary digest,
+results and limitation. The source's CLI startup and mock-context evidence
+check import loading, not model behavior or SDK generation.
+
+AC mapping: version-specific positive/negative import checks cover the requested
+relative import and root delegation; the earlier example execution and link
+checks remain unchanged. The current issue retains its AI-01/02/04 coordination
+and version-matched cheatsheet work. Run the new verifier, bootstrap, full
+verifier and compiler regression; record actual results. Preserve existing
+tests, the pinned SDK, dependencies and trusted checks.
+
+### Follow-on results
+
+- The official [Claude Code 2.1.332 release](https://github.com/anthropics/claude-code/releases/tag/v2.1.332)
+  supplies the version used for this compatibility baseline. Installed with
+  `npm install --prefix /tmp/dsharp-claude-check --ignore-scripts --no-audit --no-fund --no-save @anthropic-ai/claude-code@2.1.332`;
+  the Linux x64 executable reported `2.1.332 (Claude Code)` and SHA-256
+  `a2df1f41bb00250992926420d0063f89b127cb81abdd284dbefb80c50ff1d026`.
+- `node scripts/verify-claude-import.mjs /tmp/dsharp-claude-check/node_modules/@anthropic-ai/claude-code-linux-x64/claude`
+  passed for both actual instruction files. Their guidance appeared in the
+  local mock request with `@AGENTS.md`, and was absent in both controls without
+  the import. The subprocess used an isolated config, dummy key and local mock;
+  it did not use a real account or call an AI service. This verifies this
+  version and environment, not every Claude version or model behavior.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100 on `PATH`.
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 47 automation tests; its isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). Hosted exact-head verification remains necessary.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 Base: `838aa91dd054abe9977efdc91915be76e58293cb`. #326 is P0 and
 independent of the still-open JSON codec issue. It calls for a supported-compiler
 example now; SDK packaging and initialization remain AI-04 work. No AI-01/02
@@ -34,11 +76,10 @@ version-matched references rather than inventing a cheatsheet.
 - Run `bash .github/ai/bootstrap.sh`, `bash .github/ai/verify.sh`,
   `bash scripts/verify-compiler.sh`, and `bash scripts/verify-application-example.sh`.
 
-Claude Code is not installed here and the repository does not identify a supported
-Claude Code version. Official documentation can establish relative import syntax,
-not an execution test against an unspecified version; retain that acceptance
-item as outstanding and keep #326 open until verified. The new automation test
-runs in the candidate verifier; the existing base verifier remains untouched.
+At this slice's original wrap, no version-specific execution evidence was
+available. The follow-on above supplies evidence for 2.1.332. The new example
+automation test runs in the candidate verifier; the existing base verifier is
+untouched. AI-01/02/04 coordination remains outside this bounded follow-on.
 
 ## Results
 
@@ -54,6 +95,5 @@ runs in the candidate verifier; the existing base verifier remains untouched.
 - `bash scripts/verify-compiler.sh` passed in a short-path snapshot: 18 baseline
   and 406 feature tests; the unchanged TRX guard accepted 509,272 bytes.
 - [Claude Code's import documentation](https://code.claude.com/docs/en/memory#import-additional-files)
-  describes `@` imports relative to the containing file. No installed or
-  repository-supported Claude Code version was available for an actual import
-  execution check; that item and the AI-01/02/04 coordination remain open.
+  describes `@` imports relative to the containing file. At this original wrap,
+  no version-specific import execution was available; see the follow-on above.
