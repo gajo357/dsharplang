@@ -5,7 +5,7 @@ namespace DSharp.Runtime;
 
 // Internal scalar building blocks only. These APIs do not define a public D#
 // JSON surface, durable wire identity, or canonical semantic equality.
-internal enum JsonScalarErrorCode { InvalidJson, TypeMismatch, InvalidInteger, InvalidUnicode }
+internal enum JsonScalarErrorCode { InvalidJson, TypeMismatch, InvalidInteger, InvalidUnicode, MissingField, UnknownField, DuplicateField }
 internal readonly record struct JsonScalarError(JsonScalarErrorCode Code, string Path);
 
 internal readonly struct JsonScalarResult<T>
