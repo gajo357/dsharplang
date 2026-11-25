@@ -121,6 +121,10 @@ string, including explicit nullable variants and redacted root-path decode
 errors. Tests cover type, range, Unicode and malformed-input rejection. This is
 not an adopted public API, composite/Option encoding, canonical durable codec
 or actor admission support; #78 remains open.
+The next internal slice handles arrays of these scalar and nullable element
+types, including two-level int32 arrays, with generated indexed error paths and
+read-only decoded collections. It does not establish a D# collection codec or
+extend the provisional scalar format to records, unions or Option.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

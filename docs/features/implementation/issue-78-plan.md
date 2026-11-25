@@ -1,5 +1,48 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Second slice: internal scalar arrays and indexed decode errors
+
+Base `2a0a966d4e4ed16a5d8111edd1d41bac7883bcc2` includes #315's internal
+scalar codec. Continue #78 on its owning branch. Using the same #9 runtime source
+and trusted feature-test paths and pinned net11.0 framework, add internal JSON
+array building blocks for bool, int32 and string, nullable scalar elements, and
+two-level int32 arrays. Preserve all existing scalar tests and behavior. Accept
+only typed CLR arrays for encoding; copy them before writing, reject null arrays
+and invalid string elements, and do not promise a coherent snapshot if callers
+mutate an input array concurrently. Return read-only, independently owned arrays
+from decoding. No caller-supplied constructors or converters run.
+
+Add `src/DSharp.Runtime/JsonScalarArrayCodec.cs` and new tests in
+`tests/runtime-features/JsonScalarArrayCodecTests.cs`. Make the existing scalar
+element readers reusable internally and allow their fixed error code to carry a
+generated numeric-index path. Malformed JSON or a non-array root fails at `$`;
+an invalid element fails at `$[index]` or `$[outer][inner]`, with no element
+value or parser text in the error. Reject wrong types, nonnullable null,
+fractional/out-of-range ints and invalid Unicode; nullable element null and
+empty strings remain distinct. Errors never expose partially decoded arrays.
+
+This is a bounded internal representation and partial AC1–AC4 evidence, not an
+adopted D# collection API, an Option or record/union encoding, canonical durable
+representation, schema/version policy, HTTP integration or actor admission.
+#78 remains open. Preserve compiler and verifier protections, manifests and
+existing tests; add no package. Run bootstrap, full verification, runtime,
+SQLite regression and compiler scripts plus the exact-base isolated runtime
+verifier where its pinned image is available; record actual results.
+
+### Second-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No project, package or trusted verifier changed.
+- Runtime passed 2 baseline and 109 feature tests, including six new array
+  tests and all prior scalar tests. The real SQLite regression suite passed
+  1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests from a private short-path
+  snapshot, with the unchanged report guard enforced (506,836-byte feature TRX).
+- The full isolated verifier and exact-base isolated runtime verifier could not
+  complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 remains open for its full codec and integration acceptance.
+
 ## First slice: internal JSON scalar primitives
 
 Base `5bbbbbb5f12bf4db9fab214f3fc6ef68379b09c3` contains merged #60. The

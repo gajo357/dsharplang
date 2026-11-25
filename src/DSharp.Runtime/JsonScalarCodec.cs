@@ -23,7 +23,7 @@ internal readonly struct JsonScalarResult<T>
     internal JsonScalarError? Error { get; }
     internal T Value => IsSuccess ? value : throw new InvalidOperationException("A failed decode has no value.");
     internal static JsonScalarResult<T> Success(T value) => new(true, value, null);
-    internal static JsonScalarResult<T> Failure(JsonScalarErrorCode code) => new(false, default!, new(code, "$"));
+    internal static JsonScalarResult<T> Failure(JsonScalarErrorCode code, string path = "$") => new(false, default!, new(code, path));
 }
 
 internal static class JsonScalarCodec
@@ -63,14 +63,14 @@ internal static class JsonScalarCodec
         }
     }
 
-    private static JsonScalarResult<bool> ReadBoolean(JsonElement value) => value.ValueKind switch
+    internal static JsonScalarResult<bool> ReadBoolean(JsonElement value) => value.ValueKind switch
     {
         JsonValueKind.True => JsonScalarResult<bool>.Success(true),
         JsonValueKind.False => JsonScalarResult<bool>.Success(false),
         _ => JsonScalarResult<bool>.Failure(JsonScalarErrorCode.TypeMismatch)
     };
 
-    private static JsonScalarResult<int> ReadInteger(JsonElement value)
+    internal static JsonScalarResult<int> ReadInteger(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.Number)
             return JsonScalarResult<int>.Failure(JsonScalarErrorCode.TypeMismatch);
@@ -79,7 +79,7 @@ internal static class JsonScalarCodec
             : JsonScalarResult<int>.Failure(JsonScalarErrorCode.InvalidInteger);
     }
 
-    private static JsonScalarResult<string> ReadString(JsonElement value)
+    internal static JsonScalarResult<string> ReadString(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.String)
             return JsonScalarResult<string>.Failure(JsonScalarErrorCode.TypeMismatch);
@@ -96,21 +96,21 @@ internal static class JsonScalarCodec
         }
     }
 
-    private static JsonScalarResult<bool?> ReadNullableBoolean(JsonElement value)
+    internal static JsonScalarResult<bool?> ReadNullableBoolean(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<bool?>.Success(null);
         var result = ReadBoolean(value);
         return result.IsSuccess ? JsonScalarResult<bool?>.Success(result.Value) : JsonScalarResult<bool?>.Failure(result.Error!.Value.Code);
     }
 
-    private static JsonScalarResult<int?> ReadNullableInteger(JsonElement value)
+    internal static JsonScalarResult<int?> ReadNullableInteger(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<int?>.Success(null);
         var result = ReadInteger(value);
         return result.IsSuccess ? JsonScalarResult<int?>.Success(result.Value) : JsonScalarResult<int?>.Failure(result.Error!.Value.Code);
     }
 
-    private static JsonScalarResult<string?> ReadNullableString(JsonElement value)
+    internal static JsonScalarResult<string?> ReadNullableString(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<string?>.Success(null);
         var result = ReadString(value);
@@ -130,7 +130,7 @@ internal static class JsonScalarCodec
         return output.WrittenSpan.ToArray();
     }
 
-    private static void ValidateUtf16(string value)
+    internal static void ValidateUtf16(string value)
     {
         if (!IsValidUtf16(value)) throw new ArgumentException("The string contains invalid UTF-16.", nameof(value));
     }
