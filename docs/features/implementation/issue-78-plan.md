@@ -1,5 +1,35 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Eleventh slice: exact-number arrays in internal records
+
+Base `de1031f0417132f45c022912061f80ca2332b2ae` adds exact-number
+tokens and record fields. Extend the existing immutable scalar-array descriptor
+to support exact-number elements, nullable elements, and nullable/optional array
+fields. Preserve token spelling and snapshot ownership, reject mismatched types
+and null required elements, and return redacted indexed paths for invalid input.
+The existing record/union nesting and 64-level depth bound remain in force.
+
+Change `JsonScalarRecordCodec.cs` and add runtime feature tests for round trips,
+missing/null/empty distinctions, input array mutation, wrong descriptors, indexed
+errors and nested records. Update implementation status with tested scope. This
+partially advances AC1–AC4; public D# collection APIs, Option, numeric comparison,
+schema evolution and durable wire adoption remain outside the slice. No new
+dependency, project or verifier changes. Run bootstrap, full verifier, runtime,
+SQLite and compiler regressions, and record actual results. #78 stays open.
+
+### Eleventh-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK on `PATH`.
+- `bash .github/ai/verify.sh` passed documentation (136 files, 309 links) and
+  all 46 automation tests, then could not run its isolated compiler verifier:
+  the pinned MCR image pull returned `Forbidden`. The exact-base isolated
+  runtime verifier reached the same image pull failure. Hosted exact-head checks
+  and the trusted runtime deliberate-failure/clean pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 154 feature tests;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; its unchanged report guard passed (510,084 bytes).
+
 ## Tenth slice: lossless internal JSON number tokens
 
 Base `7be57e920e8674c770a0b4e00a5cda1862549a26` contains the provisional

@@ -150,6 +150,8 @@ presence and redacted nested paths under the combined depth limit.
 An internal exact-number token codec and record field preserve large JSON
 integers and decimal/exponent spellings without binary floating-point conversion.
 This does not establish numeric comparison or a canonical durable format.
+Internal record scalar arrays also support exact-number tokens, including nullable
+elements and nullable or optional array fields, with indexed redacted errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
