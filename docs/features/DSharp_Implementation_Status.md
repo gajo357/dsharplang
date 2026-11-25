@@ -138,7 +138,8 @@ snapshots of the exact child descriptor. This does not construct D# records or
 define union/Option or durable encoding contracts.
 Internal record fields also support non-null bool, int32 and string arrays,
 including nullable array presence, with copied snapshots and redacted indexed
-errors. Nullable elements and public collection mappings remain future work.
+errors. Separate internal descriptors support nullable scalar elements as well,
+independently of array nullability; public collection mappings remain future work.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

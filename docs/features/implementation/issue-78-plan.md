@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Seventh slice: nullable elements in internal scalar array fields
+
+Base `d70abdb08782a2131c98efa9fd0b01d12b92fd05` contains non-null scalar
+array fields and nullable array presence. Add separate internal field kinds for
+bool?, int32? and string? elements, with independently selectable nullable
+array presence. Preserve previous non-null field behavior and immutable tests;
+copy typed input arrays and reject mismatched element kinds and invalid Unicode.
+No application callbacks, arbitrary CLR values or new dependencies are allowed.
+
+Exercise null versus empty versus missing arrays, null versus non-null elements,
+all three types and numeric bounds, owned snapshots, descriptor mismatch, redacted
+nested indexed failures, Unicode, and depth limits. This is partial #78 AC1–AC4
+evidence only: it does not adopt Option, union, public D# JSON APIs, schema
+evolution or a canonical durable representation. Keep #78 open. Use #9's exact
+existing runtime paths, pinned framework and trusted checks; preserve previous
+tests. Run bootstrap, full verifier, runtime, SQLite and compiler checks plus
+the exact-base isolated runtime verifier when available; record actual results.
+
+### Seventh-slice verification
+
+- Bootstrap and documentation checks (136 files, 309 local links) passed, as
+  did all 46 automation tests. No dependency, project or trusted verifier
+  changed.
+- Runtime passed 2 baseline and 135 feature tests, including five new nullable
+  element array tests; SQLite passed 1 baseline and 52 feature tests.
+- Compiler passed 18 baseline and 406 feature tests in a private short-path
+  snapshot; the unchanged report-size guard passed (506,836-byte feature TRX).
+- Full isolated verification and the exact-base isolated runtime verifier could
+  not complete locally because the pinned MCR image pull returned `Forbidden`.
+  Hosted exact-head checks, including the runtime failure/clean pilot, remain
+  required. #78 remains open for the full codec and integration criteria.
+
 ## Sixth slice: scalar array fields in internal records
 
 Base `0c0924cad9cbfe063fad5efc9f8100998373acc5` contains scalar and record
