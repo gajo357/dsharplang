@@ -38,6 +38,30 @@ internal static class JsonTypedFieldMapping
         return FromItems(value.Depth, value.Count, index => FromRecord(value.At(index)));
     }
 
+    internal static JsonScalarResult<JsonFieldValue> FromNullableRecords(JsonNullableRecordArray value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return FromItems(value.Depth, value.Count, index => value.At(index) is { } item
+            ? FromRecord(item) : JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Null()));
+    }
+
+    internal static JsonScalarResult<JsonNullableRecordArray> ToNullableRecords(JsonScalarRecordSchema schema, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(value);
+        var items = ToItems(value, item => ReadNullableRecord(schema, item));
+        return items.IsSuccess ? JsonScalarResult<JsonNullableRecordArray>.Success(JsonNullableRecordArray.Create(schema, items.Value))
+            : JsonScalarResult<JsonNullableRecordArray>.Failure(items.Error!.Value.Code, items.Error.Value.Path);
+    }
+
+    private static JsonScalarResult<JsonScalarRecord?> ReadNullableRecord(JsonScalarRecordSchema schema, JsonFieldValue item)
+    {
+        if (item.Kind == JsonFieldValueKind.Null) return JsonScalarResult<JsonScalarRecord?>.Success(null);
+        var result = ToRecord(schema, item);
+        return result.IsSuccess ? JsonScalarResult<JsonScalarRecord?>.Success(result.Value)
+            : JsonScalarResult<JsonScalarRecord?>.Failure(result.Error!.Value.Code, result.Error.Value.Path);
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromRecordMap(JsonRecordMap value)
     {
         ArgumentNullException.ThrowIfNull(value);
