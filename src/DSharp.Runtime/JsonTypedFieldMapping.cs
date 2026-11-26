@@ -123,6 +123,25 @@ internal static class JsonTypedFieldMapping
         return JsonScalarResult<KeyValuePair<string, T>[]>.Success(entries);
     }
 
+    internal static JsonScalarResult<JsonFieldValue> FromNullableRecordMap(JsonNullableRecordMap value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return FromMap(value.Depth, value.Count, index =>
+        {
+            var entry = value.At(index);
+            return (entry.Key, entry.Value is null ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Null()) : FromRecord(entry.Value));
+        });
+    }
+
+    internal static JsonScalarResult<JsonNullableRecordMap> ToNullableRecordMap(JsonScalarRecordSchema schema, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(value);
+        var items = ToMap(value, item => ReadNullableRecord(schema, item));
+        return items.IsSuccess ? JsonScalarResult<JsonNullableRecordMap>.Success(JsonNullableRecordMap.Create(schema, items.Value))
+            : JsonScalarResult<JsonNullableRecordMap>.Failure(items.Error!.Value.Code, items.Error.Value.Path);
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromRecordMap(JsonRecordMap value)
     {
         ArgumentNullException.ThrowIfNull(value);

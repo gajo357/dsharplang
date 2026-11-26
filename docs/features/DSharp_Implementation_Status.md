@@ -172,6 +172,8 @@ Internal record fields can contain string-keyed maps of one record descriptor,
 including nullable or optional map presence, with indexed redacted errors.
 Standalone typed record maps also map to and from JSON value trees using an
 explicit descriptor, retaining snapshots, exact values and indexed errors.
+Nullable record-map values are supported in fields and standalone tree mappings,
+independently of nullable or optional map presence.
 Internal record fields also support boolean, integer, string and exact-number
 string-keyed maps, including nullable or optional map presence, non-null typed
 values, immutable snapshots and redacted indexed errors. Explicit variants also
