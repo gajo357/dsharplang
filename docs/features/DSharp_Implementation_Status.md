@@ -171,6 +171,9 @@ Internal record fields can contain string-keyed maps of one record descriptor,
 including nullable or optional map presence, with indexed redacted errors.
 Standalone typed record maps also map to and from JSON value trees using an
 explicit descriptor, retaining snapshots, exact values and indexed errors.
+Internal record fields also support boolean, integer, string and exact-number
+string-keyed maps, including nullable or optional map presence, non-null typed
+values, immutable snapshots and redacted indexed errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
