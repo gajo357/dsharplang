@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Text;
 using System.Text.Json;
 
 namespace DSharp.Runtime;
@@ -96,48 +95,56 @@ internal static class JsonTaggedUnionCodec
         try
         {
             using var document = JsonDocument.Parse(input);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-                return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.TypeMismatch);
-            JsonElement caseElement = default, valueElement = default;
-            var hasCase = false;
-            var hasValue = false;
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                string name;
-                try { name = property.Name; JsonScalarCodec.ValidateUtf16(name); }
-                catch (InvalidOperationException) { return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.InvalidUnicode); }
-                catch (ArgumentException) { return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.InvalidUnicode); }
-                switch (name)
-                {
-                    case "case":
-                        if (hasCase) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.DuplicateField, CasePath);
-                        hasCase = true; caseElement = property.Value; break;
-                    case "value":
-                        if (hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.DuplicateField, ValuePath);
-                        hasValue = true; valueElement = property.Value; break;
-                    default: return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.UnknownField);
-                }
-            }
-            if (!hasCase) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.MissingField, CasePath);
-            var tag = JsonScalarCodec.ReadString(caseElement);
-            if (!tag.IsSuccess) return JsonScalarResult<JsonTaggedUnion>.Failure(tag.Error!.Value.Code, CasePath);
-            if (!schema.TryFind(tag.Value, out var caseIndex))
-                return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.UnknownCase, CasePath);
-            var descriptor = schema.CaseAt(caseIndex).Payload;
-            if (descriptor is null)
-            {
-                if (hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.TypeMismatch, ValuePath);
-                return JsonScalarResult<JsonTaggedUnion>.Success(JsonTaggedUnion.Create(schema, caseIndex));
-            }
-            if (!hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.MissingField, ValuePath);
-            var payload = JsonScalarRecordCodec.Decode(descriptor, Encoding.UTF8.GetBytes(valueElement.GetRawText()));
-            if (!payload.IsSuccess)
-                return JsonScalarResult<JsonTaggedUnion>.Failure(payload.Error!.Value.Code, ValuePath + payload.Error.Value.Path[1..]);
-            return JsonScalarResult<JsonTaggedUnion>.Success(JsonTaggedUnion.Create(schema, caseIndex, payload.Value));
+            return Read(schema, document.RootElement);
         }
         catch (JsonException)
         {
             return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.InvalidJson);
         }
+    }
+
+    // Read the original parsed element without transcoding and reparsing it.
+    // That keeps invalid UTF-8 in nested names and strings on the same checked
+    // paths as a top-level record instead of throwing from GetRawText().
+    internal static JsonScalarResult<JsonTaggedUnion> Read(JsonTaggedUnionSchema schema, JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.TypeMismatch);
+        JsonElement caseElement = default, valueElement = default;
+        var hasCase = false;
+        var hasValue = false;
+        foreach (var property in element.EnumerateObject())
+        {
+            string name;
+            try { name = property.Name; JsonScalarCodec.ValidateUtf16(name); }
+            catch (InvalidOperationException) { return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.InvalidUnicode); }
+            catch (ArgumentException) { return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.InvalidUnicode); }
+            switch (name)
+            {
+                case "case":
+                    if (hasCase) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.DuplicateField, CasePath);
+                    hasCase = true; caseElement = property.Value; break;
+                case "value":
+                    if (hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.DuplicateField, ValuePath);
+                    hasValue = true; valueElement = property.Value; break;
+                default: return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.UnknownField);
+            }
+        }
+        if (!hasCase) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.MissingField, CasePath);
+        var tag = JsonScalarCodec.ReadString(caseElement);
+        if (!tag.IsSuccess) return JsonScalarResult<JsonTaggedUnion>.Failure(tag.Error!.Value.Code, CasePath);
+        if (!schema.TryFind(tag.Value, out var caseIndex))
+            return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.UnknownCase, CasePath);
+        var descriptor = schema.CaseAt(caseIndex).Payload;
+        if (descriptor is null)
+        {
+            if (hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.TypeMismatch, ValuePath);
+            return JsonScalarResult<JsonTaggedUnion>.Success(JsonTaggedUnion.Create(schema, caseIndex));
+        }
+        if (!hasValue) return JsonScalarResult<JsonTaggedUnion>.Failure(JsonScalarErrorCode.MissingField, ValuePath);
+        var payload = JsonScalarRecordCodec.ReadRecord(descriptor, valueElement, "$");
+        if (!payload.IsSuccess)
+            return JsonScalarResult<JsonTaggedUnion>.Failure(payload.Error!.Value.Code, ValuePath + payload.Error.Value.Path[1..]);
+        return JsonScalarResult<JsonTaggedUnion>.Success(JsonTaggedUnion.Create(schema, caseIndex, payload.Value));
     }
 }

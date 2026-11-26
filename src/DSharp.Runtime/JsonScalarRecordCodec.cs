@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 
 namespace DSharp.Runtime;
@@ -533,7 +532,7 @@ internal static class JsonScalarRecordCodec
         }
     }
 
-    private static JsonScalarResult<JsonScalarRecord> ReadRecord(JsonScalarRecordSchema schema, JsonElement element, string objectPath)
+    internal static JsonScalarResult<JsonScalarRecord> ReadRecord(JsonScalarRecordSchema schema, JsonElement element, string objectPath)
     {
         if (element.ValueKind != JsonValueKind.Object)
             return JsonScalarResult<JsonScalarRecord>.Failure(JsonScalarErrorCode.TypeMismatch, objectPath);
@@ -612,7 +611,7 @@ internal static class JsonScalarRecordCodec
                     value = JsonScalarResult<object?>.Success(null);
                 else
                 {
-                    var union = JsonTaggedUnionCodec.Decode(field.UnionSchema!, Encoding.UTF8.GetBytes(property.Value.GetRawText()));
+                    var union = JsonTaggedUnionCodec.Read(field.UnionSchema!, property.Value);
                     value = union.IsSuccess
                         ? JsonScalarResult<object?>.Success(union.Value)
                         : JsonScalarResult<object?>.Failure(union.Error!.Value.Code, path + union.Error.Value.Path[1..]);
@@ -719,7 +718,7 @@ internal static class JsonScalarRecordCodec
         {
             if (item.ValueKind == JsonValueKind.Null) { values.Add(null); continue; }
             var itemPath = path + "[" + values.Count.ToString(CultureInfo.InvariantCulture) + "]";
-            var result = JsonTaggedUnionCodec.Decode(schema, Encoding.UTF8.GetBytes(item.GetRawText()));
+            var result = JsonTaggedUnionCodec.Read(schema, item);
             if (!result.IsSuccess)
                 return JsonScalarResult<JsonNullableUnionArray>.Failure(result.Error!.Value.Code, itemPath + result.Error.Value.Path[1..]);
             values.Add(result.Value);
@@ -735,7 +734,7 @@ internal static class JsonScalarRecordCodec
         foreach (var item in element.EnumerateArray())
         {
             var itemPath = path + "[" + values.Count.ToString(CultureInfo.InvariantCulture) + "]";
-            var result = JsonTaggedUnionCodec.Decode(schema, Encoding.UTF8.GetBytes(item.GetRawText()));
+            var result = JsonTaggedUnionCodec.Read(schema, item);
             if (!result.IsSuccess)
                 return JsonScalarResult<JsonUnionArray>.Failure(result.Error!.Value.Code, itemPath + result.Error.Value.Path[1..]);
             values.Add(result.Value);
@@ -758,7 +757,7 @@ internal static class JsonScalarRecordCodec
             catch (ArgumentException) { return JsonScalarResult<JsonNullableUnionMap>.Failure(JsonScalarErrorCode.InvalidUnicode, itemPath); }
             if (!names.Add(name)) return JsonScalarResult<JsonNullableUnionMap>.Failure(JsonScalarErrorCode.DuplicateField, itemPath);
             if (property.Value.ValueKind == JsonValueKind.Null) { values.Add(new(name, null)); continue; }
-            var union = JsonTaggedUnionCodec.Decode(schema, Encoding.UTF8.GetBytes(property.Value.GetRawText()));
+            var union = JsonTaggedUnionCodec.Read(schema, property.Value);
             if (!union.IsSuccess) return JsonScalarResult<JsonNullableUnionMap>.Failure(union.Error!.Value.Code, itemPath + union.Error.Value.Path[1..]);
             values.Add(new(name, union.Value));
         }
@@ -779,7 +778,7 @@ internal static class JsonScalarRecordCodec
             catch (InvalidOperationException) { return JsonScalarResult<JsonUnionMap>.Failure(JsonScalarErrorCode.InvalidUnicode, itemPath); }
             catch (ArgumentException) { return JsonScalarResult<JsonUnionMap>.Failure(JsonScalarErrorCode.InvalidUnicode, itemPath); }
             if (!names.Add(name)) return JsonScalarResult<JsonUnionMap>.Failure(JsonScalarErrorCode.DuplicateField, itemPath);
-            var union = JsonTaggedUnionCodec.Decode(schema, Encoding.UTF8.GetBytes(property.Value.GetRawText()));
+            var union = JsonTaggedUnionCodec.Read(schema, property.Value);
             if (!union.IsSuccess) return JsonScalarResult<JsonUnionMap>.Failure(union.Error!.Value.Code, itemPath + union.Error.Value.Path[1..]);
             values.Add(new(name, union.Value));
         }
