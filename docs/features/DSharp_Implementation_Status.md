@@ -191,6 +191,10 @@ variants also allow null union values, and standalone union maps map to and
 from value trees using a supplied descriptor. Runtime tests also exercise rejection
 of delegate, Task, disposable and mutable foreign values at the internal record
 and scalar-map boundaries without invoking sentinel callbacks or exposing contents.
+Test-owned composition also round-trips nested JSON bytes through the volatile
+targeted-submission reference, including copied metadata and byte-sensitive retry
+conflicts. That reference accepts opaque bytes without JSON validation; this
+evidence does not implement durable admission or an adopted message contract.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
