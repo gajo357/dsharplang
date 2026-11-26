@@ -1,5 +1,43 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-first slice: typed scalar maps in record fields
+
+Base `9e9db08c55ec9d51e0fbfec7a5d064205160bdd0` supports maps of typed
+records but not typed string-keyed maps of primitive values. Add explicit
+boolean, integer, string and exact-number map field kinds, plus nullable/optional
+map presence, to the existing private record codec. Map values are required
+non-null scalars; nullable values and public or durable wire choices remain
+outside this slice. Use copied immutable entries and reject duplicate or invalid
+Unicode keys, null or wrong-kind values. Preserve insertion order, exact numeric
+spelling, descriptor-kind matching and the shared 64-container depth bound.
+Encode and decode inside records, nested unions and the existing JSON tree bridge,
+with redacted indexed errors.
+
+Modify the private runtime codec and add new runtime feature tests for primitive
+map round trips including nested union/tree integration (AC1/AC3), missing,
+null, required and invalid values (AC2), snapshots, kind matching, duplicate and
+Unicode rejection and redacted paths (AC3/AC4). Preserve existing tests,
+dependencies and trusted verification. Run bootstrap, full verifier, runtime,
+SQLite and compiler regression and exact-base isolated runtime verifier when
+available; record results. #78 remains open for public integration, Option,
+collection variants and durable/version contract decisions.
+
+### Twenty-first-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier restored but
+  hit the same image-pull failure. Hosted exact-head checks and the trusted
+  runtime deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 203 features,
+  including five new scalar map tests. The initial new Unicode round-trip test
+  expected an unescaped character; its expected JSON was corrected to the
+  serializer's valid escape and the full runtime suite passed on rerun.
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twentieth slice: standalone typed record-map tree mapping
 
 Base `bb3ed50a75803863512d1d113539c3af4f9371bf` integrates typed record maps
