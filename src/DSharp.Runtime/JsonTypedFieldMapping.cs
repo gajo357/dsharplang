@@ -38,6 +38,39 @@ internal static class JsonTypedFieldMapping
         return FromItems(value.Depth, value.Count, index => FromRecord(value.At(index)));
     }
 
+    internal static JsonScalarResult<JsonFieldValue> FromRecordMap(JsonRecordMap value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", nameof(value));
+        var entries = new KeyValuePair<string, JsonFieldValue>[value.Count];
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var entry = value.At(index);
+            var item = FromRecord(entry.Value);
+            if (!item.IsSuccess)
+                return JsonScalarResult<JsonFieldValue>.Failure(item.Error!.Value.Code, Index(index, item.Error.Value.Path));
+            entries[index] = new(entry.Key, item.Value);
+        }
+        return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Map(entries));
+    }
+
+    internal static JsonScalarResult<JsonRecordMap> ToRecordMap(JsonScalarRecordSchema schema, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Kind != JsonFieldValueKind.Map) return JsonScalarResult<JsonRecordMap>.Failure(JsonScalarErrorCode.TypeMismatch);
+        var source = value.MapItems;
+        var entries = new KeyValuePair<string, JsonScalarRecord>[source.Length];
+        for (var index = 0; index < source.Length; index++)
+        {
+            var item = ToRecord(schema, source[index].Value);
+            if (!item.IsSuccess)
+                return JsonScalarResult<JsonRecordMap>.Failure(item.Error!.Value.Code, Index(index, item.Error.Value.Path));
+            entries[index] = new(source[index].Key, item.Value);
+        }
+        return JsonScalarResult<JsonRecordMap>.Success(JsonRecordMap.Create(schema, entries));
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromUnions(JsonUnionArray value)
     {
         ArgumentNullException.ThrowIfNull(value);
