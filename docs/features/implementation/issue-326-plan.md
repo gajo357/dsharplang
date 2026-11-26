@@ -36,6 +36,26 @@ documented command, proving it does not need to write build output there. Keep
 all existing tests, assertions and trusted verification intact, and rerun the
 full suite and compiler regression.
 
+### Cross-module and build-isolation verification
+
+- The documented example command checked and compiled both real D# files and
+  executed the cross-module positive, zero and negative balance cases. On
+  committed candidate `8219f6f3b0c5ab80a8c9a3ba7ddf0d6b410be64a`, the existing
+  fresh-source, application, both negative-control and reference tests passed.
+  After isolating the compiler build, the read-only compiler-source regression
+  passed on candidate `f4b8b149f6e7bbf2d4468e52cd05753a39bacea3`.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full
+  `bash .github/ai/verify.sh` rerun passed documentation (137 files, 309 links)
+  and all 56 automation tests, then could not pull the pinned MCR image
+  (`Forbidden`). One earlier full run failed in the existing prelude compiler
+  build without diagnostic even after isolation; that test passed independently
+  and in the full rerun. Isolation removes shared example compiler outputs but
+  does not establish the cause of the intermittent failure. Hosted exact-head
+  verification remains required.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short-path source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Follow-on: execute an immutable inventory snapshot
 
 Base `353ac7098eb966a033d9f722883b42c0d6a964db` provides a verified

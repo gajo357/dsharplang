@@ -206,6 +206,9 @@ summary.
 It does not demonstrate an actor runtime or an SDK scaffold.
 An automation test also runs its documented command from a clean committed source
 export after checking the application instructions and their local links.
+The command builds a copy of the checkout compiler in a private temporary
+directory; a read-only-source test verifies it does not write compiler outputs
+back into the checkout.
 Its quick reference reproduces those source files and is checked for drift and
 unmarked D# examples.
 The example and scaffold relative Claude imports were checked with Claude Code
