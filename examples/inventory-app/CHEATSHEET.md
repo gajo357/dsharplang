@@ -6,17 +6,41 @@ This reference matches the compiler in this checkout and its pinned
 and [syntax reference](../../docs/features/DSharp_Syntax_Reference.md) before
 using other features; design examples can describe behavior not yet implemented.
 
-## A capability function
+## Immutable stock and capability functions
 
-The [inventory source](inventory/stock.ds) declares a module and a pure function
-with two `int` parameters and an `int` result:
+The [inventory source](inventory/stock.ds) declares an immutable record,
+pure functions and an explicit copy update. `sell` returns a new snapshot;
+`afterSale` and `originalUnchanged` exercise the resulting values:
 
 <!-- source: inventory/stock.ds -->
 ```dsharp
 module Inventory
 
+type Stock {
+    received: int
+    sold: int
+}
+
 fn remaining(received: int, sold: int): int {
     received - sold
+}
+
+fn sell(stock: Stock, quantity: int): Stock {
+    stock with { sold = stock.sold + quantity }
+}
+
+fn afterSale(received: int, sold: int, quantity: int): int {
+    let before = Stock { received = received
+                         sold = sold }
+    let after = sell(before, quantity)
+    remaining(after.received, after.sold)
+}
+
+fn originalUnchanged(received: int, sold: int, quantity: int): bool {
+    let before = Stock { received = received
+                         sold = sold }
+    let after = sell(before, quantity)
+    before.received == after.received && before.sold == sold && after.sold == sold + quantity
 }
 ```
 
@@ -42,6 +66,7 @@ bash ../../scripts/verify-application-example.sh
 ```
 
 It checks and compiles both actual files, then executes `available()` and expects
-42. It also checks `remaining` with inputs producing positive, zero and negative
-results. This verifies those examples on the pinned compiler; it does not
+42. It also checks `remaining` and `afterSale` with inputs producing positive,
+zero and negative results and verifies the original stock snapshot is unchanged.
+This verifies those examples on the pinned compiler; it does not
 demonstrate an actor runtime, storage, SDK packaging, or other language features.
