@@ -1,5 +1,40 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-eighth slice: full-width integer collections
+
+Base `85730de09a8bd2aef5a1851ee02b1771818ccd3a` supports signed and unsigned
+64-bit scalar fields and exact-number tokens, but typed arrays and string-keyed
+maps cannot carry these primitive values. Extend existing scalar array and map
+descriptors for `long` and `ulong`, nullable elements, and independently
+optional or nullable collections, using the existing exact integer readers.
+Extend the standalone scalar-map/tree bridge. Round-trip full-width boundary
+values without floating point through a nested validated union, explicit tree
+mapping and a test-owned volatile reference handoff. Check input snapshots,
+missing/null/empty distinctions, schema identity, redacted indexed failures
+for negative unsigned, overflow, fractional and wrong-type values, and combined
+depth limits. Preserve existing tests and security boundaries.
+
+Change internal scalar-record/tree-mapping sources, add runtime feature tests,
+and update plan/status. Merged #9, #14, #25, #28, #31, #38 and #216 provide
+setup, boundaries and supported types. AC1/AC3 gain full-width nested typed
+collections; AC2/AC4 cover invalid and nullable cases. No public D# API, Option
+encoding, durable admission or wire policy is adopted. Run bootstrap, full
+verifier, runtime, SQLite, compiler and exact-base isolated runtime checks;
+use fresh unique short snapshots and retain all report guards. Keep #78 open.
+
+Results: the 13 focused cases passed. Bootstrap passed; the full verifier passed
+documentation (137 files/309 links) and all 56 automation tests before the
+pinned MCR image pull returned `Forbidden`. Runtime passed 2 baseline and 306
+feature tests; SQLite passed 1 baseline and 53 feature tests. Compiler regression
+in a fresh short candidate snapshot produced 18 passing baseline and 406 passing
+feature results; the unchanged checker accepted the 508,460-byte feature TRX.
+The command session was lost while the feature run was active, so the original
+shell's final exit was not observed; the run completed and its report was
+checked independently with the same unchanged `check-test-results.mjs` guard.
+The exact-base isolated runtime verifier restored successfully but the same
+pinned MCR image pull returned `Forbidden` before the container ran. Hosted
+exact-head checks and the trusted runtime failure/clean pilot remain required.
+
 ## Thirty-seventh slice: reject malformed UTF-8 in nested unions
 
 Base `83b38396bdee83a230e3155c7f3a46f7b51a1d79` composes typed unions by

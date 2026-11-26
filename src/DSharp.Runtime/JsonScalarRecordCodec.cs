@@ -5,7 +5,11 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Explicit internal scalar descriptors, not reflection or a public D# schema.
-internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue, NullableFieldValue, RecordMap, NullableRecordMap, BooleanMap, IntegerMap, StringMap, ExactNumberMap, NullableBooleanMap, NullableIntegerMap, NullableStringMap, NullableExactNumberMap, BooleanNullableValuesMap, IntegerNullableValuesMap, StringNullableValuesMap, ExactNumberNullableValuesMap, NullableBooleanNullableValuesMap, NullableIntegerNullableValuesMap, NullableStringNullableValuesMap, NullableExactNumberNullableValuesMap, UnionMap, NullableUnionMap, RecordNullableElementsArray, NullableRecordNullableElementsArray, UnionNullableValuesMap, NullableUnionNullableValuesMap, RecordNullableValuesMap, NullableRecordNullableValuesMap, Int64, UInt64, NullableInt64, NullableUInt64, Decimal, NullableDecimal, DecimalArray, NullableDecimalArray, DecimalNullableElementsArray, NullableDecimalNullableElementsArray, DecimalMap, NullableDecimalMap, DecimalNullableValuesMap, NullableDecimalNullableValuesMap }
+internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue, NullableFieldValue, RecordMap, NullableRecordMap, BooleanMap, IntegerMap, StringMap, ExactNumberMap, NullableBooleanMap, NullableIntegerMap, NullableStringMap, NullableExactNumberMap, BooleanNullableValuesMap, IntegerNullableValuesMap, StringNullableValuesMap, ExactNumberNullableValuesMap, NullableBooleanNullableValuesMap, NullableIntegerNullableValuesMap, NullableStringNullableValuesMap, NullableExactNumberNullableValuesMap, UnionMap, NullableUnionMap, RecordNullableElementsArray, NullableRecordNullableElementsArray, UnionNullableValuesMap, NullableUnionNullableValuesMap, RecordNullableValuesMap, NullableRecordNullableValuesMap, Int64, UInt64, NullableInt64, NullableUInt64, Decimal, NullableDecimal, DecimalArray, NullableDecimalArray, DecimalNullableElementsArray, NullableDecimalNullableElementsArray, DecimalMap, NullableDecimalMap, DecimalNullableValuesMap, NullableDecimalNullableValuesMap,
+    Int64Array, NullableInt64Array, Int64NullableElementsArray, NullableInt64NullableElementsArray,
+    UInt64Array, NullableUInt64Array, UInt64NullableElementsArray, NullableUInt64NullableElementsArray,
+    Int64Map, NullableInt64Map, Int64NullableValuesMap, NullableInt64NullableValuesMap,
+    UInt64Map, NullableUInt64Map, UInt64NullableValuesMap, NullableUInt64NullableValuesMap }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null, JsonTaggedUnionSchema? UnionSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -64,8 +68,10 @@ internal sealed class JsonScalarRecordSchema
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
         JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64 or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or JsonRecordFieldKind.NullableRecordNullableElementsArray or
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or JsonRecordFieldKind.NullableDecimalArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray or
+        JsonRecordFieldKind.NullableInt64Array or JsonRecordFieldKind.NullableInt64NullableElementsArray or JsonRecordFieldKind.NullableUInt64Array or JsonRecordFieldKind.NullableUInt64NullableElementsArray or
         JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray or JsonRecordFieldKind.NullableFieldValue or JsonRecordFieldKind.NullableRecordMap or
         JsonRecordFieldKind.NullableBooleanMap or JsonRecordFieldKind.NullableIntegerMap or JsonRecordFieldKind.NullableStringMap or JsonRecordFieldKind.NullableExactNumberMap or JsonRecordFieldKind.NullableDecimalMap or JsonRecordFieldKind.NullableDecimalNullableValuesMap or
+        JsonRecordFieldKind.NullableInt64Map or JsonRecordFieldKind.NullableInt64NullableValuesMap or JsonRecordFieldKind.NullableUInt64Map or JsonRecordFieldKind.NullableUInt64NullableValuesMap or
         JsonRecordFieldKind.NullableBooleanNullableValuesMap or JsonRecordFieldKind.NullableIntegerNullableValuesMap or JsonRecordFieldKind.NullableStringNullableValuesMap or JsonRecordFieldKind.NullableExactNumberNullableValuesMap or JsonRecordFieldKind.NullableUnionMap or JsonRecordFieldKind.NullableUnionNullableValuesMap or JsonRecordFieldKind.NullableRecordNullableValuesMap;
 
     // Only schema-owned names appear in paths, JSON-escaped to keep control
@@ -178,23 +184,27 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.NullableUnionNullableElementsArray => value is null || value is JsonNullableUnionArray nullableArray && ReferenceEquals(nullableArray.Schema, field.UnionSchema),
         JsonRecordFieldKind.BooleanArray or JsonRecordFieldKind.IntegerArray or JsonRecordFieldKind.StringArray or
         JsonRecordFieldKind.BooleanNullableElementsArray or JsonRecordFieldKind.IntegerNullableElementsArray or JsonRecordFieldKind.StringNullableElementsArray or
-        JsonRecordFieldKind.ExactNumberArray or JsonRecordFieldKind.ExactNumberNullableElementsArray or JsonRecordFieldKind.DecimalArray or JsonRecordFieldKind.DecimalNullableElementsArray =>
+        JsonRecordFieldKind.ExactNumberArray or JsonRecordFieldKind.ExactNumberNullableElementsArray or JsonRecordFieldKind.DecimalArray or JsonRecordFieldKind.DecimalNullableElementsArray or
+        JsonRecordFieldKind.Int64Array or JsonRecordFieldKind.Int64NullableElementsArray or JsonRecordFieldKind.UInt64Array or JsonRecordFieldKind.UInt64NullableElementsArray =>
             value is JsonRecordScalarArray scalarArray && scalarArray.Kind == JsonRecordScalarArray.ElementKind(field.Kind),
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or
         JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or
-        JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableDecimalArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray =>
+        JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableDecimalArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray or
+        JsonRecordFieldKind.NullableInt64Array or JsonRecordFieldKind.NullableInt64NullableElementsArray or JsonRecordFieldKind.NullableUInt64Array or JsonRecordFieldKind.NullableUInt64NullableElementsArray =>
             value is null || value is JsonRecordScalarArray scalarArray && scalarArray.Kind == JsonRecordScalarArray.ElementKind(field.Kind),
         JsonRecordFieldKind.BooleanMap or JsonRecordFieldKind.IntegerMap or JsonRecordFieldKind.StringMap or JsonRecordFieldKind.ExactNumberMap or
-        JsonRecordFieldKind.BooleanNullableValuesMap or JsonRecordFieldKind.IntegerNullableValuesMap or JsonRecordFieldKind.StringNullableValuesMap or JsonRecordFieldKind.ExactNumberNullableValuesMap or JsonRecordFieldKind.DecimalMap or JsonRecordFieldKind.DecimalNullableValuesMap =>
+        JsonRecordFieldKind.BooleanNullableValuesMap or JsonRecordFieldKind.IntegerNullableValuesMap or JsonRecordFieldKind.StringNullableValuesMap or JsonRecordFieldKind.ExactNumberNullableValuesMap or JsonRecordFieldKind.DecimalMap or JsonRecordFieldKind.DecimalNullableValuesMap or
+        JsonRecordFieldKind.Int64Map or JsonRecordFieldKind.Int64NullableValuesMap or JsonRecordFieldKind.UInt64Map or JsonRecordFieldKind.UInt64NullableValuesMap =>
             value is JsonRecordScalarMap scalarMap && scalarMap.Kind == JsonRecordScalarMap.ElementKind(field.Kind),
         JsonRecordFieldKind.NullableBooleanMap or JsonRecordFieldKind.NullableIntegerMap or JsonRecordFieldKind.NullableStringMap or JsonRecordFieldKind.NullableExactNumberMap or
-        JsonRecordFieldKind.NullableBooleanNullableValuesMap or JsonRecordFieldKind.NullableIntegerNullableValuesMap or JsonRecordFieldKind.NullableStringNullableValuesMap or JsonRecordFieldKind.NullableExactNumberNullableValuesMap or JsonRecordFieldKind.NullableDecimalMap or JsonRecordFieldKind.NullableDecimalNullableValuesMap =>
+        JsonRecordFieldKind.NullableBooleanNullableValuesMap or JsonRecordFieldKind.NullableIntegerNullableValuesMap or JsonRecordFieldKind.NullableStringNullableValuesMap or JsonRecordFieldKind.NullableExactNumberNullableValuesMap or JsonRecordFieldKind.NullableDecimalMap or JsonRecordFieldKind.NullableDecimalNullableValuesMap or
+        JsonRecordFieldKind.NullableInt64Map or JsonRecordFieldKind.NullableInt64NullableValuesMap or JsonRecordFieldKind.NullableUInt64Map or JsonRecordFieldKind.NullableUInt64NullableValuesMap =>
             value is null || value is JsonRecordScalarMap scalarMap && scalarMap.Kind == JsonRecordScalarMap.ElementKind(field.Kind),
         _ => false
     };
 }
 
-internal enum JsonRecordScalarArrayKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, ExactNumber, NullableExactNumber, Decimal, NullableDecimal }
+internal enum JsonRecordScalarArrayKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, ExactNumber, NullableExactNumber, Decimal, NullableDecimal, Int64, NullableInt64, UInt64, NullableUInt64 }
 
 // The only accepted elements are immutable primitive values copied from typed arrays.
 internal sealed class JsonRecordScalarArray
@@ -210,6 +220,10 @@ internal sealed class JsonRecordScalarArray
     internal static JsonRecordScalarArray Create(int?[] values) => new(JsonRecordScalarArrayKind.NullableInteger, Copy(values));
     internal static JsonRecordScalarArray Create(decimal[] values) => new(JsonRecordScalarArrayKind.Decimal, Copy(values));
     internal static JsonRecordScalarArray Create(decimal?[] values) => new(JsonRecordScalarArrayKind.NullableDecimal, Copy(values));
+    internal static JsonRecordScalarArray Create(long[] values) => new(JsonRecordScalarArrayKind.Int64, Copy(values));
+    internal static JsonRecordScalarArray Create(long?[] values) => new(JsonRecordScalarArrayKind.NullableInt64, Copy(values));
+    internal static JsonRecordScalarArray Create(ulong[] values) => new(JsonRecordScalarArrayKind.UInt64, Copy(values));
+    internal static JsonRecordScalarArray Create(ulong?[] values) => new(JsonRecordScalarArrayKind.NullableUInt64, Copy(values));
     internal static JsonRecordScalarArray Create(JsonExactNumber[] values)
     {
         var snapshot = Copy(values);
@@ -253,6 +267,10 @@ internal sealed class JsonRecordScalarArray
         JsonRecordFieldKind.ExactNumberNullableElementsArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray => JsonRecordScalarArrayKind.NullableExactNumber,
         JsonRecordFieldKind.DecimalArray or JsonRecordFieldKind.NullableDecimalArray => JsonRecordScalarArrayKind.Decimal,
         JsonRecordFieldKind.DecimalNullableElementsArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray => JsonRecordScalarArrayKind.NullableDecimal,
+        JsonRecordFieldKind.Int64Array or JsonRecordFieldKind.NullableInt64Array => JsonRecordScalarArrayKind.Int64,
+        JsonRecordFieldKind.Int64NullableElementsArray or JsonRecordFieldKind.NullableInt64NullableElementsArray => JsonRecordScalarArrayKind.NullableInt64,
+        JsonRecordFieldKind.UInt64Array or JsonRecordFieldKind.NullableUInt64Array => JsonRecordScalarArrayKind.UInt64,
+        JsonRecordFieldKind.UInt64NullableElementsArray or JsonRecordFieldKind.NullableUInt64NullableElementsArray => JsonRecordScalarArrayKind.NullableUInt64,
         _ => null
     };
 }
@@ -277,13 +295,17 @@ internal sealed class JsonRecordScalarMap
         JsonRecordFieldKind.ExactNumberNullableValuesMap or JsonRecordFieldKind.NullableExactNumberNullableValuesMap => JsonRecordFieldKind.NullableExactNumber,
         JsonRecordFieldKind.DecimalMap or JsonRecordFieldKind.NullableDecimalMap => JsonRecordFieldKind.Decimal,
         JsonRecordFieldKind.DecimalNullableValuesMap or JsonRecordFieldKind.NullableDecimalNullableValuesMap => JsonRecordFieldKind.NullableDecimal,
+        JsonRecordFieldKind.Int64Map or JsonRecordFieldKind.NullableInt64Map => JsonRecordFieldKind.Int64,
+        JsonRecordFieldKind.Int64NullableValuesMap or JsonRecordFieldKind.NullableInt64NullableValuesMap => JsonRecordFieldKind.NullableInt64,
+        JsonRecordFieldKind.UInt64Map or JsonRecordFieldKind.NullableUInt64Map => JsonRecordFieldKind.UInt64,
+        JsonRecordFieldKind.UInt64NullableValuesMap or JsonRecordFieldKind.NullableUInt64NullableValuesMap => JsonRecordFieldKind.NullableUInt64,
         _ => null
     };
     internal static JsonRecordScalarMap Create(JsonRecordFieldKind kind, KeyValuePair<string, object>[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (kind is not (JsonRecordFieldKind.Boolean or JsonRecordFieldKind.Integer or JsonRecordFieldKind.String or JsonRecordFieldKind.ExactNumber or JsonRecordFieldKind.Decimal or
-            JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableDecimal))
+        if (kind is not (JsonRecordFieldKind.Boolean or JsonRecordFieldKind.Integer or JsonRecordFieldKind.String or JsonRecordFieldKind.ExactNumber or JsonRecordFieldKind.Decimal or JsonRecordFieldKind.Int64 or JsonRecordFieldKind.UInt64 or
+            JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64))
             throw new ArgumentException("Unsupported scalar map descriptor.", nameof(kind));
         var copy = (KeyValuePair<string, object>[])values.Clone();
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -298,11 +320,15 @@ internal sealed class JsonRecordScalarMap
                 JsonRecordFieldKind.String => pair.Value is string,
                 JsonRecordFieldKind.ExactNumber => pair.Value is JsonExactNumber,
                 JsonRecordFieldKind.Decimal => pair.Value is decimal,
+                JsonRecordFieldKind.Int64 => pair.Value is long,
+                JsonRecordFieldKind.UInt64 => pair.Value is ulong,
                 JsonRecordFieldKind.NullableBoolean => pair.Value is null or bool,
                 JsonRecordFieldKind.NullableInteger => pair.Value is null or int,
                 JsonRecordFieldKind.NullableString => pair.Value is null or string,
                 JsonRecordFieldKind.NullableExactNumber => pair.Value is null or JsonExactNumber,
                 JsonRecordFieldKind.NullableDecimal => pair.Value is null or decimal,
+                JsonRecordFieldKind.NullableInt64 => pair.Value is null or long,
+                JsonRecordFieldKind.NullableUInt64 => pair.Value is null or ulong,
                 _ => false
             };
             if (!matches) throw new ArgumentException("Map values must match their descriptor.", nameof(values));
@@ -682,6 +708,10 @@ internal static class JsonScalarRecordCodec
             JsonRecordScalarArrayKind.NullableExactNumber => ReadScalarItems(element, path, ReadNullableExactNumber, JsonRecordScalarArray.CreateNullableNumbers),
             JsonRecordScalarArrayKind.Decimal => ReadScalarItems(element, path, JsonDecimalCodec.Read, JsonRecordScalarArray.Create),
             JsonRecordScalarArrayKind.NullableDecimal => ReadScalarItems(element, path, JsonDecimalCodec.ReadNullable, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.Int64 => ReadScalarItems(element, path, JsonScalarCodec.ReadInt64, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.NullableInt64 => ReadScalarItems(element, path, JsonScalarCodec.ReadNullableInt64, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.UInt64 => ReadScalarItems(element, path, JsonScalarCodec.ReadUInt64, JsonRecordScalarArray.Create),
+            JsonRecordScalarArrayKind.NullableUInt64 => ReadScalarItems(element, path, JsonScalarCodec.ReadNullableUInt64, JsonRecordScalarArray.Create),
             _ => throw new InvalidOperationException("Unsupported scalar array descriptor.")
         };
     }
@@ -1034,6 +1064,14 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.NullableDecimalMap:
             case JsonRecordFieldKind.DecimalNullableValuesMap:
             case JsonRecordFieldKind.NullableDecimalNullableValuesMap:
+            case JsonRecordFieldKind.Int64Map:
+            case JsonRecordFieldKind.NullableInt64Map:
+            case JsonRecordFieldKind.Int64NullableValuesMap:
+            case JsonRecordFieldKind.NullableInt64NullableValuesMap:
+            case JsonRecordFieldKind.UInt64Map:
+            case JsonRecordFieldKind.NullableUInt64Map:
+            case JsonRecordFieldKind.UInt64NullableValuesMap:
+            case JsonRecordFieldKind.NullableUInt64NullableValuesMap:
                 var scalarMap = (JsonRecordScalarMap)value;
                 writer.WriteStartObject();
                 for (var index = 0; index < scalarMap.Count; index++)
@@ -1064,6 +1102,14 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.NullableDecimalArray:
             case JsonRecordFieldKind.DecimalNullableElementsArray:
             case JsonRecordFieldKind.NullableDecimalNullableElementsArray:
+            case JsonRecordFieldKind.Int64Array:
+            case JsonRecordFieldKind.NullableInt64Array:
+            case JsonRecordFieldKind.Int64NullableElementsArray:
+            case JsonRecordFieldKind.NullableInt64NullableElementsArray:
+            case JsonRecordFieldKind.UInt64Array:
+            case JsonRecordFieldKind.NullableUInt64Array:
+            case JsonRecordFieldKind.UInt64NullableElementsArray:
+            case JsonRecordFieldKind.NullableUInt64NullableElementsArray:
                 var scalars = (JsonRecordScalarArray)value;
                 writer.WriteStartArray();
                 for (var index = 0; index < scalars.Count; index++)
@@ -1078,6 +1124,10 @@ internal static class JsonScalarRecordCodec
                         case JsonRecordScalarArrayKind.NullableInteger: writer.WriteNumberValue((int)item); break;
                         case JsonRecordScalarArrayKind.Decimal:
                         case JsonRecordScalarArrayKind.NullableDecimal: writer.WriteNumberValue((decimal)item); break;
+                        case JsonRecordScalarArrayKind.Int64:
+                        case JsonRecordScalarArrayKind.NullableInt64: writer.WriteNumberValue((long)item); break;
+                        case JsonRecordScalarArrayKind.UInt64:
+                        case JsonRecordScalarArrayKind.NullableUInt64: writer.WriteNumberValue((ulong)item); break;
                         case JsonRecordScalarArrayKind.String:
                         case JsonRecordScalarArrayKind.NullableString: writer.WriteStringValue((string)item); break;
                         case JsonRecordScalarArrayKind.ExactNumber:

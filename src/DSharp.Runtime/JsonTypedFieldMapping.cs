@@ -110,11 +110,15 @@ internal static class JsonTypedFieldMapping
         JsonRecordFieldKind.String => JsonRecordFieldKind.StringMap,
         JsonRecordFieldKind.ExactNumber => JsonRecordFieldKind.ExactNumberMap,
         JsonRecordFieldKind.Decimal => JsonRecordFieldKind.DecimalMap,
+        JsonRecordFieldKind.Int64 => JsonRecordFieldKind.Int64Map,
+        JsonRecordFieldKind.UInt64 => JsonRecordFieldKind.UInt64Map,
         JsonRecordFieldKind.NullableBoolean => JsonRecordFieldKind.BooleanNullableValuesMap,
         JsonRecordFieldKind.NullableInteger => JsonRecordFieldKind.IntegerNullableValuesMap,
         JsonRecordFieldKind.NullableString => JsonRecordFieldKind.StringNullableValuesMap,
         JsonRecordFieldKind.NullableExactNumber => JsonRecordFieldKind.ExactNumberNullableValuesMap,
         JsonRecordFieldKind.NullableDecimal => JsonRecordFieldKind.DecimalNullableValuesMap,
+        JsonRecordFieldKind.NullableInt64 => JsonRecordFieldKind.Int64NullableValuesMap,
+        JsonRecordFieldKind.NullableUInt64 => JsonRecordFieldKind.UInt64NullableValuesMap,
         _ => throw new ArgumentException("Unsupported scalar map descriptor.", nameof(kind))
     })]);
 
