@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Explicit internal scalar descriptors, not reflection or a public D# schema.
-internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue, NullableFieldValue }
+internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, Record, NullableRecord, RecordArray, NullableRecordArray, BooleanArray, IntegerArray, StringArray, NullableBooleanArray, NullableIntegerArray, NullableStringArray, BooleanNullableElementsArray, IntegerNullableElementsArray, StringNullableElementsArray, NullableBooleanNullableElementsArray, NullableIntegerNullableElementsArray, NullableStringNullableElementsArray, Union, NullableUnion, ExactNumber, NullableExactNumber, ExactNumberArray, NullableExactNumberArray, ExactNumberNullableElementsArray, NullableExactNumberNullableElementsArray, UnionArray, NullableUnionArray, UnionNullableElementsArray, NullableUnionNullableElementsArray, FieldValue, NullableFieldValue, RecordMap, NullableRecordMap }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null, JsonTaggedUnionSchema? UnionSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -29,7 +29,8 @@ internal sealed class JsonScalarRecordSchema
             if (!Enum.IsDefined(field.Kind) || (field.Optional && !IsNullable(field.Kind)))
                 throw new ArgumentException("The field descriptor is not supported.", nameof(fields));
             var isArray = field.Kind is JsonRecordFieldKind.RecordArray or JsonRecordFieldKind.NullableRecordArray;
-            var isRecord = isArray || field.Kind is JsonRecordFieldKind.Record or JsonRecordFieldKind.NullableRecord;
+            var isMap = field.Kind is JsonRecordFieldKind.RecordMap or JsonRecordFieldKind.NullableRecordMap;
+            var isRecord = isArray || isMap || field.Kind is JsonRecordFieldKind.Record or JsonRecordFieldKind.NullableRecord;
             var isScalarArray = JsonRecordScalarArray.ElementKind(field.Kind) is not null;
             var isUnionArray = field.Kind is JsonRecordFieldKind.UnionArray or JsonRecordFieldKind.NullableUnionArray or
                 JsonRecordFieldKind.UnionNullableElementsArray or JsonRecordFieldKind.NullableUnionNullableElementsArray;
@@ -39,7 +40,7 @@ internal sealed class JsonScalarRecordSchema
             if (isUnion != (field.UnionSchema is not null))
                 throw new ArgumentException("Union fields require exactly one union descriptor.", nameof(fields));
             if (field.NestedSchema is { } nested)
-                depth = Math.Max(depth, checked(nested.Depth + (isArray ? 2 : 1)));
+                depth = Math.Max(depth, checked(nested.Depth + (isArray || isMap ? 2 : 1)));
             else if (field.UnionSchema is { } union)
                 depth = Math.Max(depth, checked(union.Depth + (isUnionArray ? 2 : 1)));
             else if (isScalarArray)
@@ -59,7 +60,7 @@ internal sealed class JsonScalarRecordSchema
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
         JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or
-        JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray or JsonRecordFieldKind.NullableFieldValue;
+        JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray or JsonRecordFieldKind.NullableFieldValue or JsonRecordFieldKind.NullableRecordMap;
 
     // Only schema-owned names appear in paths, JSON-escaped to keep control
     // characters and punctuation safe. Unknown input names are never echoed.
@@ -119,6 +120,7 @@ internal sealed class JsonScalarRecord
         JsonScalarRecord record => record.Depth,
         JsonTaggedUnion union => union.Depth,
         JsonRecordArray array => array.Depth,
+        JsonRecordMap map => map.Depth,
         JsonUnionArray array => array.Depth,
         JsonNullableUnionArray array => array.Depth,
         JsonRecordScalarArray => 1,
@@ -141,6 +143,8 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.NullableRecord => value is null || value is JsonScalarRecord record && ReferenceEquals(record.Schema, field.NestedSchema),
         JsonRecordFieldKind.RecordArray => value is JsonRecordArray array && ReferenceEquals(array.Schema, field.NestedSchema),
         JsonRecordFieldKind.NullableRecordArray => value is null || value is JsonRecordArray array && ReferenceEquals(array.Schema, field.NestedSchema),
+        JsonRecordFieldKind.RecordMap => value is JsonRecordMap map && ReferenceEquals(map.Schema, field.NestedSchema),
+        JsonRecordFieldKind.NullableRecordMap => value is null || value is JsonRecordMap map && ReferenceEquals(map.Schema, field.NestedSchema),
         JsonRecordFieldKind.Union => value is JsonTaggedUnion union && ReferenceEquals(union.Schema, field.UnionSchema),
         JsonRecordFieldKind.NullableUnion => value is null || value is JsonTaggedUnion union && ReferenceEquals(union.Schema, field.UnionSchema),
         JsonRecordFieldKind.UnionArray => value is JsonUnionArray unionArray && ReferenceEquals(unionArray.Schema, field.UnionSchema),
@@ -216,6 +220,33 @@ internal sealed class JsonRecordScalarArray
         JsonRecordFieldKind.ExactNumberNullableElementsArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray => JsonRecordScalarArrayKind.NullableExactNumber,
         _ => null
     };
+}
+
+// Own the entries; keys and record snapshots are immutable.
+internal sealed class JsonRecordMap
+{
+    private readonly KeyValuePair<string, JsonScalarRecord>[] values;
+    private JsonRecordMap(JsonScalarRecordSchema schema, KeyValuePair<string, JsonScalarRecord>[] values) { Schema = schema; this.values = values; }
+    internal JsonScalarRecordSchema Schema { get; }
+    internal int Count => values.Length;
+    internal int Depth => 1 + values.Select(value => value.Value.Depth).DefaultIfEmpty(0).Max();
+    internal KeyValuePair<string, JsonScalarRecord> At(int index) => values[index];
+
+    internal static JsonRecordMap Create(JsonScalarRecordSchema schema, KeyValuePair<string, JsonScalarRecord>[] values)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(values);
+        var copied = (KeyValuePair<string, JsonScalarRecord>[])values.Clone();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pair in copied)
+        {
+            if (pair.Key is null || pair.Value is null || !ReferenceEquals(pair.Value.Schema, schema))
+                throw new ArgumentException("Map entries must have keys and records matching their descriptor.", nameof(values));
+            JsonScalarCodec.ValidateUtf16(pair.Key);
+            if (!names.Add(pair.Key)) throw new ArgumentException("Map keys must be unique.", nameof(values));
+        }
+        return new JsonRecordMap(schema, copied);
+    }
 }
 
 // Own the array; its elements are already immutable record snapshots.
@@ -343,6 +374,12 @@ internal static class JsonScalarRecordCodec
                     ? JsonScalarResult<object?>.Success(null)
                     : Box(ReadRecordArray(field.NestedSchema!, property.Value, path));
             }
+            else if (field.Kind is JsonRecordFieldKind.RecordMap or JsonRecordFieldKind.NullableRecordMap)
+            {
+                value = field.Kind == JsonRecordFieldKind.NullableRecordMap && property.Value.ValueKind == JsonValueKind.Null
+                    ? JsonScalarResult<object?>.Success(null)
+                    : Box(ReadRecordMap(field.NestedSchema!, property.Value, path));
+            }
             else if (field.Kind is JsonRecordFieldKind.UnionNullableElementsArray or JsonRecordFieldKind.NullableUnionNullableElementsArray)
             {
                 value = field.Kind == JsonRecordFieldKind.NullableUnionNullableElementsArray && property.Value.ValueKind == JsonValueKind.Null
@@ -463,6 +500,28 @@ internal static class JsonScalarRecordCodec
         return JsonScalarResult<JsonUnionArray>.Success(JsonUnionArray.Create(schema, values.ToArray()));
     }
 
+    private static JsonScalarResult<JsonRecordMap> ReadRecordMap(JsonScalarRecordSchema schema, JsonElement element, string path)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return JsonScalarResult<JsonRecordMap>.Failure(JsonScalarErrorCode.TypeMismatch, path);
+        var values = new List<KeyValuePair<string, JsonScalarRecord>>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            var itemPath = path + "[" + values.Count.ToString(CultureInfo.InvariantCulture) + "]";
+            string name;
+            try { name = property.Name; JsonScalarCodec.ValidateUtf16(name); }
+            catch (InvalidOperationException) { return JsonScalarResult<JsonRecordMap>.Failure(JsonScalarErrorCode.InvalidUnicode, itemPath); }
+            catch (ArgumentException) { return JsonScalarResult<JsonRecordMap>.Failure(JsonScalarErrorCode.InvalidUnicode, itemPath); }
+            if (!names.Add(name)) return JsonScalarResult<JsonRecordMap>.Failure(JsonScalarErrorCode.DuplicateField, itemPath);
+            var value = ReadRecord(schema, property.Value, itemPath);
+            if (!value.IsSuccess)
+                return JsonScalarResult<JsonRecordMap>.Failure(value.Error!.Value.Code, value.Error.Value.Path);
+            values.Add(new(name, value.Value));
+        }
+        return JsonScalarResult<JsonRecordMap>.Success(JsonRecordMap.Create(schema, values.ToArray()));
+    }
+
     private static JsonScalarResult<JsonRecordArray> ReadRecordArray(JsonScalarRecordSchema schema, JsonElement element, string path)
     {
         if (element.ValueKind != JsonValueKind.Array)
@@ -557,6 +616,18 @@ internal static class JsonScalarRecordCodec
                 writer.WriteStartArray();
                 for (var index = 0; index < array.Count; index++) WriteRecord(writer, array.At(index));
                 writer.WriteEndArray();
+                break;
+            case JsonRecordFieldKind.RecordMap:
+            case JsonRecordFieldKind.NullableRecordMap:
+                var map = (JsonRecordMap)value;
+                writer.WriteStartObject();
+                for (var index = 0; index < map.Count; index++)
+                {
+                    var entry = map.At(index);
+                    writer.WritePropertyName(entry.Key);
+                    WriteRecord(writer, entry.Value);
+                }
+                writer.WriteEndObject();
                 break;
             case JsonRecordFieldKind.BooleanArray:
             case JsonRecordFieldKind.IntegerArray:
