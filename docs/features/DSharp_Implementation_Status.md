@@ -173,7 +173,8 @@ Standalone typed record maps also map to and from JSON value trees using an
 explicit descriptor, retaining snapshots, exact values and indexed errors.
 Internal record fields also support boolean, integer, string and exact-number
 string-keyed maps, including nullable or optional map presence, non-null typed
-values, immutable snapshots and redacted indexed errors.
+values, immutable snapshots and redacted indexed errors. Explicit variants also
+support nullable scalar values, independently of nullable or optional maps.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

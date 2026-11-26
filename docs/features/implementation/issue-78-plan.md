@@ -1,5 +1,40 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-second slice: nullable scalar map values
+
+Base `ed531ef6b761a6cd5475b58d5d9f362fc4afc3b8` supports typed scalar map
+fields but rejects null values within maps. Add explicit boolean, integer,
+string and exact-number maps with nullable values, independently supporting
+required, nullable and optional map presence. Preserve distinct absent map,
+null map, empty map and null entry states; reuse typed immutable snapshots,
+exact numbers, ordinal duplicate and Unicode rejection, redacted indexed errors
+and the combined 64-container bound. This extends records, union payloads and
+the existing heterogeneous tree bridge without defining Option, public D# or
+durable wire semantics.
+
+Update the internal record codec and add runtime feature tests for all four
+nullable element kinds and nested union/tree round trips (AC1/AC3), missing,
+null, empty and invalid distinctions (AC2), descriptor mismatch, snapshots,
+redaction and depth (AC3/AC4). Preserve existing tests, dependencies and trusted
+verification. Run bootstrap, full verifier, runtime, SQLite and compiler checks
+and exact-base isolated runtime verification where available; record results.
+#78 remains open for public integration and remaining contract decisions.
+
+### Twenty-second-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier initially hit
+  a restore error; a retry of locked restore passed, then the verifier hit the
+  same MCR image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 208 feature tests,
+  including five nullable scalar-map tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twenty-first slice: typed scalar maps in record fields
 
 Base `9e9db08c55ec9d51e0fbfec7a5d064205160bdd0` supports maps of typed
