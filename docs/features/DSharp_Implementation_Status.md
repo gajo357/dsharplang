@@ -163,6 +163,9 @@ durable message format.
 Internal record fields can compose that union descriptor in either direction,
 including through record arrays, with exact descriptor identity, nullable
 presence and redacted nested paths under the combined depth limit.
+Union and record composition now reads parsed JSON elements directly, so invalid
+UTF-8 in nested union payload strings and keys returns a redacted indexed or
+schema-field error rather than escaping as a transcoding exception.
 An internal exact-number token codec and record field preserve large JSON
 integers and decimal/exponent spellings without binary floating-point conversion.
 This does not establish numeric comparison or a canonical durable format.

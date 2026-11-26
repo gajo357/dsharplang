@@ -1,5 +1,40 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-seventh slice: reject malformed UTF-8 in nested unions
+
+Base `83b38396bdee83a230e3155c7f3a46f7b51a1d79` composes typed unions by
+converting nested `JsonElement` values to raw text and reparsing. A direct
+System.Text.Json probe shows that `GetRawText()` throws `InvalidOperationException`
+for invalid UTF-8 inside an object; the current nested union paths do not catch it.
+This can escape the promised structured, redacted decode errors. Reuse the
+already parsed elements when reading a union payload and unions inside record
+fields, arrays and maps, so existing scalar and property-name validation reports
+invalid Unicode with the correct schema/index path. Preserve existing schema
+identity, depth limits, duplicate handling and successful encodings; do not
+introduce replacement decoding, a public API or a wire contract.
+
+Change the internal record/union codec readers, add a new runtime feature test
+covering malformed UTF-8 in nested values and keys, union fields, arrays and maps,
+and update this plan/status. Merged #9, #14, #25, #28, #31, #38 and earlier #78
+slices provide setup and descriptor behavior. AC2/AC4 map malformed bytes to
+structured, path-aware, redacted failures; AC3 retains nested round trips and
+depth behavior through the existing regression suite. Run bootstrap, full
+verification, runtime, SQLite, compiler and exact-base isolated runtime checks,
+preserving all trusted checks and the report guard. Keep #78 open.
+
+Results: before the change, all seven new focused cases failed with uncaught
+`InvalidOperationException` from `GetRawText()`; after it, all seven passed
+with redacted paths. `bash .github/ai/bootstrap.sh` passed. The full
+`bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and all
+56 automation tests, then could not pull the pinned MCR image (`Forbidden`).
+`bash scripts/verify-runtime.sh` passed 2 baseline and 293 feature tests;
+`bash scripts/verify-sqlite.sh` passed 1 baseline and 53 feature tests.
+`bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+a fresh very short source snapshot with the unchanged report guard accepting
+508,460 bytes. The exact-base isolated runtime verifier restored successfully,
+then the same pinned MCR image pull returned `Forbidden` before its container
+ran. Hosted exact-head checks and their trusted runtime pilot remain required.
+
 ## Thirty-sixth slice: verified JSON bytes through SQLite reopen
 
 Base `29a288a883c486d1f2173e505f8f29d86f4e3889` has internal typed JSON
