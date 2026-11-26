@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-eighth slice: standalone typed scalar-map tree bridge
+
+Base `84a0fc5168494e0b2e0f60f6abf36e412fbb2ec8` supports scalar maps as
+record fields, but unlike record and union maps it cannot bridge a standalone
+typed scalar map to the JSON value tree and back. Add that internal bridge for
+boolean, integer, string and exact-number values, including nullable values.
+Reuse the existing scalar decoder so integer validation and error codes agree
+with record fields; retain exact number spelling and immutable ownership.
+
+Affected files: `src/DSharp.Runtime/JsonTypedFieldMapping.cs`, the existing
+scalar record codec where needed for reuse, new `tests/runtime-features/`
+coverage, this plan and the implementation status. Merged prerequisites #9,
+#38, #28, #31 and #14 are documented below. AC1/AC3: round-trip each map type
+through encoded JSON and the heterogeneous tree, including null entries and
+large exact numbers. AC2/AC4: verify wrong root, wrong entry type, null in a
+required map, invalid integers and redacted indexed errors. Verify empty maps,
+snapshot ownership and invalid descriptors. Run bootstrap, full verifier,
+runtime, SQLite, compiler and exact-base isolated runtime verifier; record
+actual results. This internal slice does not adopt a public D# API, durable
+wire contract, Option representation or logging envelope. Those decisions and
+full #78 acceptance remain open.
+
+### Twenty-eighth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  54 automation tests, then failed at the pinned MCR image pull (`Forbidden`).
+  The exact-base isolated runtime verifier restored successfully but hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot are still required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 242 feature cases.
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 features in a
+  fresh short-path source snapshot; the unchanged TRX guard accepted 508,460
+  bytes. An earlier longer-path run passed the test cases but failed the guard
+  with a 514,144-byte report.
+
 ## Twenty-seventh slice: reject live capabilities at JSON boundaries
 
 Base `e543d6ef0d6e369f6f8048eb3feb7d990f7bcd3e` has internal typed
