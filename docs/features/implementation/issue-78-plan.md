@@ -1,5 +1,44 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-fourth slice: exact typed decimal JSON values
+
+Base `781e60bab227e523c298d049416e77268b0cca09` preserves arbitrary JSON
+number tokens but cannot decode a typed D# `decimal` value. Merged #216 supplies
+checked D# decimal arithmetic and exact literal semantics. Add internal decimal
+scalar and nullable record-field codecs using an exact bounded coefficient and
+scale check, never binary floating point or silent rounding. Permit exponent and
+trailing-zero forms only when their value is exactly representable by .NET
+decimal; reject overflows and unrepresentable precision with a structured error.
+Typed decimal encoding follows .NET decimal value/scale; callers needing original
+token spelling continue to use the separate exact-number token type.
+
+Change the internal scalar and record codecs, add runtime feature tests and
+update this plan and status. Merged #9, #14, #25, #28, #31, #38 and #216
+provide setup, contract boundaries and the tested type. AC1/AC3: round-trip
+boundary values, exponent inputs, nullable fields and nested records/unions via
+the validated payload. AC2/AC4: reject overflow, fractional precision loss,
+wrong types and invalid inputs with redacted paths; test null/missing fields and
+descriptor matching. Preserve prior tests, dependencies and trusted verification.
+Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base isolated
+runtime verification; record results. Public D# JSON APIs, durable admission,
+Option, numeric comparison and versioned contracts remain outside this slice;
+#78 remains open.
+
+### Thirty-fourth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full verifier
+  rerun passed documentation (137 files, 309 links) and all 56 automation tests,
+  then the pinned MCR image pull failed `Forbidden`. Its first run encountered
+  the previously observed intermittent application compiler build failure with
+  no diagnostic; the automation rerun passed. The exact-base isolated runtime
+  verifier restored and hit the same MCR image-pull failure. Hosted exact-head
+  checks and the real intentional-failure/clean runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 280 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Thirty-third slice: validated record payloads for typed handoff
 
 Base `b54f92973f04156f0719c35d7d435cc461bd3489` supports validated union

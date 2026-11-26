@@ -125,6 +125,10 @@ Internal signed and unsigned 64-bit scalar codecs and record fields, including
 nullable and optional fields, also round-trip through nested union/tree bridges
 without floating-point conversion; typed integer decoding rejects out-of-range
 or fractional numbers and reports redacted paths.
+Internal decimal scalars and record fields decode only exactly representable
+.NET decimal values, including exponent forms, and reject overflow or precision
+loss with redacted errors. Typed decimal encoding follows decimal value/scale;
+the separate exact-number token retains original JSON spelling when needed.
 The next internal slice handles arrays of these scalar and nullable element
 types, including two-level int32 arrays, with generated indexed error paths and
 read-only decoded collections. This array slice does not establish a D#
