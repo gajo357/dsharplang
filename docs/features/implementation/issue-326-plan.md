@@ -24,6 +24,18 @@ tests, dependencies and trusted verification. SDK generation, packaging,
 upgrades and wider AI-01/02/04 coordination remain outside this slice; #326
 remains open.
 
+The first full local verification on this follow-on failed in an existing
+prelude-resource test while it and the example command built compiler projects
+in the same checkout. Shared intermediates are a plausible cause, not a proven
+diagnosis; logs contained no compiler error. Isolate the example command's
+compiler build by copying the actual compiler and CLI sources and pinned build
+configuration to its already-unique temporary directory, excluding build output.
+Check and compile the actual example files using that copied compiler. Add a
+fresh-source test that makes the compiler checkout read-only and executes the
+documented command, proving it does not need to write build output there. Keep
+all existing tests, assertions and trusted verification intact, and rerun the
+full suite and compiler regression.
+
 ## Follow-on: execute an immutable inventory snapshot
 
 Base `353ac7098eb966a033d9f722883b42c0d6a964db` provides a verified
