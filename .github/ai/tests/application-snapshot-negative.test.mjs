@@ -24,7 +24,7 @@ test('application verifier rejects a constant stock update', { timeout: 240000 }
       cwd: resolve(snapshot, 'examples/inventory-app'), encoding: 'utf8', timeout: 210000, maxBuffer: 1024 * 1024
     });
     assert.notEqual(result.status, 0, 'A constant stock calculation must fail');
-    assert.match(result.stderr, /Inventory snapshot update was incorrect\./);
+    assert.match(result.stderr, /Inventory snapshot update was incorrect\./, `${result.stdout}\n${result.stderr}`);
     assert.doesNotMatch(result.stderr, /Inventory result was not 42\.|Inventory remaining calculation was incorrect\./);
   } finally {
     rmSync(snapshot, { recursive: true, force: true });
