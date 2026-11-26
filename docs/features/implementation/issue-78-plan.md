@@ -1,5 +1,39 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Eighteenth slice: typed collection/tree mapping
+
+Base `d9f5c89df427df6d7f1ed8b87394b518c9590591` maps individual private
+records and tagged unions to and from JSON trees. Extend the explicit mapping to
+standalone arrays of records and unions, including nullable union elements.
+The reverse mapping requires an exact supplied element descriptor; preserve
+order, immutable ownership, exact number spelling and null elements, and prefix
+redacted failures with the array index. Reject non-array roots, incompatible
+elements and values exceeding the existing 64-container limit. This makes typed
+collections usable end to end through the existing tree without inferring a
+schema or adopting public D#, Option, logging or durable wire semantics.
+
+Update the private mapping and add runtime feature tests for typed record and
+union collection round trips (AC1/AC3), empty arrays, nullable elements, invalid
+and unknown content (AC2), indexed redaction (AC4), descriptor identity,
+snapshot ownership and depth boundaries. Preserve existing tests, dependencies,
+project files and trusted verification. Run bootstrap, full verifier, runtime,
+SQLite and compiler checks and the exact-base isolated runtime verifier where
+available; record actual results. #78 remains open for its broader acceptance.
+
+### Eighteenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  52 automation tests; the isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 189 feature tests,
+  including five collection mapping tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Seventeenth slice: explicit typed-value tree mapping
 
 Base `f245cc9a3890e45151aadc06d18c7a0663fa6209` has private typed
