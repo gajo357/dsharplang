@@ -30,6 +30,8 @@ internal static class JsonScalarCodec
 {
     internal static byte[] EncodeBoolean(bool value) => Write(writer => writer.WriteBooleanValue(value));
     internal static byte[] EncodeInteger(int value) => Write(writer => writer.WriteNumberValue(value));
+    internal static byte[] EncodeInt64(long value) => Write(writer => writer.WriteNumberValue(value));
+    internal static byte[] EncodeUInt64(ulong value) => Write(writer => writer.WriteNumberValue(value));
 
     internal static byte[] EncodeString(string value)
     {
@@ -40,13 +42,19 @@ internal static class JsonScalarCodec
 
     internal static byte[] EncodeNullableBoolean(bool? value) => value.HasValue ? EncodeBoolean(value.Value) : EncodeNull();
     internal static byte[] EncodeNullableInteger(int? value) => value.HasValue ? EncodeInteger(value.Value) : EncodeNull();
+    internal static byte[] EncodeNullableInt64(long? value) => value.HasValue ? EncodeInt64(value.Value) : EncodeNull();
+    internal static byte[] EncodeNullableUInt64(ulong? value) => value.HasValue ? EncodeUInt64(value.Value) : EncodeNull();
     internal static byte[] EncodeNullableString(string? value) => value is null ? EncodeNull() : EncodeString(value);
 
     internal static JsonScalarResult<bool> DecodeBoolean(ReadOnlyMemory<byte> input) => Decode(input, ReadBoolean);
     internal static JsonScalarResult<int> DecodeInteger(ReadOnlyMemory<byte> input) => Decode(input, ReadInteger);
+    internal static JsonScalarResult<long> DecodeInt64(ReadOnlyMemory<byte> input) => Decode(input, ReadInt64);
+    internal static JsonScalarResult<ulong> DecodeUInt64(ReadOnlyMemory<byte> input) => Decode(input, ReadUInt64);
     internal static JsonScalarResult<string> DecodeString(ReadOnlyMemory<byte> input) => Decode(input, ReadString);
     internal static JsonScalarResult<bool?> DecodeNullableBoolean(ReadOnlyMemory<byte> input) => Decode(input, ReadNullableBoolean);
     internal static JsonScalarResult<int?> DecodeNullableInteger(ReadOnlyMemory<byte> input) => Decode(input, ReadNullableInteger);
+    internal static JsonScalarResult<long?> DecodeNullableInt64(ReadOnlyMemory<byte> input) => Decode(input, ReadNullableInt64);
+    internal static JsonScalarResult<ulong?> DecodeNullableUInt64(ReadOnlyMemory<byte> input) => Decode(input, ReadNullableUInt64);
     internal static JsonScalarResult<string?> DecodeNullableString(ReadOnlyMemory<byte> input) => Decode(input, ReadNullableString);
 
     private static JsonScalarResult<T> Decode<T>(ReadOnlyMemory<byte> input, Func<JsonElement, JsonScalarResult<T>> read)
@@ -79,6 +87,20 @@ internal static class JsonScalarCodec
             : JsonScalarResult<int>.Failure(JsonScalarErrorCode.InvalidInteger);
     }
 
+    internal static JsonScalarResult<long> ReadInt64(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Number) return JsonScalarResult<long>.Failure(JsonScalarErrorCode.TypeMismatch);
+        return value.TryGetInt64(out var result) ? JsonScalarResult<long>.Success(result)
+            : JsonScalarResult<long>.Failure(JsonScalarErrorCode.InvalidInteger);
+    }
+
+    internal static JsonScalarResult<ulong> ReadUInt64(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Number) return JsonScalarResult<ulong>.Failure(JsonScalarErrorCode.TypeMismatch);
+        return value.TryGetUInt64(out var result) ? JsonScalarResult<ulong>.Success(result)
+            : JsonScalarResult<ulong>.Failure(JsonScalarErrorCode.InvalidInteger);
+    }
+
     internal static JsonScalarResult<string> ReadString(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.String)
@@ -108,6 +130,20 @@ internal static class JsonScalarCodec
         if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<int?>.Success(null);
         var result = ReadInteger(value);
         return result.IsSuccess ? JsonScalarResult<int?>.Success(result.Value) : JsonScalarResult<int?>.Failure(result.Error!.Value.Code);
+    }
+
+    internal static JsonScalarResult<long?> ReadNullableInt64(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<long?>.Success(null);
+        var result = ReadInt64(value);
+        return result.IsSuccess ? JsonScalarResult<long?>.Success(result.Value) : JsonScalarResult<long?>.Failure(result.Error!.Value.Code);
+    }
+
+    internal static JsonScalarResult<ulong?> ReadNullableUInt64(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Null) return JsonScalarResult<ulong?>.Success(null);
+        var result = ReadUInt64(value);
+        return result.IsSuccess ? JsonScalarResult<ulong?>.Success(result.Value) : JsonScalarResult<ulong?>.Failure(result.Error!.Value.Code);
     }
 
     internal static JsonScalarResult<string?> ReadNullableString(JsonElement value)
