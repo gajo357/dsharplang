@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-fourth slice: nullable record array elements
+
+Base `572c311fd43669fd6ba9bdfb0ab9256cbdc74e9b` supports record arrays with
+required elements and nullable union arrays, but cannot represent an array of
+nullable records. Add explicit required or nullable/optional record-array fields
+whose elements may be null, plus standalone conversion to and from the existing
+heterogeneous JSON tree. Keep null-array, absent-field, empty-array and null-item
+states distinct. Copy snapshots, require exact schema identity for non-null
+items, and preserve exact values, redacted indexed errors and the combined
+64-container limit through nested records and unions.
+
+Update the private record codec and tree adapter; add runtime feature tests for
+nested union/tree round trips and standalone mapping (AC1/AC3), presence and
+invalid data (AC2), schema identity, snapshot isolation, error redaction and
+depth (AC3/AC4). No Option, public D# or durable wire semantics are adopted.
+Preserve existing tests, dependencies and trusted verification; run bootstrap,
+full verifier, runtime, SQLite and compiler regression, and the exact-base
+isolated runtime verifier where available. Record actual results and keep #78 open.
+
+### Twenty-fourth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier restored but
+  hit the same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 218 feature tests,
+  including five nullable-record-array tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twenty-third slice: typed union maps in record fields
 
 Base `b24db7577e5768fecc048fc40bed8fc45c0c0dd1` supports maps of records

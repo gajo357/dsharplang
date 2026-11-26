@@ -166,7 +166,8 @@ present non-null values as distinct internal states.
 Explicit internal adapters map typed record and union snapshots to JSON value
 trees and back using a supplied descriptor and the existing provisional codecs.
 Those adapters also map standalone record and union arrays, including nullable
-union elements, with indexed redacted failures and bounded nesting.
+union elements, with indexed redacted failures and bounded nesting. Nullable
+record-array elements also round-trip as fields and standalone tree mappings.
 Internal record fields can contain string-keyed maps of one record descriptor,
 including nullable or optional map presence, with indexed redacted errors.
 Standalone typed record maps also map to and from JSON value trees using an
