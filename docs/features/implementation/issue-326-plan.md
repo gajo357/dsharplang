@@ -1,5 +1,40 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: verify a clean source snapshot
+
+Base `ff249fa57e681b3a3b7f35b2240de14d0ba2dac9` contains the application
+example, version-specific Claude import evidence and bounded reference claims.
+The existing automation runs the example in its working checkout; it does not
+prove the issue's fresh-checkout criterion or that the documented command matches
+the command being run. Add an independent automation test that exports the
+committed source tree to a private temporary directory without Git metadata,
+checks both instruction/import pairs and every local example-guidance link there,
+asserts the documented shell block is the verifier command, and runs that command
+from the example root against the exported compiler and pinned SDK. The verifier
+must compile and execute the actual D# sources and assert 42. Clean up the export
+and keep the existing tests and trusted verifier unchanged.
+
+This directly tests fresh-source discoverability, links, commands and behavioral
+claims for #326 without asserting SDK packaging, upgrade behavior or runtime
+features. The test belongs to the candidate automation suite and will exercise
+the actual committed head in CI. Run the new test, bootstrap, full verifier and
+compiler regression, record results and leave #326 open for broader AI-01/02/04
+coordination. Preserve existing tests, dependencies and the pinned SDK.
+
+### Clean-source verification
+
+- `node --test .github/ai/tests/application-fresh-source.test.mjs` passed:
+  a committed source export without `.git` contained the instruction/import
+  pairs and links, and the documented command compiled and executed the
+  example as 42 from its root. CI will repeat this against its exact checkout.
+- `bash .github/ai/bootstrap.sh` passed using .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 53 automation tests, then could not pull the pinned MCR image (`Forbidden`)
+  for its isolated compiler stage. Hosted exact-head verification remains
+  necessary.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a short-path snapshot; the unchanged TRX guard accepted 510,084 bytes.
+
 ## Follow-on: bound verified-example claims
 
 Base `8f2bd25501a2f302b9ecc4523f79e45a19c02b41` includes the inventory
