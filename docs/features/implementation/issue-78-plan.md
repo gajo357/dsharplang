@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-third slice: typed union maps in record fields
+
+Base `b24db7577e5768fecc048fc40bed8fc45c0c0dd1` supports maps of records
+and scalars but not maps of tagged unions. Add explicit string-keyed maps of one
+union descriptor as required or nullable/optional record fields. Copy entries,
+require exact descriptor identity and non-null union values, reject invalid
+Unicode/duplicate keys, and preserve order, combined depth and redacted indexed
+errors. Integrate through nested records and unions and the existing JSON tree
+bridge; do not define public D#, Option or durable wire semantics.
+
+Modify the private record codec and add runtime feature tests for nested
+union-map/tree round trips (AC1/AC3), missing/null/empty and required distinctions
+(AC2), foreign/null values, snapshots and malformed/duplicate keys, redacted
+paths and depth limits (AC2–AC4). Preserve existing tests, dependencies and trusted
+verification. Run bootstrap, full verifier, runtime, SQLite and compiler regression
+and exact-base isolated runtime verification where available. Record actual
+results; #78 remains open for public integration and remaining contract decisions.
+
+### Twenty-third-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier restored but
+  hit the same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 213 feature tests,
+  including five union-map tests. `bash scripts/verify-sqlite.sh` passed
+  1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twenty-second slice: nullable scalar map values
 
 Base `ed531ef6b761a6cd5475b58d5d9f362fc4afc3b8` supports typed scalar map
