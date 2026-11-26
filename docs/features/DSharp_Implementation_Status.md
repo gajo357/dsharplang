@@ -175,6 +175,8 @@ Internal record fields also support boolean, integer, string and exact-number
 string-keyed maps, including nullable or optional map presence, non-null typed
 values, immutable snapshots and redacted indexed errors. Explicit variants also
 support nullable scalar values, independently of nullable or optional maps.
+Record fields can also hold string-keyed maps of one tagged-union descriptor,
+with nullable or optional map presence and indexed redacted errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
