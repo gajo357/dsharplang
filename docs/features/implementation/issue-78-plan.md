@@ -1,5 +1,41 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-seventh slice: reject live capabilities at JSON boundaries
+
+Base `e543d6ef0d6e369f6f8048eb3feb7d990f7bcd3e` has internal typed
+record, union, list, map and tree codecs, but their acceptance evidence does not
+exercise the issue's named rejection categories together. Add focused runtime
+feature tests that attempt to insert a delegate, Task, disposable resource and
+mutable foreign object into the actual object-valued record and scalar-map
+construction boundaries, including nested records and unions. Use controlled
+sentinel values whose `ToString`, enumeration and disposal expose unintended
+application callbacks. Assert rejection without invoking them or leaking their
+secret data, while a valid immutable nested record/union/collection still round
+trips through bytes and the tree bridge. Preserve the existing API and codecs
+unless the tests expose an in-scope defect.
+
+Map unsupported capability rejection and nested round trips to AC3, fixed
+redacted failures and no application callbacks to AC4. Tests use #9's enabled
+runtime paths; no public D#, Option, logging or durable contract is adopted.
+Preserve existing tests, dependencies and trusted verification. Run bootstrap,
+full verifier, runtime, SQLite, compiler and exact-base isolated runtime checks
+where available; record results. Keep #78 open for public integration and the
+remaining contract decisions.
+
+### Twenty-seventh-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  54 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier restored but
+  hit the same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 231 feature tests,
+  including three capability-rejection tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twenty-sixth slice: nullable record map values and tree mappings
 
 Base `b41d3a0a9f896cb60ffad3c3bda0813283cd5786` supports record maps with

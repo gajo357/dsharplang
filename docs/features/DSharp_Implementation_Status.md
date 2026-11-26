@@ -181,7 +181,9 @@ support nullable scalar values, independently of nullable or optional maps.
 Record fields can also hold string-keyed maps of one tagged-union descriptor,
 with nullable or optional map presence and indexed redacted errors. Explicit
 variants also allow null union values, and standalone union maps map to and
-from value trees using a supplied descriptor.
+from value trees using a supplied descriptor. Runtime tests also exercise rejection
+of delegate, Task, disposable and mutable foreign values at the internal record
+and scalar-map boundaries without invoking sentinel callbacks or exposing contents.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
