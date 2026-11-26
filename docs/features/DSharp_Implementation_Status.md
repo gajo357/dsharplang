@@ -174,6 +174,8 @@ The matrix below includes subsequent implemented feature slices.
 The inventory application example uses the current multi-file compiler subset;
 its verifier checks and compiles the actual sources and executes the generated
 pure calculation. It does not demonstrate an actor runtime or an SDK scaffold.
+An automation test also runs its documented command from a clean committed source
+export after checking the application instructions and their local links.
 Its quick reference reproduces those source files and is checked for drift and
 unmarked D# examples.
 The example and scaffold relative Claude imports were checked with Claude Code
