@@ -26,6 +26,10 @@ if (DSharp.Generated.Inventory.remaining(9, 4) != 5 ||
     DSharp.Generated.Inventory.remaining(0, 0) != 0 ||
     DSharp.Generated.Inventory.remaining(3, 5) != -2)
     throw new System.Exception("Inventory remaining calculation was incorrect.");
+if (DSharp.Generated.InventorySummary.availableAfterSale(50, 8, 3) != 39 ||
+    DSharp.Generated.InventorySummary.availableAfterSale(10, 8, 2) != 0 ||
+    DSharp.Generated.InventorySummary.availableAfterSale(3, 4, 2) != -3)
+    throw new System.Exception("Cross-module stock calculation was incorrect.");
 if (DSharp.Generated.Inventory.afterSale(50, 8, 3) != 39 ||
     DSharp.Generated.Inventory.afterSale(10, 8, 2) != 0 ||
     DSharp.Generated.Inventory.afterSale(3, 4, 2) != -3 ||

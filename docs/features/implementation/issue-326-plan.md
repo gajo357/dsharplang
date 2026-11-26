@@ -1,5 +1,29 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: exercise stock across application modules
+
+Base `fed3dfe3394e825ba9027600860cb3d8a7038d0c` verifies immutable stock
+inside `Inventory`, but `InventorySummary` only imports an integer function.
+Make the actual application module construct the imported `Stock`, call the
+imported copy-update function and compute the balance. Exercise positive, zero
+and negative inputs through the cross-module entry point, keeping `available()`
+at 42 and preserving all existing arithmetic and immutable-snapshot checks.
+Update the source-matched quick reference and application guidance to describe
+the behavior that is really checked. This is a supported compiler example, not
+an actor runtime or SDK packaging claim.
+
+Change the example summary, its quick reference and project guidance, the
+documented application verifier, this plan and implementation status. The
+merged #46 multi-file work and #25 immutable-record work supply the relevant
+compiler features. Map #326's multi-file supported example and behavioral
+verification criteria to check/compile/execute through the real documented
+command, including diverse inputs and the existing fresh-source, arithmetic and
+snapshot negative controls. Run the command, candidate automation, bootstrap,
+full verifier and compiler regression; record exact results. Preserve existing
+tests, dependencies and trusted verification. SDK generation, packaging,
+upgrades and wider AI-01/02/04 coordination remain outside this slice; #326
+remains open.
+
 ## Follow-on: execute an immutable inventory snapshot
 
 Base `353ac7098eb966a033d9f722883b42c0d6a964db` provides a verified
