@@ -24,6 +24,26 @@ control on a committed candidate, bootstrap, full verifier and compiler
 regression. Record results; SDK packaging/upgrade and broader AI-01/02/04
 coordination are not implemented by this slice, so #326 remains open.
 
+### Immutable-snapshot verification
+
+- From the example root, `bash ../../scripts/verify-application-example.sh`
+  checked and compiled both D# files, executed the existing summary and
+  arithmetic cases, checked positive, zero and negative post-sale balances and
+  verified original snapshots. The new negative control exported committed
+  candidate `dfcaa53cd96f869304ef3be577b829a59e9a818d`, replaced only the
+  post-sale calculation with 42 and observed the named snapshot assertion fail.
+  The existing clean-source, original arithmetic negative, reference/source and
+  reference-coverage tests also passed.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. A full verifier
+  rerun passed documentation (137 files, 309 links) and all 55 automation tests,
+  then failed to pull the pinned MCR image (`Forbidden`). Earlier local combined
+  runs intermittently failed during generated-project builds with no diagnostic;
+  the focused checks and full rerun passed. Hosted exact-head checks remain
+  necessary to evaluate that observation.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short-path source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Follow-on: verify inventory behavior beyond the advertised example
 
 Base `bb3cca7ee0d50693917daa5f269c2e2d86788db2` checks, compiles and runs
