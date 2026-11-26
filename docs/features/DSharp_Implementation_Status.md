@@ -129,6 +129,9 @@ Internal decimal scalars and record fields decode only exactly representable
 .NET decimal values, including exponent forms, and reject overflow or precision
 loss with redacted errors. Typed decimal encoding follows decimal value/scale;
 the separate exact-number token retains original JSON spelling when needed.
+Decimal arrays and string-keyed maps now compose through internal record and
+union fields, including nullable elements and optional or nullable collections,
+with copied snapshots, redacted indexed errors and bounded nesting.
 The next internal slice handles arrays of these scalar and nullable element
 types, including two-level int32 arrays, with generated indexed error paths and
 read-only decoded collections. This array slice does not establish a D#
