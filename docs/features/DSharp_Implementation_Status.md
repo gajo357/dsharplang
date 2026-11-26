@@ -169,6 +169,8 @@ Those adapters also map standalone record and union arrays, including nullable
 union elements, with indexed redacted failures and bounded nesting.
 Internal record fields can contain string-keyed maps of one record descriptor,
 including nullable or optional map presence, with indexed redacted errors.
+Standalone typed record maps also map to and from JSON value trees using an
+explicit descriptor, retaining snapshots, exact values and indexed errors.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

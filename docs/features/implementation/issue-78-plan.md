@@ -1,5 +1,39 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twentieth slice: standalone typed record-map tree mapping
+
+Base `bb3ed50a75803863512d1d113539c3af4f9371bf` integrates typed record maps
+inside records and unions, but the existing tree adapter supports standalone
+arrays only. Add explicit bidirectional conversion between a standalone
+`JsonRecordMap` and a heterogeneous JSON map using an explicit value schema.
+Preserve insertion order, exact numbers, missing/null distinctions, immutable
+snapshots, schema identity and the shared 64-container depth bound. Reject
+non-map roots, malformed entries and unknown fields with redacted indexed paths;
+never infer a schema or invoke application constructors.
+
+Update the private `JsonTypedFieldMapping` adapter and add runtime feature tests
+for map/tree round trips including nested unions and records (AC1/AC3), empty,
+missing and null cases and invalid values (AC2), schema identity, snapshots,
+depth and redacted paths (AC3/AC4). Public D#, Option, logging and durable
+format choices remain outside this slice and #78 remains open. Preserve existing
+coverage, dependencies and trusted verification. Run bootstrap, full verifier,
+runtime, SQLite and compiler regression and exact-base runtime verification where
+available, and record results.
+
+### Twentieth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 53 automation tests; its isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier restored
+  successfully but hit the same image-pull failure. Hosted exact-head checks and
+  the trusted runtime deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 198 feature tests,
+  including four new map/tree mapping tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Nineteenth slice: typed record maps in record fields
 
 Base `059272b51d819cf42f6c146d306cec5ed7087e37` provides typed record and
