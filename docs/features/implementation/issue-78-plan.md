@@ -1,5 +1,43 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-ninth slice: signed and unsigned 64-bit integer fields
+
+Base `847198624af94149d1c4b02d85376cbcc78b192e` preserves arbitrary JSON
+number tokens but only has an int32 typed scalar. D# already executes `long`
+and `ulong` in the merged #177 integer-width slice. Add explicit internal
+signed/unsigned 64-bit scalar codecs and record-field descriptors, including
+nullable/optional presence. These reuse the existing record/union/tree bridge
+and never pass through binary floating point. Numeric spelling is normalized
+when converting to an integer; the existing exact-number type remains available
+when token spelling must be retained. Do not claim that all numeric widths,
+collections, public D# bindings or durable encoding are implemented.
+
+Change the scalar and record codecs, add runtime feature tests, and update this
+plan and implementation status. Merged #9, #38, #28, #31 and #14 are the
+issue's verified prerequisites; #177 supplies executable `long`/`ulong`
+behavior without requiring closure of parent #48. AC1/AC3: exercise root
+scalars and nested record/union/tree round trips at both width boundaries,
+including nullable fields. AC2/AC4: verify absent, explicit null, required
+absence, type/range errors and redacted paths, without application callbacks.
+Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base isolated
+runtime verifier; record actual results. Public JSON APIs, Option policy,
+logging envelope and durable contract/version adoption remain outside this
+internal slice, so #78 remains open.
+
+### Twenty-ninth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 54 automation tests before the pinned MCR image pull failed `Forbidden`.
+  The exact-base isolated runtime verifier restored, then hit the same image
+  failure. Hosted exact-head checks and the trusted runtime intentional-failure
+  and clean pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 251 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature cases in
+  a fresh unique short source snapshot; its unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Twenty-eighth slice: standalone typed scalar-map tree bridge
 
 Base `84a0fc5168494e0b2e0f60f6abf36e412fbb2ec8` supports scalar maps as

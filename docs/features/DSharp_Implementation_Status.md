@@ -121,6 +121,10 @@ string, including explicit nullable variants and redacted root-path decode
 errors. Tests cover type, range, Unicode and malformed-input rejection. This is
 not an adopted public API, composite/Option encoding, canonical durable codec
 or actor admission support; #78 remains open.
+Internal signed and unsigned 64-bit scalar codecs and record fields, including
+nullable and optional fields, also round-trip through nested union/tree bridges
+without floating-point conversion; typed integer decoding rejects out-of-range
+or fractional numbers and reports redacted paths.
 The next internal slice handles arrays of these scalar and nullable element
 types, including two-level int32 arrays, with generated indexed error paths and
 read-only decoded collections. This array slice does not establish a D#
