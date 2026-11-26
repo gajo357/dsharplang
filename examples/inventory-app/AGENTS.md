@@ -21,8 +21,9 @@ bash ../../scripts/verify-application-example.sh
 ```
 
 The verifier checks and compiles the actual D# files, then executes the generated
-summary, inventory arithmetic and immutable stock update with positive, zero and
-negative results. It checks that the original snapshot remains unchanged. It
+summary, cross-module stock calculation, inventory arithmetic and immutable
+stock update with positive, zero and negative results. It checks that the
+original snapshot remains unchanged. It
 does not demonstrate actor registration, scoped
 resources, dispatcher invocation, durable submission or publication. Document
 those distinctions when the application actually uses supported runtime features.

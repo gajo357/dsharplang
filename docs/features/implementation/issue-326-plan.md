@@ -1,5 +1,61 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: exercise stock across application modules
+
+Base `fed3dfe3394e825ba9027600860cb3d8a7038d0c` verifies immutable stock
+inside `Inventory`, but `InventorySummary` only imports an integer function.
+Make the actual application module construct the imported `Stock`, call the
+imported copy-update function and compute the balance. Exercise positive, zero
+and negative inputs through the cross-module entry point, keeping `available()`
+at 42 and preserving all existing arithmetic and immutable-snapshot checks.
+Update the source-matched quick reference and application guidance to describe
+the behavior that is really checked. This is a supported compiler example, not
+an actor runtime or SDK packaging claim.
+
+Change the example summary, its quick reference and project guidance, the
+documented application verifier, this plan and implementation status. The
+merged #46 multi-file work and #25 immutable-record work supply the relevant
+compiler features. Map #326's multi-file supported example and behavioral
+verification criteria to check/compile/execute through the real documented
+command, including diverse inputs and the existing fresh-source, arithmetic and
+snapshot negative controls. Run the command, candidate automation, bootstrap,
+full verifier and compiler regression; record exact results. Preserve existing
+tests, dependencies and trusted verification. SDK generation, packaging,
+upgrades and wider AI-01/02/04 coordination remain outside this slice; #326
+remains open.
+
+The first full local verification on this follow-on failed in an existing
+prelude-resource test while it and the example command built compiler projects
+in the same checkout. Shared intermediates are a plausible cause, not a proven
+diagnosis; logs contained no compiler error. Isolate the example command's
+compiler build by copying the actual compiler and CLI sources and pinned build
+configuration to its already-unique temporary directory, excluding build output.
+Check and compile the actual example files using that copied compiler. Add a
+fresh-source test that makes the compiler checkout read-only and executes the
+documented command, proving it does not need to write build output there. Keep
+all existing tests, assertions and trusted verification intact, and rerun the
+full suite and compiler regression.
+
+### Cross-module and build-isolation verification
+
+- The documented example command checked and compiled both real D# files and
+  executed the cross-module positive, zero and negative balance cases. On
+  committed candidate `8219f6f3b0c5ab80a8c9a3ba7ddf0d6b410be64a`, the existing
+  fresh-source, application, both negative-control and reference tests passed.
+  After isolating the compiler build, the read-only compiler-source regression
+  passed on candidate `f4b8b149f6e7bbf2d4468e52cd05753a39bacea3`.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full
+  `bash .github/ai/verify.sh` rerun passed documentation (137 files, 309 links)
+  and all 56 automation tests, then could not pull the pinned MCR image
+  (`Forbidden`). One earlier full run failed in the existing prelude compiler
+  build without diagnostic even after isolation; that test passed independently
+  and in the full rerun. Isolation removes shared example compiler outputs but
+  does not establish the cause of the intermittent failure. Hosted exact-head
+  verification remains required.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short-path source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Follow-on: execute an immutable inventory snapshot
 
 Base `353ac7098eb966a033d9f722883b42c0d6a964db` provides a verified

@@ -2,6 +2,13 @@ module InventorySummary
 
 import Inventory
 
+fn availableAfterSale(received: int, sold: int, quantity: int): int {
+    let before = Stock { received = received
+                         sold = sold }
+    let after = sell(before, quantity)
+    remaining(after.received, after.sold)
+}
+
 fn available(): int {
-    remaining(50, 8)
+    availableAfterSale(50, 5, 3)
 }
