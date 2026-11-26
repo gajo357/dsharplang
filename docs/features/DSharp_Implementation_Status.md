@@ -178,6 +178,9 @@ Internal record fields also support boolean, integer, string and exact-number
 string-keyed maps, including nullable or optional map presence, non-null typed
 values, immutable snapshots and redacted indexed errors. Explicit variants also
 support nullable scalar values, independently of nullable or optional maps.
+Standalone typed scalar maps now also round-trip through JSON value trees using
+an explicit scalar kind, with nullable entries, exact number spellings,
+immutable snapshots and redacted indexed failures.
 Record fields can also hold string-keyed maps of one tagged-union descriptor,
 with nullable or optional map presence and indexed redacted errors. Explicit
 variants also allow null union values, and standalone union maps map to and
