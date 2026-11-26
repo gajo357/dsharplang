@@ -1,5 +1,39 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Nineteenth slice: typed record maps in record fields
+
+Base `059272b51d819cf42f6c146d306cec5ed7087e37` provides typed record and
+union snapshots, heterogeneous JSON trees and arrays of typed records. Add an
+explicit string-keyed map of one record descriptor as a required or nullable/
+optional record field. Use an immutable copied container, reject invalid Unicode,
+duplicate keys, null or foreign records, and preserve descriptor identity and
+entry order. Encode and decode through the existing record codec so typed maps
+work in nested records, arrays and union payloads. Report untrusted map keys only
+as indexes and apply the combined 64-container depth bound.
+
+Update the private record codec and add runtime feature tests for nested map
+round trips and exact numbers (AC1/AC3), absent/null/empty and required fields
+(AC2), invalid keys/values and duplicate input (AC2/AC3), indexed redaction and
+depth boundaries (AC4). Preserve existing tests, projects, dependencies and
+trusted verification. This does not adopt public D# or Option semantics, a
+logging API or a durable wire contract. Run bootstrap, full verifier, runtime,
+SQLite and compiler regressions and exact-base isolated runtime verification
+where available; record actual results. #78 remains open.
+
+### Nineteenth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with the pinned SDK. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; the isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). The exact-base isolated runtime verifier hit the
+  same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 194 feature tests,
+  including five new record-map tests. `bash scripts/verify-sqlite.sh` passed
+  1 baseline and 52 features.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path snapshot; the unchanged TRX guard accepted 509,272 bytes.
+
 ## Eighteenth slice: typed collection/tree mapping
 
 Base `d9f5c89df427df6d7f1ed8b87394b518c9590591` maps individual private
