@@ -12,5 +12,6 @@ supported. Avoid creating unused folders.
 Locate the project's source, tests and documentation before editing. Use the
 check, build and test commands documented by that project, and verify behavior
 at the level claimed. Do not infer a runtime capability from a compiler check.
+Update affected project guidance and examples alongside syntax or API changes.
 When runtime capabilities are available, document explicit registration and
 scoped resources, and distinguish invocation, durable submission and publication.

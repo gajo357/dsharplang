@@ -7,6 +7,8 @@ verified [inventory](inventory/stock.ds) and [summary](app/summary.ds) sources.
 Check existing conventions and feature availability before using
 syntax or APIs from another language. The language design documents include
 illustrative features that may not execute yet.
+When a syntax or API change affects this guidance or its examples, update the
+affected documentation and sources in the same change and rerun verification.
 
 `inventory/` contains the capability's pure calculation; `app/` composes it.
 Keep related definitions together, prefer immutable typed values and pure
@@ -19,8 +21,9 @@ bash ../../scripts/verify-application-example.sh
 ```
 
 The verifier checks and compiles the actual D# files, then executes the generated
-summary and checks the inventory function with positive, zero and negative
-results. It does not demonstrate actor registration, scoped
+summary, inventory arithmetic and immutable stock update with positive, zero and
+negative results. It checks that the original snapshot remains unchanged. It
+does not demonstrate actor registration, scoped
 resources, dispatcher invocation, durable submission or publication. Document
 those distinctions when the application actually uses supported runtime features.
 Keep this file project-owned when upgrading the SDK.

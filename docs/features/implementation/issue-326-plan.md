@@ -1,5 +1,49 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: execute an immutable inventory snapshot
+
+Base `353ac7098eb966a033d9f722883b42c0d6a964db` provides a verified
+multi-file application but only demonstrates integer functions, although its
+guidance recommends immutable typed data. Extend the same inventory source with
+an immutable `Stock` record and a function that copies a stock snapshot after a
+sale, while retaining the existing `remaining` and `available` behavior.
+Extend the documented real example command to execute positive, zero and
+negative post-sale balances and a check that the original snapshot is unchanged.
+Update the source-matched quick reference and project guidance, including the
+instruction to update affected guidance/examples alongside syntax or API changes.
+
+Affected files are the inventory example, its project-owned guidance and quick
+reference, `scripts/verify-application-example.sh`, a new candidate automation
+negative control, this plan and the implementation status. Map #326's supported
+example, immutable data, real commands and behavioral-verification criteria to
+the actual D# compiler check/compile/run, fresh-source automation and a control
+that changes the new computation to a constant and proves the verifier fails.
+Preserve all existing tests, including the separate `remaining` negative control,
+dependencies and trusted verifiers. Run the example command, new negative
+control on a committed candidate, bootstrap, full verifier and compiler
+regression. Record results; SDK packaging/upgrade and broader AI-01/02/04
+coordination are not implemented by this slice, so #326 remains open.
+
+### Immutable-snapshot verification
+
+- From the example root, `bash ../../scripts/verify-application-example.sh`
+  checked and compiled both D# files, executed the existing summary and
+  arithmetic cases, checked positive, zero and negative post-sale balances and
+  verified original snapshots. The new negative control exported committed
+  candidate `dfcaa53cd96f869304ef3be577b829a59e9a818d`, replaced only the
+  post-sale calculation with 42 and observed the named snapshot assertion fail.
+  The existing clean-source, original arithmetic negative, reference/source and
+  reference-coverage tests also passed.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. A full verifier
+  rerun passed documentation (137 files, 309 links) and all 55 automation tests,
+  then failed to pull the pinned MCR image (`Forbidden`). Earlier local combined
+  runs intermittently failed during generated-project builds with no diagnostic;
+  the focused checks and full rerun passed. Hosted exact-head checks remain
+  necessary to evaluate that observation.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short-path source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Follow-on: verify inventory behavior beyond the advertised example
 
 Base `bb3cca7ee0d50693917daa5f269c2e2d86788db2` checks, compiles and runs

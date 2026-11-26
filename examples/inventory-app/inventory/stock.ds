@@ -1,5 +1,28 @@
 module Inventory
 
+type Stock {
+    received: int
+    sold: int
+}
+
 fn remaining(received: int, sold: int): int {
     received - sold
+}
+
+fn sell(stock: Stock, quantity: int): Stock {
+    stock with { sold = stock.sold + quantity }
+}
+
+fn afterSale(received: int, sold: int, quantity: int): int {
+    let before = Stock { received = received
+                         sold = sold }
+    let after = sell(before, quantity)
+    remaining(after.received, after.sold)
+}
+
+fn originalUnchanged(received: int, sold: int, quantity: int): bool {
+    let before = Stock { received = received
+                         sold = sold }
+    let after = sell(before, quantity)
+    before.received == after.received && before.sold == sold && after.sold == sold + quantity
 }
