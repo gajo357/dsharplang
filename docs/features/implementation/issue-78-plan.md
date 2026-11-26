@@ -1,5 +1,43 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-second slice: hand off encoded typed union snapshots
+
+Base `3abfc4727878700b02f1638ecb745aa8d75868d7` validates and snapshots
+incoming union JSON, but callers starting with an immutable typed union must
+encode and decode it again to obtain the same validated payload. Add an internal
+factory that encodes an existing, descriptor-checked union snapshot using the
+existing codec and retains defensive bytes and the immutable typed value. Do not
+adopt a new wire format or canonical equality rule. The existing constructors
+already enforce descriptor identity, eligible fields and depth; no application
+callbacks, schema discovery or reflection are introduced.
+
+Change `src/DSharp.Runtime/JsonValidatedUnionPayload.cs`, add a new runtime
+feature test and update this plan and the implementation status. Merged #9, #14,
+#28, #31, #38 and #59 supply setup, contract boundaries, supported types and the
+volatile reference. AC1/AC3: construct nested typed data, encode and hand off
+its defensive snapshot through a test-owned volatile caller, retrieve and decode
+it with the same explicit descriptor, including exact numbers, null and missing
+fields. AC2/AC4: exercise invalid descriptor construction, null input, redacted
+decode failures and mutation isolation. Fixture metadata and orchestration are
+test-owned. Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base
+isolated runtime verification; record results. Public D# APIs, durable
+admission, Option, canonicalization and versioned contracts remain open; #78
+stays open.
+
+### Thirty-second-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 56 automation tests, then the pinned MCR image pull failed `Forbidden`.
+  The exact-base isolated runtime verifier restored and hit the same image-pull
+  failure. Hosted exact-head checks and the real intentional-failure/clean
+  runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 259 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Thirty-first slice: validate and snapshot typed union bytes before handoff
 
 Base `7a3c8617bc6d48143355f83d58982758fd1daee1` demonstrates that the

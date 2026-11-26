@@ -199,6 +199,9 @@ An internal validated union payload now snapshots bytes before decoding against
 an explicit descriptor and returns redacted errors or a decoded immutable value
 with defensive byte copies. A test-owned caller demonstrates validation before a
 volatile-reference handoff; no store admission policy is implied.
+The same internal payload can be created from an already descriptor-checked
+union, encoded and recovered through that test-owned reference handoff while
+preserving exact numbers, null/missing distinctions and immutable snapshots.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.

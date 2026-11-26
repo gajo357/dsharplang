@@ -15,6 +15,12 @@ internal sealed class JsonValidatedUnionPayload
     internal JsonTaggedUnion Value { get; }
     internal byte[] Bytes => (byte[])bytes.Clone();
 
+    internal static JsonValidatedUnionPayload FromValue(JsonTaggedUnion value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new(JsonTaggedUnionCodec.Encode(value), value);
+    }
+
     internal static JsonScalarResult<JsonValidatedUnionPayload> Decode(JsonTaggedUnionSchema schema, ReadOnlyMemory<byte> input)
     {
         ArgumentNullException.ThrowIfNull(schema);
