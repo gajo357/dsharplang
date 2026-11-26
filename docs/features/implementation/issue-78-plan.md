@@ -1,5 +1,44 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-fifth slice: exact decimal collections through typed records
+
+Base `ade292d8fb086e1d4f736e4b6c6f4c7f7ab93756` supports exact typed decimal
+scalars, but not decimal list or string-keyed map fields. Extend the existing
+immutable scalar-array and scalar-map descriptors to decimal values, including
+nullable elements independently of nullable or optional collection presence.
+Reuse the exact decimal reader so unrepresentable precision and overflow fail
+at redacted indexed paths; do not round or use binary floating point. Extend the
+existing standalone scalar-map/tree bridge using the same explicit descriptors.
+Typed decimal encoding follows .NET value/scale; original arbitrary number
+spelling remains the responsibility of the exact-number token type.
+
+Change the internal scalar-record and tree-mapping sources, add runtime feature
+tests, and update this plan and status. Merged #9, #14, #25, #28, #31, #38 and
+#216 supply setup, contract boundaries and tested types. AC1/AC3: round-trip
+decimal arrays and maps through nested union/validated-record/tree and a
+test-owned volatile handoff. AC2/AC4: distinguish missing, null, empty and null
+entries, reject type/range/precision errors with redacted indexed paths, and
+test descriptor identity and copied inputs. Preserve existing tests, pinned
+dependencies and trusted verification. Run bootstrap, full verifier, runtime,
+SQLite, compiler and exact-base isolated runtime verification; record results.
+No public D# API, Option policy, durable admission or versioned wire contract is
+adopted; #78 remains open.
+
+### Thirty-fifth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. The full verifier
+  rerun passed documentation (137 files, 309 links) and all 56 automation tests,
+  then the pinned MCR image pull failed `Forbidden`. Its first run hit the
+  previously observed intermittent application build failure without diagnostics;
+  automation passed on rerun. The exact-base isolated runtime verifier restored
+  and hit the same MCR image-pull failure. Hosted exact-head checks and the real
+  intentional-failure/clean runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 286 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Thirty-fourth slice: exact typed decimal JSON values
 
 Base `781e60bab227e523c298d049416e77268b0cca09` preserves arbitrary JSON
