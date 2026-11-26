@@ -195,6 +195,10 @@ Test-owned composition also round-trips nested JSON bytes through the volatile
 targeted-submission reference, including copied metadata and byte-sensitive retry
 conflicts. That reference accepts opaque bytes without JSON validation; this
 evidence does not implement durable admission or an adopted message contract.
+An internal validated union payload now snapshots bytes before decoding against
+an explicit descriptor and returns redacted errors or a decoded immutable value
+with defensive byte copies. A test-owned caller demonstrates validation before a
+volatile-reference handoff; no store admission policy is implied.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
