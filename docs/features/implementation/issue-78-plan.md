@@ -1,5 +1,44 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-first slice: validate and snapshot typed union bytes before handoff
+
+Base `7a3c8617bc6d48143355f83d58982758fd1daee1` demonstrates that the
+volatile reference stores opaque bytes without validating them. Add an internal
+validated union payload that copies the supplied bytes *before* decoding with
+an explicit existing union descriptor, returns the existing redacted structured
+failure if decoding fails, and exposes only defensive byte copies with the
+validated immutable union snapshot. Preserve the caller's exact JSON bytes,
+including numeric spelling, whitespace and property order; this is not a
+canonicalization or versioning policy. A test-owned caller can hand those bytes
+to the volatile reference only after validation succeeds. No provider or store
+implementation is changed and the reference continues to accept opaque bytes.
+
+Affected files: a new internal `src/DSharp.Runtime/` implementation, new
+`tests/runtime-features/` tests, this plan and implementation status. The
+merged #9, #14, #28, #31, #38 and #59 supply setup, contract boundaries,
+supported types and the volatile reference. AC1/AC3: validate, snapshot, hand
+off, retrieve and decode nested typed data while preserving bytes and descriptor
+identity. AC2/AC4: reject malformed, unknown or invalid input with redacted
+paths before test-owned handoff; exercise caller/output mutations and no
+application constructors. The test uses opaque fixture metadata, not a wire
+contract. Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base
+isolated runtime verification; record results. Public D# APIs, durable admission,
+Option and versioned schema evolution remain outside this slice; #78 stays open.
+
+### Thirty-first-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 56 automation tests, then the pinned MCR image pull failed `Forbidden`.
+  The exact-base isolated runtime verifier restored and hit the same image-pull
+  failure. Hosted exact-head checks and the real intentional-failure/clean
+  runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 257 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Thirtieth slice: exercise JSON bytes through the volatile reference store
 
 Base `c5636897aaf144c7d32bbca91c4870eabd224e01` has internal JSON value,
