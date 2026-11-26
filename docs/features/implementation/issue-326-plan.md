@@ -1,5 +1,27 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: verify inventory behavior beyond the advertised example
+
+Base `bb3cca7ee0d50693917daa5f269c2e2d86788db2` checks, compiles and runs
+`available()` as 42 from a clean source export, but a `remaining` function that
+always returns 42 would pass. The quick reference advertises that function with
+two inputs and subtraction. Strengthen the explicitly scoped application
+verifier to execute the actual generated `remaining` with positive, zero and
+negative outcomes, in addition to the existing `available()` assertion. Keep the
+existing output and all prior checks unchanged. Add an independent candidate
+automation test that exports committed source to a temporary checkout, replaces
+only the example function body with a constant 42, and verifies the real command
+fails on a named `remaining` assertion even though `available()` still yields 42.
+No project, dependency or trusted harness changes are proposed.
+
+Map the additional behavioral checks and negative control to the issue's
+advertised-example and actual-command acceptance criteria. Update example
+instructions and quick reference to describe exactly the tests performed, while
+leaving SDK packaging and broader AI-01/02/04 coordination outside this slice.
+Run the example command, new negative-control test on the committed candidate,
+bootstrap, full verifier and compiler regression; record actual results. Preserve
+all existing tests, pinned SDK and trusted verifier. Keep #326 open.
+
 ## Follow-on: verify a clean source snapshot
 
 Base `ff249fa57e681b3a3b7f35b2240de14d0ba2dac9` contains the application

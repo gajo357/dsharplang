@@ -42,5 +42,6 @@ bash ../../scripts/verify-application-example.sh
 ```
 
 It checks and compiles both actual files, then executes `available()` and expects
-42. This proves that calculation on the pinned compiler; it does not demonstrate
-an actor runtime, storage, SDK packaging, or other language features.
+42. It also checks `remaining` with inputs producing positive, zero and negative
+results. This verifies those examples on the pinned compiler; it does not
+demonstrate an actor runtime, storage, SDK packaging, or other language features.
