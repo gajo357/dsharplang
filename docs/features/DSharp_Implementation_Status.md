@@ -132,6 +132,11 @@ the separate exact-number token retains original JSON spelling when needed.
 Decimal arrays and string-keyed maps now compose through internal record and
 union fields, including nullable elements and optional or nullable collections,
 with copied snapshots, redacted indexed errors and bounded nesting.
+Test-owned integration also validates a nested typed union, transfers its copied
+bytes through the volatile reference and real SQLite, and decodes them after the
+writer exits. It checks null versus missing fields and rejects corrupt input with
+redacted errors. SQLite remains opaque; this does not implement durable admission,
+an adopted message format, or a schema-version negotiation policy.
 The next internal slice handles arrays of these scalar and nullable element
 types, including two-level int32 arrays, with generated indexed error paths and
 read-only decoded collections. This array slice does not establish a D#

@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-sixth slice: verified JSON bytes through SQLite reopen
+
+Base `29a288a883c486d1f2173e505f8f29d86f4e3889` has internal typed JSON
+snapshots and independent SQLite pinned-work storage. Verify their composition
+end to end using a test-owned bridge: validate nested typed union JSON, submit
+it through the volatile reference model, write its captured bytes and explicitly
+test-owned contract metadata into real SQLite, exit the writer process, reopen
+and decode the stored bytes with the original descriptors. Check exact large
+numbers, decimal values, null/missing fields, copied inputs and redacted failure
+before the test bridge writes anything. Also verify that corrupt stored bytes
+fail validation on read. SQLite retains opaque bytes and must not become a JSON
+admission or version policy; these tests do not claim public D# or durable actor
+admission, crash recovery, schema evolution or an adopted wire format.
+
+Change only a new SQLite feature test and this plan/status. Merged #9, #10,
+#14, #60 and the earlier #78 slices supply test setup, storage, and codecs.
+AC1/AC3 gain real provider reopen evidence for nested eligible values; AC2/AC4
+cover presence, invalid and corrupt data with redacted errors. Option's wire
+representation and actual durable contract/version negotiation remain open.
+Run bootstrap, full verifier, runtime, SQLite, compiler, and exact-base isolated
+runtime verification; use fresh unique snapshots, preserve report guards, and
+record all results. Keep #78 open.
+
+Results: bootstrap passed; the full verifier passed documentation (137 files,
+309 links) and all 56 automation tests before its pinned MCR image pull returned
+Forbidden. Runtime passed 2 baseline and 286 feature tests, and SQLite passed 1
+baseline and 53 feature tests including this new process-exit/reopen scenario.
+The compiler check passed 18 baseline and 406 features in a fresh short snapshot;
+the unchanged report guard accepted the 508,460-byte feature TRX. An earlier
+longer snapshot ran all 406 successfully but its 514,144-byte report failed that
+guard, so it was not counted as a passing verifier. A fresh exact-base isolated
+SQLite verifier restored successfully but the same pinned MCR pull returned
+Forbidden before the container ran. Hosted exact-head checks remain required.
+The first sandboxed SQLite attempt could not open the test runner's loopback
+socket; managed network permission enabled the successful retry. A runtime
+restore also needed a fresh writable NuGet HTTP cache before passing.
+
 ## Thirty-fifth slice: exact decimal collections through typed records
 
 Base `ade292d8fb086e1d4f736e4b6c6f4c7f7ab93756` supports exact typed decimal
