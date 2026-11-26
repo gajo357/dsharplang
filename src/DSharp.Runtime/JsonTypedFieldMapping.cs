@@ -62,6 +62,67 @@ internal static class JsonTypedFieldMapping
             : JsonScalarResult<JsonScalarRecord?>.Failure(result.Error!.Value.Code, result.Error.Value.Path);
     }
 
+    internal static JsonScalarResult<JsonFieldValue> FromUnionMap(JsonUnionMap value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return FromMap(value.Depth, value.Count, index => (value.At(index).Key, FromUnion(value.At(index).Value)));
+    }
+
+    internal static JsonScalarResult<JsonFieldValue> FromNullableUnionMap(JsonNullableUnionMap value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return FromMap(value.Depth, value.Count, index =>
+        {
+            var entry = value.At(index);
+            return (entry.Key, entry.Value is null ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Null()) : FromUnion(entry.Value));
+        });
+    }
+
+    internal static JsonScalarResult<JsonUnionMap> ToUnionMap(JsonTaggedUnionSchema schema, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(value);
+        var items = ToMap(value, item => ToUnion(schema, item));
+        return items.IsSuccess ? JsonScalarResult<JsonUnionMap>.Success(JsonUnionMap.Create(schema, items.Value))
+            : JsonScalarResult<JsonUnionMap>.Failure(items.Error!.Value.Code, items.Error.Value.Path);
+    }
+
+    internal static JsonScalarResult<JsonNullableUnionMap> ToNullableUnionMap(JsonTaggedUnionSchema schema, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(value);
+        var items = ToMap(value, item => ReadNullableUnion(schema, item));
+        return items.IsSuccess ? JsonScalarResult<JsonNullableUnionMap>.Success(JsonNullableUnionMap.Create(schema, items.Value))
+            : JsonScalarResult<JsonNullableUnionMap>.Failure(items.Error!.Value.Code, items.Error.Value.Path);
+    }
+
+    private static JsonScalarResult<JsonFieldValue> FromMap(int depth, int count, Func<int, (string Key, JsonScalarResult<JsonFieldValue> Value)> read)
+    {
+        if (depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.");
+        var entries = new KeyValuePair<string, JsonFieldValue>[count];
+        for (var index = 0; index < count; index++)
+        {
+            var (key, item) = read(index);
+            if (!item.IsSuccess) return JsonScalarResult<JsonFieldValue>.Failure(item.Error!.Value.Code, Index(index, item.Error.Value.Path));
+            entries[index] = new(key, item.Value);
+        }
+        return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Map(entries));
+    }
+
+    private static JsonScalarResult<KeyValuePair<string, T>[]> ToMap<T>(JsonFieldValue value, Func<JsonFieldValue, JsonScalarResult<T>> read)
+    {
+        if (value.Kind != JsonFieldValueKind.Map) return JsonScalarResult<KeyValuePair<string, T>[]>.Failure(JsonScalarErrorCode.TypeMismatch);
+        var source = value.MapItems;
+        var entries = new KeyValuePair<string, T>[source.Length];
+        for (var index = 0; index < source.Length; index++)
+        {
+            var item = read(source[index].Value);
+            if (!item.IsSuccess) return JsonScalarResult<KeyValuePair<string, T>[]>.Failure(item.Error!.Value.Code, Index(index, item.Error.Value.Path));
+            entries[index] = new(source[index].Key, item.Value);
+        }
+        return JsonScalarResult<KeyValuePair<string, T>[]>.Success(entries);
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromRecordMap(JsonRecordMap value)
     {
         ArgumentNullException.ThrowIfNull(value);

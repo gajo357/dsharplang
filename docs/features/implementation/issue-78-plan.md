@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Twenty-fifth slice: nullable union map values and tree mappings
+
+Base `805aed3fa7229eebe89b85292f7f107c0e6fb931` supports record fields with
+union maps but rejects null union entries and lacks standalone union-map/tree
+adapters. Add explicit nullable union values independently of required, nullable
+or optional map presence. Add bidirectional standalone mappings for both required
+and nullable union maps to the existing heterogeneous tree, using an explicitly
+supplied union descriptor on decode. Preserve absent/null/empty maps and null
+entries as distinct, exact descriptor identity, snapshot ownership, precise numbers,
+redacted indexed failures, duplicate/Unicode rejection and shared depth bounds.
+
+Update the private record codec and tree adapter, with runtime feature tests
+covering nested union/record/tree round trips and standalone conversions (AC1/AC3),
+presence and invalid values (AC2), schema identity, snapshots, redaction and depth
+(AC3/AC4). Preserve existing tests, dependencies and trusted verification. No
+public D#, Option, logging or durable wire semantics are adopted. Run bootstrap,
+full verifier, runtime, SQLite and compiler regression, and exact-base isolated
+runtime verifier where available; record results and keep #78 open.
+
+### Twenty-fifth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  53 automation tests; its isolated compiler stage could not pull the pinned MCR
+  image (`Forbidden`). The exact-base isolated runtime verifier restored but
+  hit the same image-pull failure. Hosted exact-head checks and the trusted runtime
+  deliberate-failure/clean pilot remain necessary.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 223 feature tests,
+  including five nullable-union-map tests. `bash scripts/verify-sqlite.sh`
+  passed 1 baseline and 52 feature tests.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path source snapshot; the unchanged TRX guard accepted 511,708 bytes.
+
 ## Twenty-fourth slice: nullable record array elements
 
 Base `572c311fd43669fd6ba9bdfb0ab9256cbdc74e9b` supports record arrays with
