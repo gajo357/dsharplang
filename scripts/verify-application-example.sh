@@ -22,6 +22,10 @@ XML
 cat > "$work/Program.cs" <<'CS'
 if (DSharp.Generated.InventorySummary.available() != 42)
     throw new System.Exception("Inventory result was not 42.");
+if (DSharp.Generated.Inventory.remaining(9, 4) != 5 ||
+    DSharp.Generated.Inventory.remaining(0, 0) != 0 ||
+    DSharp.Generated.Inventory.remaining(3, 5) != -2)
+    throw new System.Exception("Inventory remaining calculation was incorrect.");
 CS
 dotnet run --project "$work/Verify.csproj"
 echo 'Inventory example checked, compiled and returned 42.'

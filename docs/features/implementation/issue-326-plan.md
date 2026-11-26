@@ -1,5 +1,46 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: verify inventory behavior beyond the advertised example
+
+Base `bb3cca7ee0d50693917daa5f269c2e2d86788db2` checks, compiles and runs
+`available()` as 42 from a clean source export, but a `remaining` function that
+always returns 42 would pass. The quick reference advertises that function with
+two inputs and subtraction. Strengthen the explicitly scoped application
+verifier to execute the actual generated `remaining` with positive, zero and
+negative outcomes, in addition to the existing `available()` assertion. Keep the
+existing output and all prior checks unchanged. Add an independent candidate
+automation test that exports committed source to a temporary checkout, replaces
+only the example function body with a constant 42, and verifies the real command
+fails on a named `remaining` assertion even though `available()` still yields 42.
+No project, dependency or trusted harness changes are proposed.
+
+Map the additional behavioral checks and negative control to the issue's
+advertised-example and actual-command acceptance criteria. Update example
+instructions and quick reference to describe exactly the tests performed, while
+leaving SDK packaging and broader AI-01/02/04 coordination outside this slice.
+Run the example command, new negative-control test on the committed candidate,
+bootstrap, full verifier and compiler regression; record actual results. Preserve
+all existing tests, pinned SDK and trusted verifier. Keep #326 open.
+
+### Behavior verification results
+
+- `bash scripts/verify-application-example.sh` checked and compiled both
+  actual D# files, verified `available() == 42` and executed `remaining`
+  with positive, zero and negative results.
+- `node --test .github/ai/tests/application-behavior-negative.test.mjs`
+  exported committed candidate `6fd125e9f37631743d33a85e74979e863e67c07b`,
+  changed only the temporary example function to return 42, and confirmed the
+  real documented command failed with the named remaining-calculation assertion
+  rather than the summary assertion. Existing fresh-source and example tests
+  also passed in the candidate automation suite.
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 54 automation tests; its isolated compiler stage could not pull the pinned
+  MCR image (`Forbidden`). Hosted exact-head checks remain necessary.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests
+  in a short-path committed source snapshot; the unchanged TRX guard accepted
+  511,708 bytes. #326 remains open for broader coordination.
+
 ## Follow-on: verify a clean source snapshot
 
 Base `ff249fa57e681b3a3b7f35b2240de14d0ba2dac9` contains the application

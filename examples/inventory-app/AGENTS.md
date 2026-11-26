@@ -19,7 +19,8 @@ bash ../../scripts/verify-application-example.sh
 ```
 
 The verifier checks and compiles the actual D# files, then executes the generated
-method and asserts its result. It does not demonstrate actor registration, scoped
+summary and checks the inventory function with positive, zero and negative
+results. It does not demonstrate actor registration, scoped
 resources, dispatcher invocation, durable submission or publication. Document
 those distinctions when the application actually uses supported runtime features.
 Keep this file project-owned when upgrading the SDK.
