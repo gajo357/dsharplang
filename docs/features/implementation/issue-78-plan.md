@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirtieth slice: exercise JSON bytes through the volatile reference store
+
+Base `c5636897aaf144c7d32bbca91c4870eabd224e01` has internal JSON value,
+record and union codecs and the #59 volatile targeted-submission reference, but
+their composed behavior has not been exercised. Add runtime feature tests that
+encode a nested typed union with an exact-number token, explicit null and JSON
+tree, store its bytes with test-owned opaque metadata, retrieve and decode the
+stored snapshot, and verify matching retries versus changed payload or metadata.
+Test that different numeric spellings remain distinct bytes in this reference,
+without claiming canonical semantic equality. Exercise malformed stored input
+and redacted paths, explicitly confirming that this store is byte-oriented and
+does not validate JSON on acceptance. These tests use no reflection or callbacks.
+
+Affected paths are a new `tests/runtime-features/` test, this plan and the
+implementation status. Merged #9, #14, #28, #31, #38 and #59 supply setup,
+the existing contract boundaries, types and volatile reference. Map nested
+round-trip and capability-boundary evidence to AC1/AC3 and redacted invalid
+input to AC2/AC4. Metadata values and orchestration belong solely to the test:
+this does not implement durable storage, admission validation, a public D# API,
+Option, logging or a versioned wire contract. Run bootstrap, full verifier,
+runtime, SQLite, compiler and exact-base isolated runtime verification; record
+results. Keep #78 open for those outstanding integration and contract criteria.
+
+### Thirtieth-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 56 automation tests, then the pinned MCR image pull failed `Forbidden`.
+  The exact-base isolated runtime verifier restored and hit the same image-pull
+  failure. Hosted exact-head checks and the real intentional-failure/clean
+  runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 254 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Twenty-ninth slice: signed and unsigned 64-bit integer fields
 
 Base `847198624af94149d1c4b02d85376cbcc78b192e` preserves arbitrary JSON
