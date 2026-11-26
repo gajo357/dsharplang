@@ -1,5 +1,40 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-third slice: validated record payloads for typed handoff
+
+Base `b54f92973f04156f0719c35d7d435cc461bd3489` supports validated union
+payloads in both directions, but the common record message root has no equivalent
+boundary. Add an internal validated record payload: copy input bytes before
+descriptor-based decoding, retain the immutable record and defensive byte copies,
+and encode an already descriptor-checked record directly. Preserve original bytes
+on decode; encoding follows the existing provisional record codec. Do not change
+the volatile store or adopt canonicalization, public APIs or a durable wire format.
+
+Add a runtime source file, new runtime feature tests, this plan and status update.
+Merged #9, #14, #25, #28, #31, #38 and #59 supply setup, contract boundaries,
+records, supported types and the volatile reference. AC1/AC3: exercise a nested
+record array, exact number and nullable/missing fields through typed encode,
+test-owned volatile handoff, retrieval and validation. AC2/AC4: test raw-byte
+snapshot ownership, bad nested values and redacted paths before test-owned
+handoff. Preserve all existing tests and avoid callbacks or reflection. Run
+bootstrap, full verifier, runtime, SQLite, compiler and exact-base isolated
+runtime verification; record results. Public D# integration, durable admission,
+Option and versioned schema evolution remain open; #78 stays open.
+
+### Thirty-third-slice verification
+
+- `bash .github/ai/bootstrap.sh` passed with .NET 11.0.100. Full
+  `bash .github/ai/verify.sh` passed documentation (137 files, 309 links) and
+  all 56 automation tests, then the pinned MCR image pull failed `Forbidden`.
+  The exact-base isolated runtime verifier restored and hit the same image-pull
+  failure. Hosted exact-head checks and the real intentional-failure/clean
+  runtime pilot remain required.
+- `bash scripts/verify-runtime.sh` passed 2 baseline and 262 feature cases;
+  `bash scripts/verify-sqlite.sh` passed 1 baseline and 52 feature cases.
+- `bash scripts/verify-compiler.sh` passed 18 baseline and 406 feature tests in
+  a fresh unique short source snapshot; the unchanged TRX guard accepted
+  508,460 bytes.
+
 ## Thirty-second slice: hand off encoded typed union snapshots
 
 Base `3abfc4727878700b02f1638ecb745aa8d75868d7` validates and snapshots

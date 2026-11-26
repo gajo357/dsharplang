@@ -202,6 +202,9 @@ volatile-reference handoff; no store admission policy is implied.
 The same internal payload can be created from an already descriptor-checked
 union, encoded and recovered through that test-owned reference handoff while
 preserving exact numbers, null/missing distinctions and immutable snapshots.
+An equivalent internal record-root payload validates a copied byte snapshot or
+encodes a descriptor-checked record; its tests cover nested record arrays and
+the same test-owned handoff without changing store admission.
 
 The original executable baseline is recorded in [bootstrap scope](../COMPILER_BOOTSTRAP.md).
 The matrix below includes subsequent implemented feature slices.
