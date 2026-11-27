@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text.Json;
 
 namespace DSharp.Runtime;
@@ -7,6 +8,28 @@ namespace DSharp.Runtime;
 // not define float parsing, a public D# API or a durable message format.
 internal static class JsonFiniteFloatMapping
 {
+    internal static JsonScalarResult<JsonFieldValue> FromSingles(float[] values) => FromArray(values, FromSingle);
+    internal static JsonScalarResult<JsonFieldValue> FromDoubles(double[] values) => FromArray(values, FromDouble);
+    internal static JsonScalarResult<JsonFieldValue> FromNullableSingles(float?[] values) =>
+        FromArray(values, value => value.HasValue ? FromSingle(value.Value) : JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Null()));
+    internal static JsonScalarResult<JsonFieldValue> FromNullableDoubles(double?[] values) =>
+        FromArray(values, value => value.HasValue ? FromDouble(value.Value) : JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Null()));
+
+    private static JsonScalarResult<JsonFieldValue> FromArray<T>(T[] values, Func<T, JsonScalarResult<JsonFieldValue>> convert)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        var snapshot = (T[])values.Clone();
+        var items = new JsonFieldValue[snapshot.Length];
+        for (var i = 0; i < snapshot.Length; i++)
+        {
+            var item = convert(snapshot[i]);
+            if (!item.IsSuccess)
+                return JsonScalarResult<JsonFieldValue>.Failure(item.Error!.Value.Code, "$[" + i.ToString(CultureInfo.InvariantCulture) + "]");
+            items[i] = item.Value;
+        }
+        return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.List(items));
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromSingle(float value)
     {
         if (!float.IsFinite(value)) return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidFloat);

@@ -186,6 +186,8 @@ depth and redacted indexed errors. It is not yet a public D# or logging API.
 An internal one-way adapter encodes finite binary32/binary64 values as JSON
 number nodes with round-trip precision, rejecting NaN and infinities with a
 structured error; it does not define floating JSON decoding or a wire contract.
+The same internal adapter encodes arrays of these values, including nullable
+elements, with owned snapshots and redacted first-invalid indexed errors.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
 Nullable tree fields can also be optional, retaining missing, explicit null and

@@ -1,5 +1,32 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-second slice: encode finite float arrays into JSON trees
+
+Base `60909fba5e790c37ba7a8966776c404954ae847e` encodes finite IEEE
+scalars into JSON trees but has no corresponding array adapter. Add internal
+one-way adapters for binary32 and binary64 arrays, including nullable elements.
+Snapshot the input, preserve order and nulls, and return the first non-finite
+element as a structured indexed error without producing a partial tree.
+Existing exact numeric tokens stay independent of binary floating point.
+
+Update the internal adapter, add runtime feature tests and update this plan and
+status. Test boundaries, signed zero, snapshots, nulls, indexed failures and
+nested record/union tree handoff. AC1/AC3 gain collection encoding; AC2/AC4
+gain redacted failure coverage. Merged #9, #14, #225, #227 and earlier #78
+slices provide prerequisites. Run bootstrap, full verifier, runtime, SQLite,
+compiler and exact-base isolated runtime checks with fresh short snapshots and
+unchanged guards. No float decoding policy, public API, logging implementation,
+Option encoding or durable wire format is adopted. Keep #78 open.
+
+Results: four focused tests passed. Bootstrap passed; documentation checked 137
+files and 309 links, and all 57 automation tests passed. The full verifier then
+hit `Forbidden` pulling the pinned MCR image. Runtime passed 2 baseline and 328
+feature tests; SQLite passed 1 baseline and 53 feature tests. Compiler passed 18
+baseline and 406 feature tests in a fresh short snapshot, and the unchanged
+report guard accepted 508,460 bytes. The exact-base isolated runtime verifier
+restored but the pinned MCR image pull returned `Forbidden` before its container
+ran. Exact-head hosted checks and the trusted failure/clean pilot remain needed.
+
 ## Forty-first slice: encode finite binary floats into JSON trees
 
 Base `9f3ac35d3ce583bf2cbc2220da3dcedc10778031` has exact-number trees but
