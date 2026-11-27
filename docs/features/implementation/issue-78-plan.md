@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fortieth slice: avoid redundant large decimal token copies
+
+Base `e001d75557541747abcdec2a955920838aef87ab` validates exact decimal
+representability without binary floating point, but constructs an intermediate
+string containing every mantissa digit before trimming. A local probe of the
+private conversion on a 100,010-character valid token allocated 203,360 bytes
+after the input string already existed. Replace those intermediate proportional
+copies with a bounded significant-digit scan while retaining exact zero,
+exponent, precision, overflow and redacted-error semantics. The JSON parser and
+its raw-token string still allocate proportionally to the supplied input; this
+is not a claim of bounded total memory or a new input-size policy.
+
+Change only the internal decimal codec, add runtime feature tests and update
+this plan/status. Exercise long leading/trailing zero runs, giant exponents,
+decimal boundaries, unrepresentable precision, nested union/array and tree
+composition, plus an independent allocation probe of the conversion itself.
+Map exact value and nested round trips to AC1/AC3 and invalid/redacted paths to
+AC2/AC4. Merged #9, #14, #25, #28, #31, #38, #216 and prior #78 slices provide
+the setup, primitive semantics and boundary. Preserve existing tests, checks,
+dependencies and report guards. Run bootstrap, full verifier, runtime, SQLite,
+compiler and exact-base isolated runtime checks. No public D# API, Option,
+durable admission or wire policy is adopted; #78 remains open.
+
+Results: four focused tests passed, including 500 deterministic comparisons
+with independently constructed decimal values and nested redacted failures.
+The same local private-conversion probe measured 3,304 allocated bytes after
+the 100,010-character input string existed, versus 203,360 before the change;
+the test enforces an 8,192-byte bound on that conversion only. Bootstrap passed.
+The full verifier passed documentation (137 files/309 links) and all 57
+automation tests, then the pinned MCR image pull returned `Forbidden`. Runtime
+passed 2 baseline and 320 feature tests; SQLite passed 1 baseline and 53 feature
+tests. Compiler passed 18 baseline and 406 feature tests in a fresh short source
+snapshot, with the unchanged report guard accepting 508,460 bytes. The exact-base
+isolated runtime verifier restored successfully but the pinned MCR pull returned
+`Forbidden` before its container ran. Hosted exact-head checks and the trusted
+runtime failure/clean pilot remain required.
+
 ## Thirty-ninth slice: standalone typed scalar arrays and JSON trees
 
 Base `9ccbb7567ef11181b5bec3ed583d71f171f8ddf1` bridges typed record/union

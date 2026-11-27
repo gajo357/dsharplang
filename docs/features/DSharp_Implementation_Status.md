@@ -132,6 +132,8 @@ Internal decimal scalars and record fields decode only exactly representable
 .NET decimal values, including exponent forms, and reject overflow or precision
 loss with redacted errors. Typed decimal encoding follows decimal value/scale;
 the separate exact-number token retains original JSON spelling when needed.
+Decimal conversion scans long mantissas without making another full mantissa
+copy; JSON parsing and the raw token still allocate with input size.
 Decimal arrays and string-keyed maps now compose through internal record and
 union fields, including nullable elements and optional or nullable collections,
 with copied snapshots, redacted indexed errors and bounded nesting.

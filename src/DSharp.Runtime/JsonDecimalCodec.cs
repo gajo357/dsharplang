@@ -52,9 +52,22 @@ internal static class JsonDecimalCodec
         var mantissa = token.AsSpan(start, mantissaEnd - start);
         var dot = mantissa.IndexOf('.');
         var fractionLength = dot < 0 ? 0 : mantissa.Length - dot - 1;
-        var digits = dot < 0 ? mantissa.ToString() : string.Concat(mantissa[..dot], mantissa[(dot + 1)..]);
-        var coefficient = digits.TrimStart('0');
-        if (coefficient.Length == 0) return true;
+        var first = -1;
+        var digits = 0;
+        var trailingZeros = 0;
+        for (var index = 0; index < mantissa.Length; index++)
+        {
+            var digit = mantissa[index];
+            if (digit == '.') continue;
+            if (first < 0)
+            {
+                if (digit == '0') continue;
+                first = index;
+            }
+            digits++;
+            trailingZeros = digit == '0' ? trailingZeros + 1 : 0;
+        }
+        if (first < 0) return true;
 
         long exponent = 0;
         if (exponentAt >= 0)
@@ -67,17 +80,25 @@ internal static class JsonDecimalCodec
             if (negativeExponent) exponent = -exponent;
         }
         long scale = (long)fractionLength - exponent;
-        var end = coefficient.Length;
-        while (scale > 0 && end > 0 && coefficient[end - 1] == '0') { end--; scale--; }
-        coefficient = coefficient[..end];
+        var trim = (int)Math.Min(Math.Max(scale, 0), trailingZeros);
+        digits -= trim;
+        scale -= trim;
         if (scale > 28) return false;
+        var appendedZeros = 0;
         if (scale < 0)
         {
-            if (-scale > 29 || coefficient.Length - scale > 29) return false;
-            coefficient += new string('0', (int)-scale);
+            if (-scale > 29 || digits - scale > 29) return false;
+            appendedZeros = (int)-scale;
             scale = 0;
         }
-        if (coefficient.Length > 29 || !decimal.TryParse(coefficient, NumberStyles.None,
+        if (digits > 29) return false;
+        Span<char> coefficient = stackalloc char[29];
+        var written = 0;
+        for (var index = first; written < digits; index++)
+            if (mantissa[index] != '.') coefficient[written++] = mantissa[index];
+        coefficient.Slice(written, appendedZeros).Fill('0');
+        written += appendedZeros;
+        if (!decimal.TryParse(coefficient[..written], NumberStyles.None,
             CultureInfo.InvariantCulture, out var magnitude)) return false;
         var bits = decimal.GetBits(magnitude);
         result = new decimal(bits[0], bits[1], bits[2], negative, (byte)scale);
