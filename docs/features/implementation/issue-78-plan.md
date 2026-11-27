@@ -1,5 +1,36 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-fifth slice: finite float fields in typed records
+
+Base `0616c7a50c5ecc86659fa08d481f7c7d83dd050c` round-trips finite float
+scalars and arrays through trees, but explicit typed record descriptors cannot
+hold binary floats. Add required and nullable binary32/binary64 scalar fields.
+Reuse invariant nearest-representable conversion, preserving signed zero and
+finite underflow while rejecting overflow and non-finite record construction.
+Optional nullable fields retain missing versus explicit null. No float array or
+map descriptor, public API, Option representation or durable wire schema is
+adopted by this slice.
+
+Change the internal float conversion and typed record codec, add runtime feature
+tests and update status. AC1/AC3 gain typed nested field round trips; AC2/AC4
+gain missing/null and redacted field-path errors. Exercise extrema, subnormals,
+signed zero, rounding, overflow, wrong types, non-finite construction, optional
+presence, and a nested union/record. Merged #9, #14, #225, #227 and #367 provide
+the prerequisites. Run bootstrap, full verifier, runtime, SQLite and compiler
+checks plus exact-base isolated runtime verification using fresh short snapshots
+and unchanged guards. Keep #78 open for remaining acceptance.
+
+Results: four focused tests passed, and the full runtime suite passed the later
+nested-path assertion: 2 baseline and 340 feature tests. Bootstrap passed;
+documentation checked 137 files and 309 links, and all 57 automation tests
+passed. Full verification restored successfully after granting its NuGet HTTP
+cache write access, but the pinned MCR image pull returned `Forbidden` before
+the container ran. SQLite passed 1 baseline and 53 feature tests. Compiler
+passed 18 baseline and 406 feature tests in a fresh short snapshot, with the
+unchanged guard accepting 510,084 bytes. The exact-base isolated runtime verifier
+also restored, then hit the same image pull failure before its container ran.
+Exact-head hosted checks and the trusted failure/clean pilot remain required.
+
 ## Forty-fourth slice: decode finite float arrays from JSON trees
 
 Base `e1a32dfe0ede13d35475b199718f28694a40fc78` supports finite float

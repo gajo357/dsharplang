@@ -12,7 +12,11 @@ internal static class JsonFiniteFloatMapping
     {
         ArgumentNullException.ThrowIfNull(value);
         if (value.Kind != JsonFieldValueKind.Number) return JsonScalarResult<float>.Failure(JsonScalarErrorCode.TypeMismatch);
-        var token = ((JsonExactNumber)value.Scalar!).Token;
+        return ParseSingle(((JsonExactNumber)value.Scalar!).Token);
+    }
+
+    private static JsonScalarResult<float> ParseSingle(string token)
+    {
         return float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && float.IsFinite(result)
             ? JsonScalarResult<float>.Success(result) : JsonScalarResult<float>.Failure(JsonScalarErrorCode.InvalidFloat);
     }
@@ -21,10 +25,23 @@ internal static class JsonFiniteFloatMapping
     {
         ArgumentNullException.ThrowIfNull(value);
         if (value.Kind != JsonFieldValueKind.Number) return JsonScalarResult<double>.Failure(JsonScalarErrorCode.TypeMismatch);
-        var token = ((JsonExactNumber)value.Scalar!).Token;
+        return ParseDouble(((JsonExactNumber)value.Scalar!).Token);
+    }
+
+    private static JsonScalarResult<double> ParseDouble(string token)
+    {
         return double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result)
             ? JsonScalarResult<double>.Success(result) : JsonScalarResult<double>.Failure(JsonScalarErrorCode.InvalidFloat);
     }
+
+    internal static JsonScalarResult<float> ReadSingle(JsonElement value) => value.ValueKind == JsonValueKind.Number
+        ? ParseSingle(value.GetRawText()) : JsonScalarResult<float>.Failure(JsonScalarErrorCode.TypeMismatch);
+    internal static JsonScalarResult<double> ReadDouble(JsonElement value) => value.ValueKind == JsonValueKind.Number
+        ? ParseDouble(value.GetRawText()) : JsonScalarResult<double>.Failure(JsonScalarErrorCode.TypeMismatch);
+    internal static JsonScalarResult<float?> ReadNullableSingle(JsonElement value) => value.ValueKind == JsonValueKind.Null
+        ? JsonScalarResult<float?>.Success(null) : Nullable(ReadSingle(value));
+    internal static JsonScalarResult<double?> ReadNullableDouble(JsonElement value) => value.ValueKind == JsonValueKind.Null
+        ? JsonScalarResult<double?>.Success(null) : Nullable(ReadDouble(value));
 
     internal static JsonScalarResult<float[]> ToSingles(JsonFieldValue value) => ToArray(value, ToSingle);
     internal static JsonScalarResult<double[]> ToDoubles(JsonFieldValue value) => ToArray(value, ToDouble);
