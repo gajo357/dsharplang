@@ -26,6 +26,33 @@ internal static class JsonFiniteFloatMapping
             ? JsonScalarResult<double>.Success(result) : JsonScalarResult<double>.Failure(JsonScalarErrorCode.InvalidFloat);
     }
 
+    internal static JsonScalarResult<float[]> ToSingles(JsonFieldValue value) => ToArray(value, ToSingle);
+    internal static JsonScalarResult<double[]> ToDoubles(JsonFieldValue value) => ToArray(value, ToDouble);
+    internal static JsonScalarResult<float?[]> ToNullableSingles(JsonFieldValue value) => ToArray<float?>(value,
+        item => item.Kind == JsonFieldValueKind.Null ? JsonScalarResult<float?>.Success(null) : Nullable(ToSingle(item)));
+    internal static JsonScalarResult<double?[]> ToNullableDoubles(JsonFieldValue value) => ToArray<double?>(value,
+        item => item.Kind == JsonFieldValueKind.Null ? JsonScalarResult<double?>.Success(null) : Nullable(ToDouble(item)));
+
+    private static JsonScalarResult<T?> Nullable<T>(JsonScalarResult<T> result) where T : struct =>
+        result.IsSuccess ? JsonScalarResult<T?>.Success(result.Value)
+            : JsonScalarResult<T?>.Failure(result.Error!.Value.Code, result.Error.Value.Path);
+
+    private static JsonScalarResult<T[]> ToArray<T>(JsonFieldValue value, Func<JsonFieldValue, JsonScalarResult<T>> convert)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Kind != JsonFieldValueKind.List) return JsonScalarResult<T[]>.Failure(JsonScalarErrorCode.TypeMismatch);
+        var items = value.ListItems;
+        var result = new T[items.Length];
+        for (var i = 0; i < result.Length; i++)
+        {
+            var item = convert(items[i]);
+            if (!item.IsSuccess)
+                return JsonScalarResult<T[]>.Failure(item.Error!.Value.Code, "$[" + i.ToString(CultureInfo.InvariantCulture) + "]");
+            result[i] = item.Value;
+        }
+        return JsonScalarResult<T[]>.Success(result);
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromSingles(float[] values) => FromArray(values, FromSingle);
     internal static JsonScalarResult<JsonFieldValue> FromDoubles(double[] values) => FromArray(values, FromDouble);
     internal static JsonScalarResult<JsonFieldValue> FromNullableSingles(float?[] values) =>

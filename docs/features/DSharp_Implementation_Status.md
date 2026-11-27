@@ -188,7 +188,9 @@ nodes and converts number nodes back using invariant nearest-representable
 rounding, retaining signed zero and rejecting overflow. It rejects non-number
 nodes and non-finite inputs with structured errors. It also encodes arrays of
 these values, including nullable elements, with owned snapshots and redacted
-first-invalid indexed errors. This does not define a public wire contract.
+first-invalid indexed errors. It decodes required and nullable float arrays with
+invariant rounding, returning fresh arrays or a redacted first-invalid indexed
+error. This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
 Nullable tree fields can also be optional, retaining missing, explicit null and
