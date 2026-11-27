@@ -1,5 +1,34 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-fourth slice: decode finite float arrays from JSON trees
+
+Base `e1a32dfe0ede13d35475b199718f28694a40fc78` supports finite float
+scalar decoding and array encoding but has no typed array decoding. Add internal
+conversions for required and nullable binary32/binary64 elements. Preserve
+order, bit patterns, nulls and invariant rounding; fail atomically at the first
+invalid element with a redacted indexed error. Return a fresh array on each call.
+
+Update `JsonFiniteFloatMapping`, add runtime feature tests and update status.
+AC1/AC3 gain collection round trips; AC2/AC4 gain root and indexed failure
+coverage. Test empty, nullable and boundary values, signed zero, overflow,
+wrong kinds, first-error order and independence of returned arrays, including
+a nested tree encode/decode. Merged #9, #14, #225, #227 and #367 supply prerequisites.
+No public API, Option mapping, durable wire schema or logging contract is decided.
+Run bootstrap, full verifier, runtime, SQLite and compiler checks, plus exact-base
+isolated runtime verification in fresh short snapshots with unchanged guards.
+Keep #78 open for remaining acceptance.
+
+Results: four focused tests passed. Bootstrap passed; full verification passed
+documentation (137 files, 309 links) and all 57 automation tests, then its
+trusted host restore failed with NU1900 because the NuGet HTTP cache under
+`/home/agent` is read-only. The trusted process omits the writable HTTP-cache
+override. Runtime passed 2 baseline and 336 feature tests; SQLite passed 1
+baseline and 53 feature tests. Compiler passed 18 baseline and 406 feature tests
+in a fresh short snapshot; the unchanged guard accepted 510,084 bytes. An
+exact-base isolated runtime verifier also stopped at the same host restore
+failure, before its container ran. Hosted exact-head checks and the trusted
+runtime failure/clean pilot remain required.
+
 ## Forty-third slice: finite binary floats round-trip through JSON trees
 
 Base `1da7e24697ea83177766343bf8df45a38d47626f` encodes finite binary32 and
