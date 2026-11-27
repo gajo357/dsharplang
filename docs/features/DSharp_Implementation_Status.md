@@ -203,6 +203,9 @@ support nullable scalar values, independently of nullable or optional maps.
 Standalone typed scalar maps now also round-trip through JSON value trees using
 an explicit scalar kind, with nullable entries, exact number spellings,
 immutable snapshots and redacted indexed failures.
+Standalone typed scalar arrays also map to and from JSON value trees using an
+explicit scalar kind, retaining nullable entries, exact numbers, copied values,
+depth limits and redacted first-error indexes.
 Record fields can also hold string-keyed maps of one tagged-union descriptor,
 with nullable or optional map presence and indexed redacted errors. Explicit
 variants also allow null union values, and standalone union maps map to and

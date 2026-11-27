@@ -68,6 +68,60 @@ internal static class JsonTypedFieldMapping
         return FromMap(value.Depth, value.Count, index => (value.At(index).Key, FromUnion(value.At(index).Value)));
     }
 
+    // As for scalar maps, use the existing field codec in a temporary wrapper
+    // and expose only the array as the tree root.
+    internal static JsonScalarResult<JsonFieldValue> FromScalarArray(JsonRecordScalarArray value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var schema = ScalarArraySchema(value.Kind);
+        var record = JsonScalarRecord.Create(schema, [value], [true]);
+        var tree = FromRecord(record);
+        return tree.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(tree.Value.MapItems[0].Value)
+            : JsonScalarResult<JsonFieldValue>.Failure(tree.Error!.Value.Code, ScalarValuePath(tree.Error.Value.Path));
+    }
+
+    internal static JsonScalarResult<JsonRecordScalarArray> ToScalarArray(JsonRecordScalarArrayKind kind, JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var schema = ScalarArraySchema(kind);
+        if (value.Kind != JsonFieldValueKind.List)
+            return JsonScalarResult<JsonRecordScalarArray>.Failure(JsonScalarErrorCode.TypeMismatch);
+        // A depth-64 child cannot be wrapped; validate preceding values first
+        // so a prior invalid scalar remains the first reported error.
+        if (value.Depth == 64)
+        {
+            var items = value.ListItems;
+            var firstContainer = Array.FindIndex(items, item => item.Kind is JsonFieldValueKind.List or JsonFieldValueKind.Map);
+            var prefix = ToScalarArray(kind, JsonFieldValue.List(items[..firstContainer]));
+            return prefix.IsSuccess
+                ? JsonScalarResult<JsonRecordScalarArray>.Failure(JsonScalarErrorCode.TypeMismatch, Index(firstContainer, "$"))
+                : prefix;
+        }
+        var wrapper = JsonFieldValue.Map([new("value", value)]);
+        var record = ToRecord(schema, wrapper);
+        return record.IsSuccess ? JsonScalarResult<JsonRecordScalarArray>.Success((JsonRecordScalarArray)record.Value.ValueAt(0)!)
+            : JsonScalarResult<JsonRecordScalarArray>.Failure(record.Error!.Value.Code, ScalarValuePath(record.Error.Value.Path));
+    }
+
+    private static JsonScalarRecordSchema ScalarArraySchema(JsonRecordScalarArrayKind kind) => new([new("value", kind switch
+    {
+        JsonRecordScalarArrayKind.Boolean => JsonRecordFieldKind.BooleanArray,
+        JsonRecordScalarArrayKind.Integer => JsonRecordFieldKind.IntegerArray,
+        JsonRecordScalarArrayKind.String => JsonRecordFieldKind.StringArray,
+        JsonRecordScalarArrayKind.ExactNumber => JsonRecordFieldKind.ExactNumberArray,
+        JsonRecordScalarArrayKind.Decimal => JsonRecordFieldKind.DecimalArray,
+        JsonRecordScalarArrayKind.Int64 => JsonRecordFieldKind.Int64Array,
+        JsonRecordScalarArrayKind.UInt64 => JsonRecordFieldKind.UInt64Array,
+        JsonRecordScalarArrayKind.NullableBoolean => JsonRecordFieldKind.BooleanNullableElementsArray,
+        JsonRecordScalarArrayKind.NullableInteger => JsonRecordFieldKind.IntegerNullableElementsArray,
+        JsonRecordScalarArrayKind.NullableString => JsonRecordFieldKind.StringNullableElementsArray,
+        JsonRecordScalarArrayKind.NullableExactNumber => JsonRecordFieldKind.ExactNumberNullableElementsArray,
+        JsonRecordScalarArrayKind.NullableDecimal => JsonRecordFieldKind.DecimalNullableElementsArray,
+        JsonRecordScalarArrayKind.NullableInt64 => JsonRecordFieldKind.Int64NullableElementsArray,
+        JsonRecordScalarArrayKind.NullableUInt64 => JsonRecordFieldKind.UInt64NullableElementsArray,
+        _ => throw new ArgumentException("Unsupported scalar array descriptor.", nameof(kind))
+    })]);
+
     // Use the same scalar-map codec as record fields, while exposing the map
     // itself as the tree root. The wrapper is strictly internal and temporary.
     internal static JsonScalarResult<JsonFieldValue> FromScalarMap(JsonRecordScalarMap value)
@@ -77,7 +131,7 @@ internal static class JsonTypedFieldMapping
         var record = JsonScalarRecord.Create(schema, [value], [true]);
         var tree = FromRecord(record);
         return tree.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(tree.Value.MapItems[0].Value)
-            : JsonScalarResult<JsonFieldValue>.Failure(tree.Error!.Value.Code, ScalarMapPath(tree.Error.Value.Path));
+            : JsonScalarResult<JsonFieldValue>.Failure(tree.Error!.Value.Code, ScalarValuePath(tree.Error.Value.Path));
     }
 
     internal static JsonScalarResult<JsonRecordScalarMap> ToScalarMap(JsonRecordFieldKind kind, JsonFieldValue value)
@@ -100,7 +154,7 @@ internal static class JsonTypedFieldMapping
         var wrapper = JsonFieldValue.Map([new("value", value)]);
         var record = ToRecord(schema, wrapper);
         return record.IsSuccess ? JsonScalarResult<JsonRecordScalarMap>.Success((JsonRecordScalarMap)record.Value.ValueAt(0)!)
-            : JsonScalarResult<JsonRecordScalarMap>.Failure(record.Error!.Value.Code, ScalarMapPath(record.Error.Value.Path));
+            : JsonScalarResult<JsonRecordScalarMap>.Failure(record.Error!.Value.Code, ScalarValuePath(record.Error.Value.Path));
     }
 
     private static JsonScalarRecordSchema ScalarMapSchema(JsonRecordFieldKind kind) => new([new("value", kind switch
@@ -122,7 +176,7 @@ internal static class JsonTypedFieldMapping
         _ => throw new ArgumentException("Unsupported scalar map descriptor.", nameof(kind))
     })]);
 
-    private static string ScalarMapPath(string path)
+    private static string ScalarValuePath(string path)
     {
         const string prefix = "$[\"value\"]";
         return path.StartsWith(prefix, StringComparison.Ordinal) ? "$" + path[prefix.Length..] : path;

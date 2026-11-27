@@ -1,5 +1,36 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Thirty-ninth slice: standalone typed scalar arrays and JSON trees
+
+Base `9ccbb7567ef11181b5bec3ed583d71f171f8ddf1` bridges typed record/union
+arrays and scalar maps to JSON trees, but scalar arrays have no standalone
+typed/tree conversion. Add the corresponding explicit internal bridge for all
+supported scalar array kinds, including nullable entries and exact full-width
+numbers. Reuse record-field codecs and their descriptor validation, preserving
+snapshots and indexed redacted first errors. Handle a maximum-depth tree without
+trying to wrap it past the existing depth bound, and preserve deterministic first
+invalid-element ordering. Test root conversions, nested validated payload and
+test-owned reference handoff, null/type/range failures, depth and ownership.
+
+Change `JsonTypedFieldMapping.cs`, add runtime feature tests, and update this
+plan/status. Merged #9, #14, #25, #28, #31, #38, #216 and prior #78 slices supply
+setup, contracts and existing codecs. This advances AC1/AC3 standalone
+collection composition and AC2/AC4 invalid and redacted path behavior. It does
+not adopt public D# APIs, Option representation, durable admission or wire
+policy. Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base
+isolated runtime checks; use fresh unique short snapshots and keep report guards.
+Keep #78 open.
+
+Results: all 10 focused cases passed. Bootstrap passed; the full verifier passed
+documentation (137 files/309 links) and all 57 automation tests, then the
+pinned MCR image pull returned `Forbidden`. Runtime passed 2 baseline and 316
+feature tests; SQLite passed 1 baseline and 53 feature tests. Compiler passed
+18 baseline and 406 feature tests in a fresh short source snapshot; the unchanged
+report guard accepted 508,460 bytes. The exact-base isolated runtime verifier
+restored successfully but the same pinned image pull returned `Forbidden` before
+its container ran. Hosted exact-head checks and the trusted runtime failure/clean
+pilot remain required.
+
 ## Thirty-eighth slice: full-width integer collections
 
 Base `85730de09a8bd2aef5a1851ee02b1771818ccd3a` supports signed and unsigned
