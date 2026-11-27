@@ -183,11 +183,12 @@ preserving null-array, missing-field and union-case distinctions.
 An independent internal JSON value tree supports heterogeneous nested scalar
 lists and string-keyed maps, exact number spellings, owned snapshots, a bounded
 depth and redacted indexed errors. It is not yet a public D# or logging API.
-An internal one-way adapter encodes finite binary32/binary64 values as JSON
-number nodes with round-trip precision, rejecting NaN and infinities with a
-structured error; it does not define floating JSON decoding or a wire contract.
-The same internal adapter encodes arrays of these values, including nullable
-elements, with owned snapshots and redacted first-invalid indexed errors.
+An internal adapter encodes finite binary32/binary64 values as JSON number
+nodes and converts number nodes back using invariant nearest-representable
+rounding, retaining signed zero and rejecting overflow. It rejects non-number
+nodes and non-finite inputs with structured errors. It also encodes arrays of
+these values, including nullable elements, with owned snapshots and redacted
+first-invalid indexed errors. This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
 Nullable tree fields can also be optional, retaining missing, explicit null and

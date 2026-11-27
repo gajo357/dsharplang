@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-third slice: finite binary floats round-trip through JSON trees
+
+Base `1da7e24697ea83177766343bf8df45a38d47626f` encodes finite binary32 and
+binary64 values as exact-number tree nodes but cannot recover the typed binary
+value. Add explicit internal conversions from number nodes to each binary type.
+Use the pinned .NET invariant nearest-representable conversion, preserve signed
+zero, permit finite underflow and reject overflow to infinity. Non-number nodes
+and out-of-range values yield structured, redacted errors. This internal choice
+does not determine source-literal range checks, exact decimal conversion, a
+public D# API, Option encoding, durable wire identity or logger delivery.
+
+Change the internal finite-float adapter, add runtime feature tests, and update
+this plan and status. Test bit-exact round trips over boundaries and deterministic
+finite patterns, midpoint rounding, overflow/underflow, wrong types, and a nested
+record/union tree with a test-owned reference handoff. AC1/AC3 gain a bidirectional
+primitive path; AC2/AC4 cover redacted failures. Merged #9, #14, #225, #227 and
+earlier #78 slices provide prerequisites. Run bootstrap, full verifier, runtime,
+SQLite, compiler and exact-base isolated runtime checks using fresh short
+snapshots and unchanged guards. Keep #78 open for its remaining acceptance.
+
+Results: four focused tests passed, including 4,096 deterministic bit patterns
+per type (excluding non-finite values), boundary values, nearest-even midpoints,
+negative underflow, invalid kinds and overflow. Bootstrap passed; documentation
+checked 137 files and 309 links, and all 57 automation tests passed. The full
+verifier then hit `Forbidden` pulling the pinned MCR image. Runtime passed 2
+baseline and 332 feature tests; SQLite passed 1 baseline and 53 feature tests.
+Compiler passed 18 baseline and 406 feature tests in a fresh short snapshot,
+with the unchanged report guard accepting 508,460 bytes. The exact-base isolated
+runtime verifier restored, but the same MCR pull returned `Forbidden` before its
+container ran. Exact-head hosted checks and the trusted failure/clean pilot
+remain required.
+
 ## Forty-second slice: encode finite float arrays into JSON trees
 
 Base `60909fba5e790c37ba7a8966776c404954ae847e` encodes finite IEEE
