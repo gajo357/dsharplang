@@ -192,6 +192,8 @@ first-invalid indexed errors. It decodes required and nullable float arrays with
 invariant rounding, returning fresh arrays or a redacted first-invalid indexed
 error. Explicit internal record descriptors also support required and nullable
 finite float fields, including optional presence and redacted field-path errors.
+Typed record arrays likewise support finite floats, nullable arrays and elements,
+owned snapshots, and redacted indexed errors, with a scalar-array tree bridge.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.

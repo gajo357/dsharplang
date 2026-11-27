@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-sixth slice: finite float arrays in typed records
+
+Base `266afe5f8109ac440a05ade96e60d66014dec55a` supports finite float
+record scalars and separate tree arrays, but typed record array descriptors
+cannot hold them. Add explicit binary32/binary64 arrays with nullable array and
+nullable element variants. Snapshot and validate input before construction;
+retain signed zero, invariant rounding and optional missing/null distinctions.
+Return redacted first-invalid indexed paths on decoding. Integrate the existing
+standalone scalar-array/tree bridge. No float map descriptor, public D# API,
+Option representation or durable wire schema is adopted.
+
+Change the internal scalar-array descriptor, record codec and typed tree bridge;
+add runtime feature tests and update status. AC1/AC3 gain typed collection
+round trips, including nested union records; AC2/AC4 gain missing/null and
+indexed error evidence. Test empty/nullable arrays, boundaries, snapshots,
+non-finite construction, overflow, type mismatch, first-error order and tree
+mapping. Merged #9, #14, #225, #227, #368 and #369 provide prerequisites.
+Run bootstrap, full verifier, runtime, SQLite and compiler checks, and exact-base
+isolated runtime verification in fresh short snapshots with unchanged guards.
+Keep #78 open for remaining acceptance.
+
+Results: four focused tests passed; the full runtime suite passed the later
+optional-presence assertion, with 2 baseline and 344 feature tests. Bootstrap
+passed; documentation checked 137 files and 309 links and all 57 automation
+tests passed. Full verification restored but the pinned MCR image pull returned
+`Forbidden` before the container ran. SQLite passed 1 baseline and 53 feature
+tests. Compiler passed 18 baseline and 406 feature tests in a fresh short
+snapshot; its unchanged guard accepted 510,084 bytes. The exact-base isolated
+runtime verifier restored but encountered the same image pull failure before
+the container ran. Hosted exact-head checks and the trusted failure/clean pilot
+remain required.
+
 ## Forty-fifth slice: finite float fields in typed records
 
 Base `0616c7a50c5ecc86659fa08d481f7c7d83dd050c` round-trips finite float
