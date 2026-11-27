@@ -1,5 +1,39 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-first slice: encode finite binary floats into JSON trees
+
+Base `9f3ac35d3ce583bf2cbc2220da3dcedc10778031` has exact-number trees but
+no explicit path from supported `float32`/`float` values into them. Merged
+#225/#227 implement those IEEE types, and the logging target explicitly rejects
+non-finite values. Add an internal one-way adapter from finite binary32/binary64
+values to exact-number tree nodes, using the pinned JSON writer's round-trip
+formatting. Return a structured root error for NaN and infinities; never turn
+them into strings or null. Existing decimal and arbitrary numeric tokens remain
+separate and never pass through binary floating point. No public D# JSON API,
+floating JSON decoding policy, logging implementation, Option encoding or
+durable wire format is adopted by this bounded slice.
+
+Change the internal error enum and add an internal finite-float tree adapter and
+runtime feature tests; update this plan/status. Exercise binary32/binary64
+boundaries, subnormal values, signed zeros, deterministic finite bit patterns,
+non-finite rejection and nested record/union/tree with a test-owned volatile
+handoff. AC1/AC3 gain an explicit supported primitive encoding path; AC2/AC4
+cover redacted structured non-finite failures. Merged #9, #14, #225, #227 and
+prior #78 slices supply setup and numeric semantics. Run bootstrap, full verifier,
+runtime, SQLite, compiler and exact-base isolated runtime checks with fresh
+short snapshots and unchanged report guards. Keep #78 open.
+
+Results: all four focused tests passed, including 4,096 deterministic binary
+bit patterns per type (non-finite patterns excluded), signed zero, extremes and
+subnormals. Bootstrap passed. The full verifier passed documentation (137 files,
+309 links) and all 57 automation tests, then the pinned MCR pull returned
+`Forbidden`. Runtime passed 2 baseline and 324 feature tests; SQLite passed 1
+baseline and 53 feature tests. Compiler passed 18 baseline and 406 feature tests
+in a fresh short source snapshot with the unchanged guard accepting 508,460 bytes.
+The exact-base isolated runtime verifier restored successfully but the same pinned
+MCR pull returned `Forbidden` before its container ran. Hosted exact-head checks
+and the trusted runtime failure/clean pilot remain required.
+
 ## Fortieth slice: avoid redundant large decimal token copies
 
 Base `e001d75557541747abcdec2a955920838aef87ab` validates exact decimal
