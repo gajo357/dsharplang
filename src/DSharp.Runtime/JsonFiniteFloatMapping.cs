@@ -4,10 +4,28 @@ using System.Text.Json;
 
 namespace DSharp.Runtime;
 
-// One-way internal conversion of already-typed finite IEEE values. This does
-// not define float parsing, a public D# API or a durable message format.
+// Internal finite IEEE/tree conversion, not a public D# API, source-literal
+// parsing rule or durable message format.
 internal static class JsonFiniteFloatMapping
 {
+    internal static JsonScalarResult<float> ToSingle(JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Kind != JsonFieldValueKind.Number) return JsonScalarResult<float>.Failure(JsonScalarErrorCode.TypeMismatch);
+        var token = ((JsonExactNumber)value.Scalar!).Token;
+        return float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && float.IsFinite(result)
+            ? JsonScalarResult<float>.Success(result) : JsonScalarResult<float>.Failure(JsonScalarErrorCode.InvalidFloat);
+    }
+
+    internal static JsonScalarResult<double> ToDouble(JsonFieldValue value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Kind != JsonFieldValueKind.Number) return JsonScalarResult<double>.Failure(JsonScalarErrorCode.TypeMismatch);
+        var token = ((JsonExactNumber)value.Scalar!).Token;
+        return double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result)
+            ? JsonScalarResult<double>.Success(result) : JsonScalarResult<double>.Failure(JsonScalarErrorCode.InvalidFloat);
+    }
+
     internal static JsonScalarResult<JsonFieldValue> FromSingles(float[] values) => FromArray(values, FromSingle);
     internal static JsonScalarResult<JsonFieldValue> FromDoubles(double[] values) => FromArray(values, FromDouble);
     internal static JsonScalarResult<JsonFieldValue> FromNullableSingles(float?[] values) =>
