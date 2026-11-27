@@ -44,6 +44,16 @@ if (DSharp.Generated.Inventory.afterSale(50, 8, 3) != 39 ||
     !DSharp.Generated.Inventory.originalUnchanged(50, 8, 3) ||
     !DSharp.Generated.Inventory.originalUnchanged(3, 4, 2))
     throw new System.Exception("Inventory snapshot update was incorrect.");
+// Observe both actual generated records independently of the D# helper's boolean.
+var sell = typeof(DSharp.Generated.Inventory).GetMethod("sell", System.Reflection.BindingFlags.Public |
+    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.FlattenHierarchy)!;
+var stockType = sell.GetParameters()[0].ParameterType;
+var before = System.Activator.CreateInstance(stockType, 50, 4)!;
+var after = sell.Invoke(null, new object[] { before, 17 })!;
+int Field(object stock, string name) => (int)stockType.GetProperty(name)!.GetValue(stock)!;
+if (object.ReferenceEquals(before, after) || Field(before, "received") != 50 || Field(before, "sold") != 4 ||
+    Field(after, "received") != 50 || Field(after, "sold") != 21)
+    throw new System.Exception("Inventory direct snapshot observation was incorrect.");
 CS
 dotnet run --project "$work/Verify.csproj"
 echo 'Inventory example checked, compiled and returned 42.'

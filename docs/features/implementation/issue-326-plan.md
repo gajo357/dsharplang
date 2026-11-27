@@ -1,5 +1,43 @@
 # Issue #326: application agent guidance and example
 
+## Follow-on: independently observe stock snapshots
+
+Base `30904529bf42ddb3b885b3a1e4a64506291717ca` executes the application
+helper `originalUnchanged`, but its own boolean is the only direct evidence for
+the advertised snapshot claim. Extend the existing documented verifier to
+construct an actual generated `Stock`, call the actual generated `sell` with a
+distinct quantity, and independently inspect the original and returned fields.
+Use reflection only in the test host to avoid depending on a generated CLR type
+name; do not change D# syntax, public APIs or runtime behavior. Retain all
+existing assertions and guidance, updating the guidance to describe the
+additional direct observation.
+
+Add a candidate automation negative control that exports committed source,
+changes only `sell` to return the input for that distinct quantity while keeping
+the previously tested quantities unchanged, and verifies the documented command
+fails specifically at the new independent snapshot assertion. This maps the
+issue's supported example and behavioral verification criteria to an observed
+original and returned value, plus a negative control. Change only the documented
+example verifier, its new test, example guidance/quick reference and this plan;
+SDK generation, packaging and upgrade behavior remain AI-04 work. Run the
+documented command, focused clean-source and negative controls, bootstrap, full
+verification and compiler regression, preserving all tests and report guards.
+Keep #326 open for wider AI-01/02/04 coordination.
+
+Verification: the documented `bash scripts/verify-application-example.sh`
+passed against the actual example. The new candidate negative control passed
+on committed source `2678bd41ece625dd5770c9825f94882c78fe4d9c`, detecting a
+broken update at the new independent assertion while the old assertions still
+passed. The existing stock-update negative control and clean-source check also
+passed. Bootstrap passed. The full verifier passed documentation (137 files,
+309 links) and all 57 automation tests, then the pinned MCR image pull returned
+`Forbidden`. An earlier full attempt hit a read-only NuGet HTTP cache during
+restore; the normal managed cache permission allowed the successful restore on
+rerun. Compiler verification passed 18 baseline and 406 feature tests in a fresh
+short source snapshot; the unchanged report guard accepted 508,460 bytes.
+Hosted exact-head checks remain required. SDK generation, packaging and upgrade
+behavior are not implemented or claimed by this slice.
+
 ## Follow-on: exercise stock across application modules
 
 Base `fed3dfe3394e825ba9027600860cb3d8a7038d0c` verifies immutable stock

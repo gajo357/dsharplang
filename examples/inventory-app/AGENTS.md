@@ -23,8 +23,9 @@ bash ../../scripts/verify-application-example.sh
 The verifier checks and compiles the actual D# files, then executes the generated
 summary, cross-module stock calculation, inventory arithmetic and immutable
 stock update with positive, zero and negative results. It checks that the
-original snapshot remains unchanged. It
-does not demonstrate actor registration, scoped
+original snapshot remains unchanged. It also independently observes both the
+original and returned generated records after calling `sell` with a separate
+input. The example does not demonstrate actor registration, scoped
 resources, dispatcher invocation, durable submission or publication. Document
 those distinctions when the application actually uses supported runtime features.
 Keep this file project-owned when upgrading the SDK.

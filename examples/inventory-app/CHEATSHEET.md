@@ -77,5 +77,7 @@ It checks and compiles both actual files, then executes `available()` and expect
 42. It also checks `availableAfterSale`, `remaining` and `afterSale` with inputs
 producing positive, zero and negative results and verifies the original stock
 snapshot is unchanged.
+The verifier also independently inspects the original and returned generated
+stock records after a separate `sell` call.
 This verifies those examples on the pinned compiler; it does not
 demonstrate an actor runtime, storage, SDK packaging, or other language features.

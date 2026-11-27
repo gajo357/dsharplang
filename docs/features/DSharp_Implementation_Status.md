@@ -231,8 +231,9 @@ The inventory application example uses the current multi-file compiler subset;
 its verifier checks and compiles the actual sources and executes the generated
 pure calculation, immutable stock copy update and multiple inventory inputs;
 the application module also constructs and updates the imported stock record
-and verifies the resulting balance across multiple inputs. It checks the original
-stock snapshot remains unchanged. Clean-source negative
+and verifies the resulting balance across multiple inputs. It independently
+inspects original and returned generated stock values for a separate sale, with
+a clean-source negative control for that direct observation. Clean-source negative
 controls reject constant implementations that would still return 42 for the
 summary.
 It does not demonstrate an actor runtime or an SDK scaffold.
