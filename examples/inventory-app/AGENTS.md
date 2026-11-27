@@ -24,6 +24,8 @@ The verifier checks and compiles the actual D# files, then executes the generate
 summary, cross-module stock calculation, inventory arithmetic and immutable
 stock update with positive, zero and negative results. It checks that the
 original snapshot remains unchanged. It
+also independently observes both the original and returned generated records
+after calling `sell` with a separate input. It
 does not demonstrate actor registration, scoped
 resources, dispatcher invocation, durable submission or publication. Document
 those distinctions when the application actually uses supported runtime features.
