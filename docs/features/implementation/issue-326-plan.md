@@ -24,6 +24,20 @@ documented command, focused clean-source and negative controls, bootstrap, full
 verification and compiler regression, preserving all tests and report guards.
 Keep #326 open for wider AI-01/02/04 coordination.
 
+Verification: the documented `bash scripts/verify-application-example.sh`
+passed against the actual example. The new candidate negative control passed
+on committed source `2678bd41ece625dd5770c9825f94882c78fe4d9c`, detecting a
+broken update at the new independent assertion while the old assertions still
+passed. The existing stock-update negative control and clean-source check also
+passed. Bootstrap passed. The full verifier passed documentation (137 files,
+309 links) and all 57 automation tests, then the pinned MCR image pull returned
+`Forbidden`. An earlier full attempt hit a read-only NuGet HTTP cache during
+restore; the normal managed cache permission allowed the successful restore on
+rerun. Compiler verification passed 18 baseline and 406 feature tests in a fresh
+short source snapshot; the unchanged report guard accepted 508,460 bytes.
+Hosted exact-head checks remain required. SDK generation, packaging and upgrade
+behavior are not implemented or claimed by this slice.
+
 ## Follow-on: exercise stock across application modules
 
 Base `fed3dfe3394e825ba9027600860cb3d8a7038d0c` verifies immutable stock
