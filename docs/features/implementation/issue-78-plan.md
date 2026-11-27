@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-ninth slice: fail-closed codec contract catalog
+
+Base `3f36c0145d197176897d3c4fb6aa72e8b5fb1eee` binds one caller-assigned
+opaque identity to a record or union codec, but permits two bindings with the
+same identity and has no safe multi-contract lookup. Add an explicit immutable
+codec-local catalog that rejects duplicate identities, including across record
+and union kinds, and resolves a supplied identity to the intended kind before
+decoding. Unknown or wrong-kind identities fail with a redacted mismatch before
+parsing. Copy all configuration and lookup bytes; permit concurrent readers.
+This catalog is opt-in, does not register actor routes or change admission, and
+does not assign identities, infer compatibility or establish a public wire format.
+
+Add the catalog and runtime feature tests; update this plan and status. AC1
+gains collision-safe dispatch across explicitly supplied contract versions;
+AC2/AC4 gain fail-closed, redacted mismatch handling; AC3 covers typed record
+and union payloads through the volatile reference. Test duplicate identical
+and cross-kind identities, unknown/wrong kind, same-shape distinct versions,
+mutation of inputs, malformed payload ordering, and concurrent lookup. Merged
+#9, #14, #59 and #372 provide prerequisites. Run bootstrap, full verifier,
+runtime, SQLite, compiler and exact-base isolated runtime checks with fresh short
+snapshots and unchanged guards. Keep #78 open for remaining acceptance.
+
+Results: all four focused tests passed. Bootstrap passed; documentation checked
+137 files and 309 links, and all 57 automation tests passed. Full verification
+restored but the pinned MCR image pull returned `Forbidden` before the container
+ran. Runtime passed 2 baseline and 356 feature tests; SQLite passed 1 baseline
+and 54 feature tests. Compiler passed 18 baseline and 406 feature tests in a
+fresh short snapshot; the unchanged report guard accepted 510,084 bytes. The
+exact-base isolated runtime verifier restored but hit the same image pull
+failure before its container ran. Hosted exact-head checks and the trusted
+failure/clean pilot remain required.
+
 ## Forty-eighth slice: bind validated JSON to an explicit contract identity
 
 Base `834df31ed1d1cd5635e0264dc3dee9b88d209447` validates record and union
