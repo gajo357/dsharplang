@@ -208,6 +208,11 @@ encoding or decoding. Encoding also requires the bound descriptor and returns
 an owned identity/payload pair. Unknown, wrong-kind or wrong-descriptor inputs
 return a redacted mismatch; the catalog does not register actor routes or assign
 versions.
+An opt-in v1 fingerprint describes the exact ordered record/union descriptor
+shape and is reproducible across independent processes. Callers must combine it
+with a logical namespace: unrelated contracts with the same shape have the same
+fingerprint. It does not establish semantic compatibility, authenticity, schema
+evolution or durable admission.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
