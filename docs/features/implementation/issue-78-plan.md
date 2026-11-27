@@ -1,5 +1,43 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-eighth slice: bind validated JSON to an explicit contract identity
+
+Base `834df31ed1d1cd5635e0264dc3dee9b88d209447` validates record and union
+payload bytes, but callers can decode a shape-compatible payload using the
+wrong descriptor without checking the opaque contract metadata already stored
+with targeted work. Add an internal opt-in binding from an explicitly supplied
+nonempty byte identity to one record or union descriptor. Snapshot identity and
+payload, require exact identity equality before decoding, and reject a value
+whose descriptor is not the bound descriptor before encoding. Expose only
+redacted mismatch errors. Callers own globally unique identities and version
+assignment; this is exact identity checking, not schema inference, structural
+compatibility, canonicalization, migration, public API or an adopted wire format.
+Admission and host registry remain with #61/#58; do not change their behavior.
+
+Add an internal contract-bound codec, error code and runtime feature tests;
+update this plan and status. AC1 gains explicit stored contract identity binding;
+AC2/AC4 gain fail-closed mismatch and redacted malformed-payload evidence;
+AC3 gains typed record/union round-trip through the existing reference store.
+Exercise same-shape distinct versions, source and result buffer mutations,
+descriptor identity, null/empty identities, mismatch before parse and nested
+errors. A SQLite feature test uses a separate writer process and direct fixture
+inserts to check the supplied identity and payload after reopen, including wrong
+identity and corrupt data; it does not claim durable admission. Merged #9, #14,
+#59 and prior #78 slices provide prerequisites.
+Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base isolated
+runtime checks with fresh short snapshots and unchanged guards. Keep #78 open.
+
+Results: four focused runtime tests and the focused separate-process SQLite
+restart test passed. Bootstrap passed; documentation checked 137 files and
+309 links, and all 57 automation tests passed. Full verification restored but
+the pinned MCR image pull returned `Forbidden` before the container ran.
+Runtime passed 2 baseline and 352 feature tests; SQLite passed 1 baseline and
+54 feature tests. Compiler passed 18 baseline and 406 feature tests in a fresh
+short snapshot, with the unchanged guard accepting 510,084 bytes. Exact-base
+isolated runtime and SQLite verifiers restored but hit the same image pull
+failure before containers ran. Hosted exact-head checks and failure/clean
+pilots remain required.
+
 ## Forty-seventh slice: finite float maps in typed records
 
 Base `cbbe1626582cab92533ed6491560db804353a71d` supports finite float
