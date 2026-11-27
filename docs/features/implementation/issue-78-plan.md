@@ -1,5 +1,42 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-first slice: opt-in strict schema fingerprints
+
+Base `ef2f12312ad9e8445ebe2e27afb0e02b893bcb71` requires caller-assigned
+opaque codec identities, but reusing an identity for a changed descriptor in
+another process can silently select a shape-compatible codec. Add an opt-in,
+versioned SHA-256 fingerprint of the complete explicit record/union descriptor
+graph, including ordered field/case names, kinds, optionality and nested shapes.
+Use domain-separated length-prefixed framing and memoize shared descriptor nodes;
+the returned bytes may be combined with a caller-owned logical namespace as an
+identity. Same-shaped unrelated contracts have the same fingerprint. It detects
+strict shape changes, not nominal identity, semantic compatibility, authenticity,
+automatic migration, public schema evolution, durable admission or a wire format.
+Do not replace caller-assigned identities or alter existing codec behavior.
+
+Add an internal fingerprint helper, runtime feature tests and a separate-process
+SQLite fixture that reconstructs descriptors independently and checks persisted
+fingerprint/payload selection and changed-shape rejection. Update status and this
+plan. AC1 gains reproducible explicit schema identity; AC2/AC4 gain fail-closed
+changed-shape and redacted mismatch evidence; AC3 gains nested typed round trips.
+Exercise equivalent separately constructed descriptors, scalar/nullable/optional
+kinds, nested records/unions and collections, ordering, Unicode/framing,
+max-depth/shared subgraphs and a stable golden vector. Merged #9, #14, #59,
+#372–#374 supply prerequisites. Run bootstrap, full verifier, runtime, SQLite,
+compiler and exact-base isolated runtime and SQLite checks with fresh short
+snapshots and unchanged guards. Keep #78 open for remaining acceptance.
+
+Results: all four focused runtime tests and the focused SQLite test passed.
+Bootstrap passed; documentation checked 137 files and 309 links, and all 57
+automation tests passed. Full verification restored but the pinned MCR image
+pull returned `Forbidden` before the container ran. Runtime passed 2 baseline
+and 364 feature tests; SQLite passed 1 baseline and 55 feature tests. Compiler
+passed 18 baseline and 406 feature tests in a fresh short snapshot; the
+unchanged report guard accepted 510,084 bytes. The exact-base isolated runtime
+and SQLite verifiers restored but hit the same image pull failure before their
+containers ran. Hosted exact-head checks and the trusted failure/clean pilots
+remain required.
+
 ## Fiftieth slice: encode through the collision-checked contract catalog
 
 Base `28f2621480a1616a8ab47da370663519421db058` resolves explicit metadata
