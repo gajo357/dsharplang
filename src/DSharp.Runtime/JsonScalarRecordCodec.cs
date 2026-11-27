@@ -9,7 +9,8 @@ internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, N
     Int64Array, NullableInt64Array, Int64NullableElementsArray, NullableInt64NullableElementsArray,
     UInt64Array, NullableUInt64Array, UInt64NullableElementsArray, NullableUInt64NullableElementsArray,
     Int64Map, NullableInt64Map, Int64NullableValuesMap, NullableInt64NullableValuesMap,
-    UInt64Map, NullableUInt64Map, UInt64NullableValuesMap, NullableUInt64NullableValuesMap }
+    UInt64Map, NullableUInt64Map, UInt64NullableValuesMap, NullableUInt64NullableValuesMap,
+    Single, NullableSingle, Double, NullableDouble }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null, JsonTaggedUnionSchema? UnionSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -66,7 +67,7 @@ internal sealed class JsonScalarRecordSchema
     internal JsonRecordField FieldAt(int index) => fields[index];
     internal bool TryFind(string name, out int index) => indexes.TryGetValue(name, out index);
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
-        JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64 or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or JsonRecordFieldKind.NullableRecordNullableElementsArray or
+        JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64 or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableSingle or JsonRecordFieldKind.NullableDouble or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or JsonRecordFieldKind.NullableRecordNullableElementsArray or
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or JsonRecordFieldKind.NullableDecimalArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray or
         JsonRecordFieldKind.NullableInt64Array or JsonRecordFieldKind.NullableInt64NullableElementsArray or JsonRecordFieldKind.NullableUInt64Array or JsonRecordFieldKind.NullableUInt64NullableElementsArray or
         JsonRecordFieldKind.NullableBooleanNullableElementsArray or JsonRecordFieldKind.NullableIntegerNullableElementsArray or JsonRecordFieldKind.NullableStringNullableElementsArray or JsonRecordFieldKind.NullableUnion or JsonRecordFieldKind.NullableExactNumber or JsonRecordFieldKind.NullableExactNumberArray or JsonRecordFieldKind.NullableExactNumberNullableElementsArray or JsonRecordFieldKind.NullableUnionArray or JsonRecordFieldKind.NullableUnionNullableElementsArray or JsonRecordFieldKind.NullableFieldValue or JsonRecordFieldKind.NullableRecordMap or
@@ -151,12 +152,16 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.Int64 => value is long,
         JsonRecordFieldKind.UInt64 => value is ulong,
         JsonRecordFieldKind.Decimal => value is decimal,
+        JsonRecordFieldKind.Single => value is float single && float.IsFinite(single),
+        JsonRecordFieldKind.Double => value is double binary64 && double.IsFinite(binary64),
         JsonRecordFieldKind.String => value is string,
         JsonRecordFieldKind.NullableBoolean => value is null or bool,
         JsonRecordFieldKind.NullableInteger => value is null or int,
         JsonRecordFieldKind.NullableInt64 => value is null or long,
         JsonRecordFieldKind.NullableUInt64 => value is null or ulong,
         JsonRecordFieldKind.NullableDecimal => value is null or decimal,
+        JsonRecordFieldKind.NullableSingle => value is null || value is float single && float.IsFinite(single),
+        JsonRecordFieldKind.NullableDouble => value is null || value is double binary64 && double.IsFinite(binary64),
         JsonRecordFieldKind.NullableString => value is null or string,
         JsonRecordFieldKind.FieldValue => value is JsonFieldValue,
         JsonRecordFieldKind.NullableFieldValue => value is null || value is JsonFieldValue { Kind: not JsonFieldValueKind.Null },
@@ -898,12 +903,16 @@ internal static class JsonScalarRecordCodec
         JsonRecordFieldKind.Int64 => Box(JsonScalarCodec.ReadInt64(value)),
         JsonRecordFieldKind.UInt64 => Box(JsonScalarCodec.ReadUInt64(value)),
         JsonRecordFieldKind.Decimal => Box(JsonDecimalCodec.Read(value)),
+        JsonRecordFieldKind.Single => Box(JsonFiniteFloatMapping.ReadSingle(value)),
+        JsonRecordFieldKind.Double => Box(JsonFiniteFloatMapping.ReadDouble(value)),
         JsonRecordFieldKind.String => Box(JsonScalarCodec.ReadString(value)),
         JsonRecordFieldKind.NullableBoolean => Box(JsonScalarCodec.ReadNullableBoolean(value)),
         JsonRecordFieldKind.NullableInteger => Box(JsonScalarCodec.ReadNullableInteger(value)),
         JsonRecordFieldKind.NullableInt64 => Box(JsonScalarCodec.ReadNullableInt64(value)),
         JsonRecordFieldKind.NullableUInt64 => Box(JsonScalarCodec.ReadNullableUInt64(value)),
         JsonRecordFieldKind.NullableDecimal => Box(JsonDecimalCodec.ReadNullable(value)),
+        JsonRecordFieldKind.NullableSingle => Box(JsonFiniteFloatMapping.ReadNullableSingle(value)),
+        JsonRecordFieldKind.NullableDouble => Box(JsonFiniteFloatMapping.ReadNullableDouble(value)),
         JsonRecordFieldKind.NullableString => Box(JsonScalarCodec.ReadNullableString(value)),
         JsonRecordFieldKind.FieldValue => Box(JsonFieldValueCodec.Read(value, "$")),
         JsonRecordFieldKind.NullableFieldValue => value.ValueKind == JsonValueKind.Null
@@ -946,6 +955,10 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.NullableUInt64: writer.WriteNumberValue((ulong)value); break;
             case JsonRecordFieldKind.Decimal:
             case JsonRecordFieldKind.NullableDecimal: writer.WriteNumberValue((decimal)value); break;
+            case JsonRecordFieldKind.Single:
+            case JsonRecordFieldKind.NullableSingle: writer.WriteNumberValue((float)value); break;
+            case JsonRecordFieldKind.Double:
+            case JsonRecordFieldKind.NullableDouble: writer.WriteNumberValue((double)value); break;
             case JsonRecordFieldKind.String:
             case JsonRecordFieldKind.NullableString: writer.WriteStringValue((string)value); break;
             case JsonRecordFieldKind.FieldValue:

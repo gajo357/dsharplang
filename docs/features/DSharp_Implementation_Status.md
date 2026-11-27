@@ -190,7 +190,9 @@ nodes and non-finite inputs with structured errors. It also encodes arrays of
 these values, including nullable elements, with owned snapshots and redacted
 first-invalid indexed errors. It decodes required and nullable float arrays with
 invariant rounding, returning fresh arrays or a redacted first-invalid indexed
-error. This does not define a public wire contract.
+error. Explicit internal record descriptors also support required and nullable
+finite float fields, including optional presence and redacted field-path errors.
+This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
 Nullable tree fields can also be optional, retaining missing, explicit null and
