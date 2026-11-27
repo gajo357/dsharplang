@@ -194,6 +194,8 @@ error. Explicit internal record descriptors also support required and nullable
 finite float fields, including optional presence and redacted field-path errors.
 Typed record arrays likewise support finite floats, nullable arrays and elements,
 owned snapshots, and redacted indexed errors, with a scalar-array tree bridge.
+Typed record maps support finite floats and nullable maps and values with the
+same snapshot and redacted indexed-error behavior and a scalar-map tree bridge.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.

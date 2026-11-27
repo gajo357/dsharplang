@@ -1,5 +1,34 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Forty-seventh slice: finite float maps in typed records
+
+Base `cbbe1626582cab92533ed6491560db804353a71d` supports finite float
+record fields and arrays, but not typed scalar maps. Add internal binary32 and
+binary64 map descriptors with nullable map and nullable value variants, plus
+the existing standalone scalar-map/tree bridge. Snapshot entries, require
+unique valid keys and finite values, preserve signed zero, invariant rounding
+and optional missing/null distinctions; report invalid input using redacted
+indexed paths. No public D# API, Option mapping or durable wire schema is adopted.
+
+Update the scalar-map descriptor, record codec, tree bridge, tests and status.
+AC1/AC3 gain typed map round trips with nested union records; AC2/AC4 gain
+missing/null and indexed error evidence. Exercise all eight descriptor variants,
+boundaries, snapshots, duplicate/invalid keys, non-finite construction, overflow,
+wrong types, first-error order and tree mapping. Merged #9, #14, #225, #227,
+#369 and #370 provide prerequisites. Run bootstrap, full verifier, runtime,
+SQLite, compiler and exact-base isolated runtime checks with fresh short snapshots
+and unchanged guards. Keep #78 open for remaining acceptance.
+
+Results: all four focused tests passed. Bootstrap passed; documentation checked
+137 files and 309 links, and all 57 automation tests passed. Full verification
+restored but the pinned MCR image pull returned `Forbidden` before the container
+ran. Runtime passed 2 baseline and 348 feature tests; SQLite passed 1 baseline
+and 53 feature tests. Compiler passed 18 baseline and 406 feature tests in a
+fresh short snapshot; the unchanged report guard accepted 510,084 bytes. The
+exact-base isolated runtime verifier also restored but hit the same image pull
+failure before its container ran. Hosted exact-head checks and the trusted
+failure/clean pilot remain required.
+
 ## Forty-sixth slice: finite float arrays in typed records
 
 Base `266afe5f8109ac440a05ade96e60d66014dec55a` supports finite float
