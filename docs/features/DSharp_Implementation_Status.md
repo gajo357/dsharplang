@@ -202,6 +202,10 @@ It owns identity and payload snapshots; a SQLite fixture verifies matching,
 wrong-identity and corrupt-data behavior after a writer process exits. Callers
 own identity uniqueness and versioning; this does not infer compatibility or
 implement durable admission.
+An opt-in codec-local catalog rejects duplicate identities across record and
+union bindings and resolves exact identities to the requested kind before
+decoding. Unknown or wrong-kind identities return a redacted mismatch; the
+catalog does not register actor routes or assign versions.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
