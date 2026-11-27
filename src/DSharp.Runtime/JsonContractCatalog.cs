@@ -45,6 +45,24 @@ internal sealed class JsonContractCatalog
         entries = copied;
     }
 
+    internal JsonScalarResult<JsonContractPayload> EncodeRecord(ReadOnlyMemory<byte> metadata, JsonScalarRecord value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var snapshot = metadata.ToArray();
+        return entries.TryGetValue(Key(snapshot), out var entry) && entry.Record is { } contract && contract.Accepts(value)
+            ? JsonScalarResult<JsonContractPayload>.Success(contract.Encode(value))
+            : JsonScalarResult<JsonContractPayload>.Failure(JsonScalarErrorCode.ContractMismatch);
+    }
+
+    internal JsonScalarResult<JsonContractPayload> EncodeUnion(ReadOnlyMemory<byte> metadata, JsonTaggedUnion value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var snapshot = metadata.ToArray();
+        return entries.TryGetValue(Key(snapshot), out var entry) && entry.Union is { } contract && contract.Accepts(value)
+            ? JsonScalarResult<JsonContractPayload>.Success(contract.Encode(value))
+            : JsonScalarResult<JsonContractPayload>.Failure(JsonScalarErrorCode.ContractMismatch);
+    }
+
     internal JsonScalarResult<JsonValidatedRecordPayload> DecodeRecord(ReadOnlyMemory<byte> metadata, ReadOnlyMemory<byte> payload)
     {
         var snapshot = metadata.ToArray();

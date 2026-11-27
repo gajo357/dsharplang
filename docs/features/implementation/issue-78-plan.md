@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fiftieth slice: encode through the collision-checked contract catalog
+
+Base `28f2621480a1616a8ab47da370663519421db058` resolves explicit metadata
+through the codec catalog only on decode. Encoding can still bypass that catalog
+with a separately constructed binding for the same metadata and another
+shape-compatible descriptor. Add catalog-bound record and union encoding that
+resolves the caller-supplied exact identity, checks the value's descriptor and
+returns an owned metadata/payload pair. Unknown identity, wrong kind and wrong
+descriptor return a redacted contract mismatch before serialization. Snapshot
+the lookup bytes. This opt-in boundary does not assign identities, register
+actors, infer compatibility, change admission or define a public wire format.
+
+Update the internal contract/catalog and status and add runtime feature tests.
+AC1 gains collision-checked identity on encoding as well as decoding; AC3
+gains catalog-bound record and union round trips through the reference store;
+AC4 gains redacted rejection of unknown/wrong-kind/wrong-descriptor inputs.
+Exercise same-shape different descriptors, all rejection paths, input and output
+mutation and concurrent encoding. Merged #9, #14, #59 and #373 supply
+prerequisites. Run bootstrap, full verifier, runtime, SQLite, compiler and
+exact-base isolated runtime checks with fresh short snapshots and unchanged
+guards. Keep #78 open for remaining acceptance.
+
+Results: all four focused tests passed. Bootstrap passed; documentation checked
+137 files and 309 links, and all 57 automation tests passed. Full verification
+restored but the pinned MCR image pull returned `Forbidden` before the container
+ran. Runtime passed 2 baseline and 360 feature tests; SQLite passed 1 baseline
+and 54 feature tests. Compiler passed 18 baseline and 406 feature tests in a
+fresh short snapshot; the unchanged report guard accepted 510,084 bytes. The
+exact-base isolated runtime verifier restored but hit the same image pull
+failure before its container ran. Hosted exact-head checks and the trusted
+failure/clean pilot remain required.
+
 ## Forty-ninth slice: fail-closed codec contract catalog
 
 Base `3f36c0145d197176897d3c4fb6aa72e8b5fb1eee` binds one caller-assigned

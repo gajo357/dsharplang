@@ -49,9 +49,11 @@ internal sealed class JsonRecordContract
     internal JsonContractPayload Encode(JsonScalarRecord value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (!ReferenceEquals(value.Schema, schema)) throw new ArgumentException("Record descriptor does not match the contract.", nameof(value));
+        if (!Accepts(value)) throw new ArgumentException("Record descriptor does not match the contract.", nameof(value));
         return new(identity, JsonScalarRecordCodec.Encode(value));
     }
+
+    internal bool Accepts(JsonScalarRecord value) => ReferenceEquals(value.Schema, schema);
 
     internal JsonScalarResult<JsonValidatedRecordPayload> Decode(ReadOnlyMemory<byte> metadata, ReadOnlyMemory<byte> payload)
     {
@@ -75,9 +77,11 @@ internal sealed class JsonUnionContract
     internal JsonContractPayload Encode(JsonTaggedUnion value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (!ReferenceEquals(value.Schema, schema)) throw new ArgumentException("Union descriptor does not match the contract.", nameof(value));
+        if (!Accepts(value)) throw new ArgumentException("Union descriptor does not match the contract.", nameof(value));
         return new(identity, JsonTaggedUnionCodec.Encode(value));
     }
+
+    internal bool Accepts(JsonTaggedUnion value) => ReferenceEquals(value.Schema, schema);
 
     internal JsonScalarResult<JsonValidatedUnionPayload> Decode(ReadOnlyMemory<byte> metadata, ReadOnlyMemory<byte> payload)
     {
