@@ -125,6 +125,9 @@ Internal signed and unsigned 64-bit scalar codecs and record fields, including
 nullable and optional fields, also round-trip through nested union/tree bridges
 without floating-point conversion; typed integer decoding rejects out-of-range
 or fractional numbers and reports redacted paths.
+Internal signed and unsigned 64-bit arrays and string-keyed maps also support
+nullable elements and independently nullable or optional collections, with
+full-width boundary values, copied snapshots and indexed redacted errors.
 Internal decimal scalars and record fields decode only exactly representable
 .NET decimal values, including exponent forms, and reject overflow or precision
 loss with redacted errors. Typed decimal encoding follows decimal value/scale;
