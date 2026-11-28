@@ -29,30 +29,46 @@ internal sealed class JsonFieldValue
     internal static JsonFieldValue List(JsonFieldValue[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        var copy = (JsonFieldValue[])values.Clone();
+        return ListSnapshot((JsonFieldValue[])values.Clone());
+    }
+    internal static JsonFieldValue ListFromBuffer(List<JsonFieldValue> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return ListSnapshot(values.ToArray());
+    }
+    private static JsonFieldValue ListSnapshot(JsonFieldValue[] copy)
+    {
         var depth = 1;
         foreach (var item in copy)
         {
-            if (item is null) throw new ArgumentException("List items require explicit values.", nameof(values));
+            if (item is null) throw new ArgumentException("List items require explicit values.", "values");
             depth = Math.Max(depth, 1 + item.Depth);
         }
-        if (depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", nameof(values));
+        if (depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", "values");
         return new(JsonFieldValueKind.List, copy, depth);
     }
     internal static JsonFieldValue Map(KeyValuePair<string, JsonFieldValue>[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        var copy = (KeyValuePair<string, JsonFieldValue>[])values.Clone();
+        return MapSnapshot((KeyValuePair<string, JsonFieldValue>[])values.Clone());
+    }
+    internal static JsonFieldValue MapFromBuffer(List<KeyValuePair<string, JsonFieldValue>> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return MapSnapshot(values.ToArray());
+    }
+    private static JsonFieldValue MapSnapshot(KeyValuePair<string, JsonFieldValue>[] copy)
+    {
         var names = new HashSet<string>(StringComparer.Ordinal);
         var depth = 1;
         foreach (var pair in copy)
         {
-            if (pair.Key is null || pair.Value is null) throw new ArgumentException("Map entries require a key and an explicit value.", nameof(values));
+            if (pair.Key is null || pair.Value is null) throw new ArgumentException("Map entries require a key and an explicit value.", "values");
             JsonScalarCodec.ValidateUtf16(pair.Key);
-            if (!names.Add(pair.Key)) throw new ArgumentException("Map keys must be unique.", nameof(values));
+            if (!names.Add(pair.Key)) throw new ArgumentException("Map keys must be unique.", "values");
             depth = Math.Max(depth, 1 + pair.Value.Depth);
         }
-        if (depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", nameof(values));
+        if (depth > 64) throw new ArgumentException("JSON nesting exceeds 64 containers.", "values");
         return new(JsonFieldValueKind.Map, copy, depth);
     }
     internal object? Scalar => Kind is JsonFieldValueKind.List or JsonFieldValueKind.Map
@@ -125,7 +141,7 @@ internal static class JsonFieldValueCodec
                     if (!result.IsSuccess) return PrefixError(result.Error!.Value, path, items.Count);
                     items.Add(result.Value);
                 }
-                return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.List(items.ToArray()));
+                return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.ListFromBuffer(items));
             case JsonValueKind.Object:
                 var pairs = new List<KeyValuePair<string, JsonFieldValue>>();
                 var names = new HashSet<string>(StringComparer.Ordinal);
@@ -140,7 +156,7 @@ internal static class JsonFieldValueCodec
                     if (!result.IsSuccess) return PrefixError(result.Error!.Value, path, pairs.Count);
                     pairs.Add(new(name, result.Value));
                 }
-                return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Map(pairs.ToArray()));
+                return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.MapFromBuffer(pairs));
             default: return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.TypeMismatch, path);
         }
     }
