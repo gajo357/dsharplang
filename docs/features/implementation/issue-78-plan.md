@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-second slice: explicitly namespaced shape identities
+
+Base `0eec9669c64732b1b35c4812ef3a4eedd84ecc61` fingerprints schema shapes
+but leaves each caller to combine its logical namespace and fingerprint. Add an
+opt-in internal versioned identity builder that requires nonempty caller-supplied
+namespace bytes and combines them with the record or union shape fingerprint
+using domain-separated length framing. Return the existing owned opaque identity;
+do not alter existing caller-assigned identities, codec behavior, admission,
+compatibility policy or public/durable wire contracts. Namespace ownership and
+uniqueness remain the caller's responsibility; identical namespace and shape
+produce identical identities.
+
+Add runtime feature tests for deterministic independent reconstruction, distinct
+namespaces and kinds, changed nested shape, input/output mutation, empty input
+and catalog-bound decode mismatch before parsing. AC1 gains reproducible explicit
+namespace and shape identity; AC2/AC4 gain fail-closed mismatch evidence. Merged
+#9, #14, #59 and #372–#375 provide prerequisites. Update tested status and this
+plan. Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base
+isolated runtime verification with fresh short snapshots and unchanged guards;
+record actual results. Keep #78 open for remaining acceptance.
+
+Results: the three new runtime feature tests passed as part of the full runtime
+suite, including the fixed framing vector. Bootstrap passed; documentation
+checked 137 files and 309 links, and all 57 automation tests passed. Full
+verification restored but the pinned MCR image pull returned `Forbidden` before
+the container ran. Runtime passed 2 baseline and 367 feature tests; SQLite
+passed 1 baseline and 55 feature tests. Compiler passed 18 baseline and 406
+feature tests in a fresh short snapshot; the unchanged report guard accepted
+510,084 bytes. The exact-base isolated runtime verifier restored but hit the
+same image pull failure before its container ran. Hosted exact-head checks and
+the trusted failure/clean pilot remain required.
+
 ## Fifty-first slice: opt-in strict schema fingerprints
 
 Base `ef2f12312ad9e8445ebe2e27afb0e02b893bcb71` requires caller-assigned
