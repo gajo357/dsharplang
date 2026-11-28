@@ -76,17 +76,22 @@ internal static class JsonTaggedUnionCodec
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output))
         {
-            writer.WriteStartObject();
-            writer.WriteString("case", value.Schema.CaseAt(value.CaseIndex).Name);
-            if (value.Payload is { } payload)
-            {
-                writer.WritePropertyName("value");
-                writer.WriteRawValue(JsonScalarRecordCodec.Encode(payload));
-            }
-            writer.WriteEndObject();
+            WriteUnion(writer, value);
             writer.Flush();
         }
         return output.WrittenSpan.ToArray();
+    }
+
+    internal static void WriteUnion(Utf8JsonWriter writer, JsonTaggedUnion value)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("case", value.Schema.CaseAt(value.CaseIndex).Name);
+        if (value.Payload is { } payload)
+        {
+            writer.WritePropertyName("value");
+            JsonScalarRecordCodec.WriteRecord(writer, payload);
+        }
+        writer.WriteEndObject();
     }
 
     internal static JsonScalarResult<JsonTaggedUnion> Decode(JsonTaggedUnionSchema schema, ReadOnlyMemory<byte> input)
