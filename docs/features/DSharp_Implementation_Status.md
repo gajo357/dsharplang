@@ -204,6 +204,8 @@ trees and preserves first-error ordering and redacted indexed paths. It does not
 define a public D# codec, an Option encoding or a durable-message format.
 Those composable descriptors also admit explicit existing record and union
 descriptors as leaves, with checked nesting, typed recovery and redacted errors.
+They also validate int64, uint64, exact decimal, finite float and raw JSON number
+leaves using existing scalar rules while preserving accepted numeric tokens.
 An internal adapter encodes finite binary32/binary64 values as JSON number
 nodes and converts number nodes back using invariant nearest-representable
 rounding, retaining signed zero and rejecting overflow. It rejects non-number

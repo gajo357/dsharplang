@@ -117,23 +117,23 @@ function main() {
     writeFileSync(join(config, 'nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: files dns\n');
     const image = process.env.AI_COMPILER_IMAGE || readFileSync(join(trusted, '.github/ai/compiler-image.txt'), 'utf8').trim();
     const baselineScript = `set -euo pipefail
-cd /work
+cd /w
 test "$(dotnet --version)" = 11.0.100
 dotnet restore tests/DSharp.Runtime.Tests/DSharp.Runtime.Tests.csproj --locked-mode --packages /packages --source /packages -p:NuGetAudit=false
 dotnet build tests/DSharp.Runtime.Tests/DSharp.Runtime.Tests.csproj --no-restore -c Release
 echo success > build-status
-dotnet test tests/DSharp.Runtime.Tests --no-build --no-restore -c Release --logger 'trx;LogFileName=runtime-baseline.trx' --results-directory /work/results
+dotnet test tests/DSharp.Runtime.Tests --no-build --no-restore -c Release --logger 'trx;LogFileName=runtime-baseline.trx' --results-directory /w/results
 `;
     const featureScript = `set -euo pipefail
-cd /work
+cd /w
 test "$(dotnet --version)" = 11.0.100
 dotnet restore tests/DSharp.Runtime.Tests/DSharp.Runtime.Tests.csproj --locked-mode --packages /packages --source /packages -p:NuGetAudit=false
-dotnet test tests/DSharp.Runtime.Tests --no-restore -c Release -p:DSharpTestGroup=RuntimeFeatures --logger 'trx;LogFileName=runtime-features.trx' --results-directory /work/results
+dotnet test tests/DSharp.Runtime.Tests --no-restore -c Release -p:DSharpTestGroup=RuntimeFeatures --logger 'trx;LogFileName=runtime-features.trx' --results-directory /w/results
 `;
     function container(stage, script, name) {
       const cid = join(config, `${name}-cid`);
       const args = ['run', '--rm', '--cidfile', cid, '--network=none', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--cpus=2', '--read-only', '--user', `${uid}:${gid}`, '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m'];
-      for (const [source, destination, readonly] of [[stage, '/work', false], [join(config, 'passwd'), '/etc/passwd', true], [join(config, 'group'), '/etc/group', true], [join(config, 'nsswitch.conf'), '/etc/nsswitch.conf', true], [cache, '/packages', true]]) args.push('--mount', `type=bind,src=${source},dst=${destination}${readonly ? ',readonly' : ''}`);
+      for (const [source, destination, readonly] of [[stage, '/w', false], [join(config, 'passwd'), '/etc/passwd', true], [join(config, 'group'), '/etc/group', true], [join(config, 'nsswitch.conf'), '/etc/nsswitch.conf', true], [cache, '/packages', true]]) args.push('--mount', `type=bind,src=${source},dst=${destination}${readonly ? ',readonly' : ''}`);
       for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy']) args.push('-e', `${key}=`);
       args.push(image, '/usr/bin/env', '-i', 'PATH=/usr/share/dotnet:/usr/bin:/bin', 'DOTNET_ROOT=/usr/share/dotnet', 'HOME=/tmp/home', 'DOTNET_CLI_HOME=/tmp/home', 'NUGET_PACKAGES=/packages', 'DOTNET_CLI_TELEMETRY_OPTOUT=1', 'DOTNET_PROCESSOR_COUNT=2', 'USER=verifier', 'LOGNAME=verifier', '/bin/bash', '-c', script);
       try { return spawnSync('docker', args, { stdio: 'inherit', timeout: 480000, killSignal: 'SIGKILL' }); }

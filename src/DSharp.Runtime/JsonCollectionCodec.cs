@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Internal, explicitly supplied shapes; not a public schema or wire contract.
-internal enum JsonCollectionShapeKind { Boolean, Integer, String, Nullable, List, Map, Record, Union }
+internal enum JsonCollectionShapeKind { Boolean, Integer, String, Nullable, List, Map, Record, Union, Int64, UInt64, Decimal, Single, Double, ExactNumber }
 
 internal sealed class JsonCollectionShape
 {
@@ -27,6 +27,12 @@ internal sealed class JsonCollectionShape
     internal static JsonCollectionShape Boolean() => new(JsonCollectionShapeKind.Boolean, null);
     internal static JsonCollectionShape Integer() => new(JsonCollectionShapeKind.Integer, null);
     internal static JsonCollectionShape String() => new(JsonCollectionShapeKind.String, null);
+    internal static JsonCollectionShape Int64() => new(JsonCollectionShapeKind.Int64, null);
+    internal static JsonCollectionShape UInt64() => new(JsonCollectionShapeKind.UInt64, null);
+    internal static JsonCollectionShape Decimal() => new(JsonCollectionShapeKind.Decimal, null);
+    internal static JsonCollectionShape Single() => new(JsonCollectionShapeKind.Single, null);
+    internal static JsonCollectionShape Double() => new(JsonCollectionShapeKind.Double, null);
+    internal static JsonCollectionShape ExactNumber() => new(JsonCollectionShapeKind.ExactNumber, null);
     internal static JsonCollectionShape Record(JsonScalarRecordSchema schema) => new(JsonCollectionShapeKind.Record, null, record: schema ?? throw new ArgumentNullException(nameof(schema)));
     internal static JsonCollectionShape Union(JsonTaggedUnionSchema schema) => new(JsonCollectionShapeKind.Union, null, union: schema ?? throw new ArgumentNullException(nameof(schema)));
     internal static JsonCollectionShape Nullable(JsonCollectionShape child) => new(JsonCollectionShapeKind.Nullable, child ?? throw new ArgumentNullException(nameof(child)));
@@ -59,9 +65,19 @@ internal static class JsonCollectionCodec
                 return boolean.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Boolean(boolean.Value))
                     : JsonScalarResult<JsonFieldValue>.Failure(boolean.Error!.Value.Code);
             case JsonCollectionShapeKind.Integer:
-                var integer = JsonScalarCodec.ReadInteger(element);
-                return integer.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Number(JsonExactNumber.Read(element).Value))
-                    : JsonScalarResult<JsonFieldValue>.Failure(integer.Error!.Value.Code);
+                return Number(JsonScalarCodec.ReadInteger(element), element);
+            case JsonCollectionShapeKind.Int64:
+                return Number(JsonScalarCodec.ReadInt64(element), element);
+            case JsonCollectionShapeKind.UInt64:
+                return Number(JsonScalarCodec.ReadUInt64(element), element);
+            case JsonCollectionShapeKind.Decimal:
+                return Number(JsonDecimalCodec.Read(element), element);
+            case JsonCollectionShapeKind.Single:
+                return Number(JsonFiniteFloatMapping.ReadSingle(element), element);
+            case JsonCollectionShapeKind.Double:
+                return Number(JsonFiniteFloatMapping.ReadDouble(element), element);
+            case JsonCollectionShapeKind.ExactNumber:
+                return Number(JsonExactNumber.Read(element), element);
             case JsonCollectionShapeKind.String:
                 var text = JsonScalarCodec.ReadString(element);
                 return text.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.String(text.Value))
@@ -104,6 +120,9 @@ internal static class JsonCollectionCodec
         }
     }
 
+    private static JsonScalarResult<JsonFieldValue> Number<T>(JsonScalarResult<T> result, JsonElement element) =>
+        result.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Number(JsonExactNumber.Read(element).Value))
+            : JsonScalarResult<JsonFieldValue>.Failure(result.Error!.Value.Code);
     private static JsonScalarResult<JsonFieldValue> At(JsonScalarErrorCode code, int index) =>
         JsonScalarResult<JsonFieldValue>.Failure(code, Index(index));
     private static JsonScalarResult<JsonFieldValue> Prefix(JsonScalarError error, int index) =>

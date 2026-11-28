@@ -1,5 +1,52 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixty-third slice: numeric leaves in composed collections
+
+### Same-branch hosted runtime-pilot repair
+
+Exact-head CI #500 passed the isolated clean runtime suite but its intentional
+failure pilot could not find the failing TRX. A local run of the same probe and
+all 385 feature tests produced a 513,725-byte TRX in `/tmp/3`, above the existing
+512,000-byte guard; 774 occurrences of the checkout path account for enough of
+the report to project 512,951 bytes at `/work` and 510,629 at `/w` for that same
+report. The hosted log alone does not establish the missing-report cause.
+Shorten only the isolated runtime container's checkout mount from `/work` to
+`/w`; retain the existing report-size limit, all tests, staging, isolation,
+intentional-failure assertion and subsequent clean proof. Hosted exact-head
+CI must exercise the real failure and clean runs before this PR is eligible.
+
+Repair verification: bootstrap, documentation (137 files and 309 links), the
+57 automation tests and the focused runtime staging/count tests passed. The
+full verifier and the real local runtime pilot restored but the pinned MCR image
+pull returned `Forbidden` before their containers ran. The local direct probe
+above exercises the actual intentional failing test but is not an isolated
+pilot pass; the hosted exact-head failure-and-clean result remains mandatory.
+
+Base `e64f6b096630a0a8aa8821ccd514c9d3e2870bed` composes collections over
+bool, int32, string, record and union leaves but excludes the existing int64,
+uint64, exact decimal, finite float and raw validated number primitives. Extend
+the internal shape to use those existing scalar validators recursively while
+preserving each accepted JSON number token in the immutable tree. This adds no
+numeric coercion, public D# codec, Option representation or durable format.
+
+Change `JsonCollectionCodec.cs`, add runtime feature tests, update this plan and
+status. Map nested numeric values, nullability and exact number tokens to
+AC1/AC3; out-of-range, nonfinite, inexact decimal, type failures and redacted
+indexed first errors to AC2/AC4. Merged #9, #14, #59 and #382–#386 are
+prerequisites. Run bootstrap, full verifier, runtime, SQLite, compiler and the
+exact-base isolated runtime verifier in fresh short snapshots with unchanged
+guards; record actual results. Keep #78 open for public integration and
+unresolved encoding decisions.
+
+Results: the focused test passed. Bootstrap passed; documentation checked 137
+files and 309 links, and all 57 automation tests passed. Runtime passed 2 baseline
+and 385 feature tests in a fresh short snapshot; its unchanged guard accepted
+511,342 bytes. SQLite passed 1 baseline and 56 features. Compiler passed 18
+baseline and 406 features in the short snapshot; its unchanged guard accepted
+506,836 bytes. Full and exact-base isolated runtime verification restored but the
+pinned MCR image pull returned `Forbidden` before containers ran. Hosted
+exact-head checks and trusted failure/clean verification remain required.
+
 ## Sixty-second slice: record and union leaves in composed collections
 
 Base `7d9d929579ce02077006db3142722d92e37454c8` composes nullable, list and
