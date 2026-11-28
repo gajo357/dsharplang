@@ -168,6 +168,9 @@ durable message format.
 Internal record fields can compose that union descriptor in either direction,
 including through record arrays, with exact descriptor identity, nullable
 presence and redacted nested paths under the combined depth limit.
+Nested tagged unions and record payloads now write to their containing JSON
+writer directly, avoiding intermediate encoded byte arrays at each union layer;
+feature tests preserve existing bytes, null entries and typed round trips.
 Union and record composition now reads parsed JSON elements directly, so invalid
 UTF-8 in nested union payload strings and keys returns a redacted indexed or
 schema-field error rather than escaping as a transcoding exception.

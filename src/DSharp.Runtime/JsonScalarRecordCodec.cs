@@ -978,7 +978,7 @@ internal static class JsonScalarRecordCodec
         ? JsonScalarResult<object?>.Success(value.Value)
         : JsonScalarResult<object?>.Failure(value.Error!.Value.Code, value.Error.Value.Path);
 
-    private static void WriteRecord(Utf8JsonWriter writer, JsonScalarRecord record)
+    internal static void WriteRecord(Utf8JsonWriter writer, JsonScalarRecord record)
     {
         writer.WriteStartObject();
         for (var index = 0; index < record.Schema.Count; index++)
@@ -1019,7 +1019,7 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.Record:
             case JsonRecordFieldKind.NullableRecord: WriteRecord(writer, (JsonScalarRecord)value); break;
             case JsonRecordFieldKind.Union:
-            case JsonRecordFieldKind.NullableUnion: writer.WriteRawValue(JsonTaggedUnionCodec.Encode((JsonTaggedUnion)value)); break;
+            case JsonRecordFieldKind.NullableUnion: JsonTaggedUnionCodec.WriteUnion(writer, (JsonTaggedUnion)value); break;
             case JsonRecordFieldKind.UnionNullableElementsArray:
             case JsonRecordFieldKind.NullableUnionNullableElementsArray:
                 var nullableUnions = (JsonNullableUnionArray)value;
@@ -1028,7 +1028,7 @@ internal static class JsonScalarRecordCodec
                 {
                     var item = nullableUnions.At(index);
                     if (item is null) writer.WriteNullValue();
-                    else writer.WriteRawValue(JsonTaggedUnionCodec.Encode(item));
+                    else JsonTaggedUnionCodec.WriteUnion(writer, item);
                 }
                 writer.WriteEndArray();
                 break;
@@ -1036,7 +1036,7 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.NullableUnionArray:
                 var unions = (JsonUnionArray)value;
                 writer.WriteStartArray();
-                for (var index = 0; index < unions.Count; index++) writer.WriteRawValue(JsonTaggedUnionCodec.Encode(unions.At(index)));
+                for (var index = 0; index < unions.Count; index++) JsonTaggedUnionCodec.WriteUnion(writer, unions.At(index));
                 writer.WriteEndArray();
                 break;
             case JsonRecordFieldKind.RecordNullableElementsArray:
@@ -1067,7 +1067,7 @@ internal static class JsonScalarRecordCodec
                     var entry = nullableUnionMap.At(index);
                     writer.WritePropertyName(entry.Key);
                     if (entry.Value is null) writer.WriteNullValue();
-                    else writer.WriteRawValue(JsonTaggedUnionCodec.Encode(entry.Value));
+                    else JsonTaggedUnionCodec.WriteUnion(writer, entry.Value);
                 }
                 writer.WriteEndObject();
                 break;
@@ -1079,7 +1079,7 @@ internal static class JsonScalarRecordCodec
                 {
                     var entry = unionMap.At(index);
                     writer.WritePropertyName(entry.Key);
-                    writer.WriteRawValue(JsonTaggedUnionCodec.Encode(entry.Value));
+                    JsonTaggedUnionCodec.WriteUnion(writer, entry.Value);
                 }
                 writer.WriteEndObject();
                 break;

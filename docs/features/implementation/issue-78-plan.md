@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-fifth slice: stream nested tagged unions into one JSON writer
+
+Base `eb85d54b1c9aaa2c2e5a906b3e0045cfa3489923` re-encodes every nested
+tagged union and record payload into intermediate byte arrays before inserting
+them into the containing JSON writer. Deep alternating record/union values can
+therefore repeatedly copy the same large payload. Write nested tagged unions and
+their record payloads directly to the same writer, including union fields,
+arrays, nullable arrays and maps. Preserve the exact existing provisional JSON
+bytes, descriptor checks, depth limit, errors, and public-contract boundaries;
+no new public or durable format or policy is adopted.
+
+Change the internal record and union codecs, add runtime feature tests, update
+status and this plan. Map exact-byte and round-trip coverage for nested unions,
+arrays/maps, Unicode and null entries to AC1/AC3, and a deep large-payload
+allocation regression to resource-safe typed encoding. Existing rejection tests
+remain intact (AC2/AC4). Merged #9, #14, #59 and #372–#378 provide
+prerequisites. Run bootstrap, full verifier, runtime, SQLite, compiler and
+exact-base isolated runtime verifier with fresh short snapshots and unchanged
+guards; record actual results. Keep #78 open for remaining acceptance.
+
+Results: all three focused runtime tests passed. On a fresh exact-base snapshot,
+the new allocation regression failed as intended (16,728,728 bytes versus its
+8,000,000-byte ceiling); the changed implementation passed. Bootstrap passed;
+documentation checked 137 files and 309 links, and all 57 automation tests
+passed. Full verification restored but the pinned MCR image pull returned
+`Forbidden` before the container ran. Runtime passed 2 baseline and 373 feature
+tests; SQLite passed 1 baseline and 56 feature tests. Compiler passed 18
+baseline and 406 feature tests in a fresh short snapshot; the unchanged report
+guard accepted 510,084 bytes. The exact-base isolated runtime verifier restored
+but hit the same image pull failure before its container ran. Hosted exact-head
+checks and the trusted failure/clean pilot remain required.
+
 ## Fifty-fourth slice: caller-bounded contract decoding
 
 Base `028c8e717407ea26e0d64daa565de6a84f0cf975` snapshots untrusted metadata
