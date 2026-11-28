@@ -213,6 +213,9 @@ shape and is reproducible across independent processes. Callers must combine it
 with a logical namespace: unrelated contracts with the same shape have the same
 fingerprint. It does not establish semantic compatibility, authenticity, schema
 evolution or durable admission.
+An opt-in internal builder combines caller-supplied namespace bytes and that
+shape fingerprint into a framed, owned identity for the existing codec catalog.
+Callers remain responsible for namespace uniqueness and versioning.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
