@@ -189,6 +189,8 @@ depth and redacted indexed errors. It is not yet a public D# or logging API.
 Record fields now stream these trees to their containing writer without an
 intermediate encoded byte array or child-array clones during traversal, while
 external snapshots remain owned and existing provisional bytes are preserved.
+The tree reader constructs indexed error paths on failure rather than allocating
+them for every successful element, retaining first-error ordering and redaction.
 An internal adapter encodes finite binary32/binary64 values as JSON number
 nodes and converts number nodes back using invariant nearest-representable
 rounding, retaining signed zero and rejecting overflow. It rejects non-number
