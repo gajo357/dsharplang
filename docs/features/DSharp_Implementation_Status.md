@@ -220,6 +220,10 @@ A separate-process SQLite fixture stores identities from two logical namespaces
 with the same record shape, then reconstructs catalogs after writer exit and
 checks namespace and changed-shape rejection and redacted corrupt-data errors.
 The fixture uses direct SQL and does not implement durable admission.
+An opt-in internal contract decoder rejects metadata or payloads exceeding
+caller-supplied byte limits before reading or copying either input. Within its
+limits it delegates to the existing catalog. This does not bound all parser
+allocations or implement transport or durable admission limits.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
