@@ -1,5 +1,37 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-eighth slice: avoid duplicate tree decode snapshots
+
+Base `371e3ca1735bc07c64d6ff2f1b5fee3acfce52af` builds a private temporary
+list while decoding each JSON array or object, converts it to an array and then
+clones that array again in the normal value-tree constructor. Add internal
+buffer-to-snapshot construction that takes one owned copy and performs the same
+null, Unicode, duplicate and depth validation; retain cloning for existing
+array-based callers. Use it in the tree reader for both lists and maps. Preserve
+first-error order, paths, redaction, wire bytes and external snapshot ownership;
+no public API, durable format or admission policy is adopted.
+
+Update the internal JSON value-tree codec, add runtime feature tests, status and
+this plan. Map wide valid tree decode and round trip to AC1/AC3; buffer mutation,
+invalid buffer entries, nested duplicate/Unicode paths and redaction to AC2/AC4.
+Include a meaningful exact-base negative allocation control. Merged #9, #14,
+#59 and #372–#381 provide prerequisites. Run bootstrap, full verifier, runtime,
+SQLite, compiler and exact-base isolated runtime verifier in fresh short
+snapshots with unchanged guards; record results. Keep #78 open.
+
+Results: both focused tests passed. On a fresh exact-base snapshot, the new
+allocation regression failed as intended (18,594,864 bytes against a
+17,800,000-byte ceiling); changed code passed. Bootstrap passed; documentation
+checked 137 files and 309 links, and all 57 automation tests passed. Full
+verification restored but the pinned MCR image pull returned `Forbidden` before
+the container ran. Runtime passed 2 baseline and 379 feature tests in a fresh
+short snapshot; its unchanged guard accepted 506,697 bytes. SQLite passed 1
+baseline and 56 feature tests. Compiler passed 18 baseline and 406 feature tests
+in the short snapshot; the unchanged guard accepted 510,084 bytes. Exact-base
+isolated runtime verification restored but hit the same image pull failure before
+its container ran. Hosted exact-head checks and the trusted failure/clean pilot
+remain required.
+
 ## Fifty-seventh slice: build tree error paths only on failure
 
 Base `5db180a7937d9592aff65277fa97cce006873bec` eagerly builds a new
