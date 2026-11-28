@@ -1,5 +1,36 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-sixth slice: stream JSON field trees into typed records
+
+Base `016646cfdcd074245e75e9585b6e5c5c5542b1b4` writes tagged unions to a
+shared writer, but each JSON value-tree record field still serializes to a
+temporary byte array before being written as raw JSON; traversing each tree
+container also clones its complete child array. Stream field trees into the
+existing writer and traverse owned snapshots by index without exposing mutable
+arrays. Preserve exact existing provisional bytes, depth checks, copied public
+snapshots and errors; do not adopt public, logging or durable formats.
+
+Change the internal field-value and record codecs, add runtime feature tests,
+and update status and this plan. Map exact bytes, nested trees, nullable fields
+and record/union round trips to AC1/AC3; retain immutable snapshots and prior
+rejection tests for AC2/AC4. Include a wide tree allocation regression that
+demonstrates the base problem. Merged #9, #14, #59 and #372–#379 provide
+prerequisites. Run bootstrap, full verifier, runtime, SQLite, compiler and
+exact-base isolated runtime verifier with fresh short snapshots and unchanged
+guards; record actual results. Keep #78 open.
+
+Results: both focused runtime tests passed. On a fresh exact-base snapshot, the
+new allocation regression failed as intended (16,620,088 bytes versus its
+14,000,000-byte ceiling); the changed implementation passed. Bootstrap passed;
+documentation checked 137 files and 309 links, and all 57 automation tests
+passed. Full verification restored but the pinned MCR image pull returned
+`Forbidden` before the container ran. Runtime passed 2 baseline and 375 feature
+tests; SQLite passed 1 baseline and 56 feature tests. Compiler passed 18
+baseline and 406 feature tests in a fresh short snapshot; the unchanged report
+guard accepted 510,084 bytes. The exact-base isolated runtime verifier restored
+but hit the same image pull failure before its container ran. Hosted exact-head
+checks and the trusted failure/clean pilot remain required.
+
 ## Fifty-fifth slice: stream nested tagged unions into one JSON writer
 
 Base `eb85d54b1c9aaa2c2e5a906b3e0045cfa3489923` re-encodes every nested
