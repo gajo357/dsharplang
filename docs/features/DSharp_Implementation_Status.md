@@ -193,6 +193,9 @@ The tree reader constructs indexed error paths on failure rather than allocating
 them for every successful element, retaining first-error ordering and redaction.
 It also snapshots parsed list and map buffers once instead of cloning the same
 new array twice; validation and owned snapshots remain unchanged.
+Internal record descriptors also support required and nullable nested int32
+arrays, with owned rows, optional nullable presence, typed tree/union round trips
+and redacted indexed errors. This does not adopt a public JSON encoding contract.
 An internal adapter encodes finite binary32/binary64 values as JSON number
 nodes and converts number nodes back using invariant nearest-representable
 rounding, retaining signed zero and rejecting overflow. It rejects non-number

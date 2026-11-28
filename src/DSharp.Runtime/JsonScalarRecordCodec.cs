@@ -14,7 +14,8 @@ internal enum JsonRecordFieldKind { Boolean, Integer, String, NullableBoolean, N
     SingleArray, NullableSingleArray, SingleNullableElementsArray, NullableSingleNullableElementsArray,
     DoubleArray, NullableDoubleArray, DoubleNullableElementsArray, NullableDoubleNullableElementsArray,
     SingleMap, NullableSingleMap, SingleNullableValuesMap, NullableSingleNullableValuesMap,
-    DoubleMap, NullableDoubleMap, DoubleNullableValuesMap, NullableDoubleNullableValuesMap }
+    DoubleMap, NullableDoubleMap, DoubleNullableValuesMap, NullableDoubleNullableValuesMap,
+    IntegerMatrix, NullableIntegerMatrix }
 internal sealed record JsonRecordField(string Name, JsonRecordFieldKind Kind, bool Optional = false, JsonScalarRecordSchema? NestedSchema = null, JsonTaggedUnionSchema? UnionSchema = null);
 
 internal sealed class JsonScalarRecordSchema
@@ -56,6 +57,8 @@ internal sealed class JsonScalarRecordSchema
                 depth = Math.Max(depth, checked(nested.Depth + (isArray || isMap ? 2 : 1)));
             else if (field.UnionSchema is { } union)
                 depth = Math.Max(depth, checked(union.Depth + (isUnionArray || isUnionMap ? 2 : 1)));
+            else if (field.Kind is JsonRecordFieldKind.IntegerMatrix or JsonRecordFieldKind.NullableIntegerMatrix)
+                depth = Math.Max(depth, 3);
             else if (isScalarArray || isScalarMap)
                 depth = Math.Max(depth, 2);
             if (depth > 64)
@@ -71,7 +74,7 @@ internal sealed class JsonScalarRecordSchema
     internal JsonRecordField FieldAt(int index) => fields[index];
     internal bool TryFind(string name, out int index) => indexes.TryGetValue(name, out index);
     internal static bool IsNullable(JsonRecordFieldKind kind) => kind is
-        JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64 or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableSingle or JsonRecordFieldKind.NullableDouble or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or JsonRecordFieldKind.NullableRecordNullableElementsArray or
+        JsonRecordFieldKind.NullableIntegerMatrix or JsonRecordFieldKind.NullableBoolean or JsonRecordFieldKind.NullableInteger or JsonRecordFieldKind.NullableInt64 or JsonRecordFieldKind.NullableUInt64 or JsonRecordFieldKind.NullableDecimal or JsonRecordFieldKind.NullableSingle or JsonRecordFieldKind.NullableDouble or JsonRecordFieldKind.NullableString or JsonRecordFieldKind.NullableRecord or JsonRecordFieldKind.NullableRecordArray or JsonRecordFieldKind.NullableRecordNullableElementsArray or
         JsonRecordFieldKind.NullableBooleanArray or JsonRecordFieldKind.NullableIntegerArray or JsonRecordFieldKind.NullableStringArray or JsonRecordFieldKind.NullableDecimalArray or JsonRecordFieldKind.NullableDecimalNullableElementsArray or
         JsonRecordFieldKind.NullableSingleArray or JsonRecordFieldKind.NullableSingleNullableElementsArray or JsonRecordFieldKind.NullableDoubleArray or JsonRecordFieldKind.NullableDoubleNullableElementsArray or
         JsonRecordFieldKind.NullableInt64Array or JsonRecordFieldKind.NullableInt64NullableElementsArray or JsonRecordFieldKind.NullableUInt64Array or JsonRecordFieldKind.NullableUInt64NullableElementsArray or
@@ -146,6 +149,7 @@ internal sealed class JsonScalarRecord
         JsonNullableUnionMap map => map.Depth,
         JsonUnionArray array => array.Depth,
         JsonNullableUnionArray array => array.Depth,
+        JsonIntegerMatrix => 2,
         JsonRecordScalarArray => 1,
         JsonRecordScalarMap => 1,
         _ => 0
@@ -163,6 +167,8 @@ internal sealed class JsonScalarRecord
         JsonRecordFieldKind.String => value is string,
         JsonRecordFieldKind.NullableBoolean => value is null or bool,
         JsonRecordFieldKind.NullableInteger => value is null or int,
+        JsonRecordFieldKind.IntegerMatrix => value is JsonIntegerMatrix,
+        JsonRecordFieldKind.NullableIntegerMatrix => value is null or JsonIntegerMatrix,
         JsonRecordFieldKind.NullableInt64 => value is null or long,
         JsonRecordFieldKind.NullableUInt64 => value is null or ulong,
         JsonRecordFieldKind.NullableDecimal => value is null or decimal,
@@ -217,6 +223,27 @@ internal sealed class JsonScalarRecord
             value is null || value is JsonRecordScalarMap scalarMap && scalarMap.Kind == JsonRecordScalarMap.ElementKind(field.Kind),
         _ => false
     };
+}
+
+// Own both dimensions so callers cannot mutate a record after validation.
+internal sealed class JsonIntegerMatrix
+{
+    private readonly int[][] rows;
+    private JsonIntegerMatrix(int[][] rows) => this.rows = rows;
+    internal int Count => rows.Length;
+    internal int RowLength(int row) => rows[row].Length;
+    internal int At(int row, int column) => rows[row][column];
+    internal static JsonIntegerMatrix Create(int[][] rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var copy = (int[][])rows.Clone();
+        for (var i = 0; i < copy.Length; i++)
+        {
+            if (copy[i] is null) throw new ArgumentException("Matrix rows cannot be null.", nameof(rows));
+            copy[i] = (int[])copy[i].Clone();
+        }
+        return new JsonIntegerMatrix(copy);
+    }
 }
 
 internal enum JsonRecordScalarArrayKind { Boolean, Integer, String, NullableBoolean, NullableInteger, NullableString, ExactNumber, NullableExactNumber, Decimal, NullableDecimal, Int64, NullableInt64, UInt64, NullableUInt64, Single, NullableSingle, Double, NullableDouble }
@@ -695,6 +722,11 @@ internal static class JsonScalarRecordCodec
                         : JsonScalarResult<object?>.Failure(union.Error!.Value.Code, path + union.Error.Value.Path[1..]);
                 }
             }
+            else if (field.Kind is JsonRecordFieldKind.IntegerMatrix or JsonRecordFieldKind.NullableIntegerMatrix)
+            {
+                value = field.Kind == JsonRecordFieldKind.NullableIntegerMatrix && property.Value.ValueKind == JsonValueKind.Null
+                    ? JsonScalarResult<object?>.Success(null) : Box(ReadIntegerMatrix(property.Value, path));
+            }
             else if (JsonRecordScalarMap.ElementKind(field.Kind) is { } mapKind)
             {
                 value = JsonScalarRecordSchema.IsNullable(field.Kind) && property.Value.ValueKind == JsonValueKind.Null
@@ -721,6 +753,29 @@ internal static class JsonScalarRecordCodec
             if (!present[index] && !schema.FieldAt(index).Optional)
                 return JsonScalarResult<JsonScalarRecord>.Failure(JsonScalarErrorCode.MissingField, objectPath + schema.PathAt(index)[1..]);
         return JsonScalarResult<JsonScalarRecord>.Success(JsonScalarRecord.Create(schema, values, present));
+    }
+
+    private static JsonScalarResult<JsonIntegerMatrix> ReadIntegerMatrix(JsonElement element, string path)
+    {
+        if (element.ValueKind != JsonValueKind.Array)
+            return JsonScalarResult<JsonIntegerMatrix>.Failure(JsonScalarErrorCode.TypeMismatch, path);
+        var rows = new List<int[]>();
+        foreach (var row in element.EnumerateArray())
+        {
+            var rowPath = path + "[" + rows.Count.ToString(CultureInfo.InvariantCulture) + "]";
+            if (row.ValueKind != JsonValueKind.Array)
+                return JsonScalarResult<JsonIntegerMatrix>.Failure(JsonScalarErrorCode.TypeMismatch, rowPath);
+            var items = new List<int>();
+            foreach (var item in row.EnumerateArray())
+            {
+                var read = JsonScalarCodec.ReadInteger(item);
+                if (!read.IsSuccess) return JsonScalarResult<JsonIntegerMatrix>.Failure(read.Error!.Value.Code,
+                    rowPath + "[" + items.Count.ToString(CultureInfo.InvariantCulture) + "]");
+                items.Add(read.Value);
+            }
+            rows.Add(items.ToArray());
+        }
+        return JsonScalarResult<JsonIntegerMatrix>.Success(JsonIntegerMatrix.Create(rows.ToArray()));
     }
 
     private static JsonScalarResult<JsonRecordScalarMap> ReadScalarMap(JsonRecordFieldKind kind, JsonElement element, string path)
@@ -1153,6 +1208,18 @@ internal static class JsonScalarRecordCodec
                     WriteValue(writer, scalarMap.Kind, entry.Value);
                 }
                 writer.WriteEndObject();
+                break;
+            case JsonRecordFieldKind.IntegerMatrix:
+            case JsonRecordFieldKind.NullableIntegerMatrix:
+                var matrix = (JsonIntegerMatrix)value;
+                writer.WriteStartArray();
+                for (var row = 0; row < matrix.Count; row++)
+                {
+                    writer.WriteStartArray();
+                    for (var column = 0; column < matrix.RowLength(row); column++) writer.WriteNumberValue(matrix.At(row, column));
+                    writer.WriteEndArray();
+                }
+                writer.WriteEndArray();
                 break;
             case JsonRecordFieldKind.BooleanArray:
             case JsonRecordFieldKind.IntegerArray:
