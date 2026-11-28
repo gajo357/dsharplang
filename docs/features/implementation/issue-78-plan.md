@@ -1,5 +1,36 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixty-first slice: composable typed collection decoding
+
+Base `149f23f900703c2177285b31ee7f51a9a98efa9a` supports several fixed
+nested collection shapes but requires a new descriptor and implementation for
+each combination. Add an independent internal composable descriptor for bool,
+int32 and string leaves with nullable, list and string-keyed map nodes. Decode
+against this bounded descriptor in input order into the existing immutable JSON
+tree, then encode that validated tree without executing application callbacks.
+Preserve scalar rules, duplicate rejection, first-error order, indexed redacted
+paths, depth limits and owned snapshots. This does not adopt a public, Option or
+durable format and does not replace the current record descriptors.
+
+Add `src/DSharp.Runtime/JsonCollectionCodec.cs`, a runtime feature test, this
+plan and implementation status. Map nested combinations, nullable nodes,
+empty containers and round trips to AC1/AC3; null/type/range/Unicode/duplicate
+rejection, first-error paths, descriptor limits and snapshots to AC2/AC4.
+Merged #9, #14, #59, #382–#384 are prerequisites. Run bootstrap, full verifier,
+runtime, SQLite, compiler and exact-base isolated runtime verification in fresh
+short snapshots with unchanged guards; record actual results. Keep #78 open for
+public integration and unresolved contract choices.
+
+Results: the focused test passed. Bootstrap passed; documentation checked 137
+files and 309 links and all 57 automation tests passed. Runtime passed 2 baseline
+and 383 feature tests in a fresh short snapshot; its unchanged guard accepted
+510,424 bytes. SQLite passed 1 baseline and 56 feature tests. Compiler passed
+18 baseline and 406 feature tests in the short snapshot; its unchanged guard
+accepted 508,460 bytes. Full and exact-base isolated runtime verification
+restored but the pinned MCR image pull returned `Forbidden` before containers
+ran. Hosted exact-head checks and trusted failure/clean verification remain
+required.
+
 ## Sixtieth slice: typed maps of integer arrays
 
 Base `d51a4f146ecf63036b0b1043a5624cff2d78f775` supports scalar maps and
