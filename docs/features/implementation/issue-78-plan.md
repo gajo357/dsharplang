@@ -1,5 +1,34 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixty-second slice: record and union leaves in composed collections
+
+Base `7d9d929579ce02077006db3142722d92e37454c8` composes nullable, list and
+map nodes only over three scalar leaves. Extend the internal collection shape
+with explicitly supplied record and union descriptors, using the existing typed
+record/union readers and tree bridges. Include descriptor depth when enforcing
+the existing 64-node shape bound. Preserve existing record/union validation,
+first errors, redacted indexed paths and owned tree output; representation is
+the existing provisional codec's encoding and no public, Option or durable
+contract is adopted.
+
+Change `JsonCollectionCodec.cs`, add a runtime feature test, status and this
+plan. Map nested collections of nullable records and unions, tree/typed recovery
+and round trips to AC1/AC3; invalid leaf payloads, duplicate/unknown fields,
+redaction and descriptor depth boundaries to AC2/AC4. Merged #9, #14, #59 and
+#382–#385 are prerequisites. Run bootstrap, full verifier, runtime, SQLite,
+compiler and exact-base isolated runtime verification in fresh short snapshots
+with unchanged guards; record actual results. Keep #78 open for public
+integration and unresolved encoding choices.
+
+Results: the focused test passed. Bootstrap passed; documentation checked 137
+files and 309 links and all 57 automation tests passed. Runtime passed 2 baseline
+and 384 feature tests in a fresh short snapshot; its unchanged guard accepted
+511,704 bytes. SQLite passed 1 baseline and 56 features. Compiler passed 18
+baseline and 406 feature tests in the short snapshot; its unchanged guard
+accepted 508,460 bytes. Full and exact-base isolated runtime verification restored
+but the pinned MCR image pull returned `Forbidden` before containers ran. Hosted
+exact-head checks and trusted failure/clean verification remain required.
+
 ## Sixty-first slice: composable typed collection decoding
 
 Base `149f23f900703c2177285b31ee7f51a9a98efa9a` supports several fixed
