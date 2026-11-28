@@ -1,5 +1,35 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-fourth slice: caller-bounded contract decoding
+
+Base `028c8e717407ea26e0d64daa565de6a84f0cf975` snapshots untrusted metadata
+and JSON bytes before decoding without an opt-in byte budget. Add an internal
+wrapper around the existing catalog that accepts caller-chosen maximum metadata
+and payload byte lengths. For both record and union decode, reject an oversized
+input with a fixed redacted root error before touching or copying either input;
+within limits delegate unchanged to the existing catalog. Reject invalid budgets.
+This is an opt-in input-size guard, not a transport/admission limit, a bound on
+all parser allocations, a public API, a wire format or a compatibility policy.
+Existing unbounded APIs and their behavior remain unchanged.
+
+Add an internal wrapper and error code, runtime feature tests, status and this
+plan. Map exact-boundary successful record and union round trips to AC1/AC3;
+oversized metadata/payload, zero payload budget, invalid budgets, unreadable
+memory, mismatch precedence and redacted errors to AC2/AC4. Merged #9, #14,
+#59 and #372–#377 supply prerequisites. Run bootstrap, full verifier, runtime,
+SQLite, compiler and exact-base isolated runtime verifier with fresh short
+snapshots and unchanged report guards; record actual results. Keep #78 open.
+
+Results: all three focused runtime tests passed. Bootstrap passed; documentation
+checked 137 files and 309 links, and all 57 automation tests passed. Full
+verification restored but the pinned MCR image pull returned `Forbidden` before
+the container ran. Runtime passed 2 baseline and 370 feature tests; SQLite
+passed 1 baseline and 56 feature tests. Compiler passed 18 baseline and 406
+feature tests in a fresh short snapshot; the unchanged report guard accepted
+510,084 bytes. The exact-base isolated runtime verifier restored but hit the same
+image pull failure before its container ran. Hosted exact-head checks and the
+trusted failure/clean pilot remain required.
+
 ## Fifty-third slice: namespaced identities across SQLite reopen
 
 Base `8fe3957117b07a66a561feacc9349674d7b5de59` adds the opt-in
