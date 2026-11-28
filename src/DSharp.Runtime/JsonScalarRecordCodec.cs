@@ -1013,7 +1013,7 @@ internal static class JsonScalarRecordCodec
             case JsonRecordFieldKind.String:
             case JsonRecordFieldKind.NullableString: writer.WriteStringValue((string)value); break;
             case JsonRecordFieldKind.FieldValue:
-            case JsonRecordFieldKind.NullableFieldValue: writer.WriteRawValue(JsonFieldValueCodec.Encode((JsonFieldValue)value)); break;
+            case JsonRecordFieldKind.NullableFieldValue: JsonFieldValueCodec.Write(writer, (JsonFieldValue)value); break;
             case JsonRecordFieldKind.ExactNumber:
             case JsonRecordFieldKind.NullableExactNumber: writer.WriteRawValue(((JsonExactNumber)value).Token); break;
             case JsonRecordFieldKind.Record:

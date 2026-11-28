@@ -59,6 +59,10 @@ internal sealed class JsonFieldValue
         ? throw new InvalidOperationException("A container has no scalar value.") : value;
     internal JsonFieldValue[] ListItems => (JsonFieldValue[])((JsonFieldValue[])value!).Clone();
     internal KeyValuePair<string, JsonFieldValue>[] MapItems => (KeyValuePair<string, JsonFieldValue>[])((KeyValuePair<string, JsonFieldValue>[])value!).Clone();
+    internal int ListCount => ((JsonFieldValue[])value!).Length;
+    internal JsonFieldValue ListAt(int index) => ((JsonFieldValue[])value!)[index];
+    internal int MapCount => ((KeyValuePair<string, JsonFieldValue>[])value!).Length;
+    internal KeyValuePair<string, JsonFieldValue> MapAt(int index) => ((KeyValuePair<string, JsonFieldValue>[])value!)[index];
 }
 
 internal static class JsonFieldValueCodec
@@ -70,7 +74,7 @@ internal static class JsonFieldValueCodec
         using (var writer = new Utf8JsonWriter(output)) { Write(writer, value); writer.Flush(); }
         return output.WrittenSpan.ToArray();
     }
-    private static void Write(Utf8JsonWriter writer, JsonFieldValue value)
+    internal static void Write(Utf8JsonWriter writer, JsonFieldValue value)
     {
         switch (value.Kind)
         {
@@ -80,11 +84,14 @@ internal static class JsonFieldValueCodec
             case JsonFieldValueKind.Number: writer.WriteRawValue(((JsonExactNumber)value.Scalar!).Token); break;
             case JsonFieldValueKind.List:
                 writer.WriteStartArray();
-                foreach (var item in value.ListItems) Write(writer, item);
+                for (var index = 0; index < value.ListCount; index++) Write(writer, value.ListAt(index));
                 writer.WriteEndArray(); break;
             case JsonFieldValueKind.Map:
                 writer.WriteStartObject();
-                foreach (var pair in value.MapItems) { writer.WritePropertyName(pair.Key); Write(writer, pair.Value); }
+                for (var index = 0; index < value.MapCount; index++)
+                {
+                    var pair = value.MapAt(index); writer.WritePropertyName(pair.Key); Write(writer, pair.Value);
+                }
                 writer.WriteEndObject(); break;
             default: throw new InvalidOperationException("Unsupported JSON field value.");
         }
