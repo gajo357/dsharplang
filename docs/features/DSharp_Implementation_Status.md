@@ -216,6 +216,10 @@ evolution or durable admission.
 An opt-in internal builder combines caller-supplied namespace bytes and that
 shape fingerprint into a framed, owned identity for the existing codec catalog.
 Callers remain responsible for namespace uniqueness and versioning.
+A separate-process SQLite fixture stores identities from two logical namespaces
+with the same record shape, then reconstructs catalogs after writer exit and
+checks namespace and changed-shape rejection and redacted corrupt-data errors.
+The fixture uses direct SQL and does not implement durable admission.
 This does not define a public wire contract.
 Explicit internal record fields can hold those value trees through nested records
 and unions, with a combined 64-container bound and redacted nested errors.
