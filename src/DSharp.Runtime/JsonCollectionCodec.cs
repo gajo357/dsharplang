@@ -4,24 +4,31 @@ using System.Text.Json;
 namespace DSharp.Runtime;
 
 // Internal, explicitly supplied shapes; not a public schema or wire contract.
-internal enum JsonCollectionShapeKind { Boolean, Integer, String, Nullable, List, Map }
+internal enum JsonCollectionShapeKind { Boolean, Integer, String, Nullable, List, Map, Record, Union }
 
 internal sealed class JsonCollectionShape
 {
-    private JsonCollectionShape(JsonCollectionShapeKind kind, JsonCollectionShape? child)
+    private JsonCollectionShape(JsonCollectionShapeKind kind, JsonCollectionShape? child,
+        JsonScalarRecordSchema? record = null, JsonTaggedUnionSchema? union = null)
     {
         Kind = kind;
         Child = child;
-        Height = child is null ? 1 : checked(child.Height + 1);
+        RecordSchema = record;
+        UnionSchema = union;
+        Height = child is null ? record?.Depth ?? union?.Depth ?? 1 : checked(child.Height + 1);
         if (Height > 64) throw new ArgumentException("Collection descriptor exceeds the supported depth.", nameof(child));
     }
 
     internal JsonCollectionShapeKind Kind { get; }
     internal JsonCollectionShape? Child { get; }
+    internal JsonScalarRecordSchema? RecordSchema { get; }
+    internal JsonTaggedUnionSchema? UnionSchema { get; }
     internal int Height { get; }
     internal static JsonCollectionShape Boolean() => new(JsonCollectionShapeKind.Boolean, null);
     internal static JsonCollectionShape Integer() => new(JsonCollectionShapeKind.Integer, null);
     internal static JsonCollectionShape String() => new(JsonCollectionShapeKind.String, null);
+    internal static JsonCollectionShape Record(JsonScalarRecordSchema schema) => new(JsonCollectionShapeKind.Record, null, record: schema ?? throw new ArgumentNullException(nameof(schema)));
+    internal static JsonCollectionShape Union(JsonTaggedUnionSchema schema) => new(JsonCollectionShapeKind.Union, null, union: schema ?? throw new ArgumentNullException(nameof(schema)));
     internal static JsonCollectionShape Nullable(JsonCollectionShape child) => new(JsonCollectionShapeKind.Nullable, child ?? throw new ArgumentNullException(nameof(child)));
     internal static JsonCollectionShape List(JsonCollectionShape child) => new(JsonCollectionShapeKind.List, child ?? throw new ArgumentNullException(nameof(child)));
     internal static JsonCollectionShape Map(JsonCollectionShape child) => new(JsonCollectionShapeKind.Map, child ?? throw new ArgumentNullException(nameof(child)));
@@ -59,6 +66,14 @@ internal static class JsonCollectionCodec
                 var text = JsonScalarCodec.ReadString(element);
                 return text.IsSuccess ? JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.String(text.Value))
                     : JsonScalarResult<JsonFieldValue>.Failure(text.Error!.Value.Code);
+            case JsonCollectionShapeKind.Record:
+                var record = JsonScalarRecordCodec.ReadRecord(shape.RecordSchema!, element, "$");
+                return record.IsSuccess ? JsonTypedFieldMapping.FromRecord(record.Value)
+                    : JsonScalarResult<JsonFieldValue>.Failure(record.Error!.Value.Code, record.Error.Value.Path);
+            case JsonCollectionShapeKind.Union:
+                var union = JsonTaggedUnionCodec.Read(shape.UnionSchema!, element);
+                return union.IsSuccess ? JsonTypedFieldMapping.FromUnion(union.Value)
+                    : JsonScalarResult<JsonFieldValue>.Failure(union.Error!.Value.Code, union.Error.Value.Path);
             case JsonCollectionShapeKind.List:
                 if (element.ValueKind != JsonValueKind.Array) return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.TypeMismatch);
                 var items = new List<JsonFieldValue>();
