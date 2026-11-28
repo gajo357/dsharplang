@@ -2,6 +2,26 @@
 
 ## Sixty-third slice: numeric leaves in composed collections
 
+### Same-branch hosted runtime-pilot repair
+
+Exact-head CI #500 passed the isolated clean runtime suite but its intentional
+failure pilot could not find the failing TRX. A local run of the same probe and
+all 385 feature tests produced a 513,725-byte TRX in `/tmp/3`, above the existing
+512,000-byte guard; 774 occurrences of the checkout path account for enough of
+the report to project 512,951 bytes at `/work` and 510,629 at `/w` for that same
+report. The hosted log alone does not establish the missing-report cause.
+Shorten only the isolated runtime container's checkout mount from `/work` to
+`/w`; retain the existing report-size limit, all tests, staging, isolation,
+intentional-failure assertion and subsequent clean proof. Hosted exact-head
+CI must exercise the real failure and clean runs before this PR is eligible.
+
+Repair verification: bootstrap, documentation (137 files and 309 links), the
+57 automation tests and the focused runtime staging/count tests passed. The
+full verifier and the real local runtime pilot restored but the pinned MCR image
+pull returned `Forbidden` before their containers ran. The local direct probe
+above exercises the actual intentional failing test but is not an isolated
+pilot pass; the hosted exact-head failure-and-clean result remains mandatory.
+
 Base `e64f6b096630a0a8aa8821ccd514c9d3e2870bed` composes collections over
 bool, int32, string, record and union leaves but excludes the existing int64,
 uint64, exact decimal, finite float and raw validated number primitives. Extend
