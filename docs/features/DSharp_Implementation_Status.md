@@ -196,6 +196,8 @@ new array twice; validation and owned snapshots remain unchanged.
 Internal record descriptors also support required and nullable nested int32
 arrays, with owned rows, optional nullable presence, typed tree/union round trips
 and redacted indexed errors. This does not adopt a public JSON encoding contract.
+The internal record codec also supports maps of integer arrays, preserving owned
+snapshots, nullable presence, key validation and redacted indexed failures.
 An internal adapter encodes finite binary32/binary64 values as JSON number
 nodes and converts number nodes back using invariant nearest-representable
 rounding, retaining signed zero and rejecting overflow. It rejects non-number

@@ -1,5 +1,33 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Sixtieth slice: typed maps of integer arrays
+
+Base `d51a4f146ecf63036b0b1043a5624cff2d78f775` supports scalar maps and
+integer matrices in typed records, but not a map whose values are typed integer
+arrays. Add required and nullable map-of-array descriptors and an internal owned
+snapshot, encoding and decoding, with optional nullable presence and correct
+depth. Preserve key order, Unicode and duplicate validation, indexed redacted
+errors and first-error behavior. Existing tree and union bridges compose through
+the record codec. This does not adopt a public, Option or durable wire format.
+
+Change `JsonScalarRecordCodec.cs`, a new runtime feature test, status and this
+plan. Map nested values, empty maps, optional/null fields and tree/union round
+trips to AC1/AC3; ownership, invalid keys/values, duplicate keys and redacted
+indexed paths to AC2/AC4. Merged #9, #14, #59, #382 and #383 are prerequisites.
+Run bootstrap, full verifier, runtime, SQLite, compiler and exact-base isolated
+runtime verification in fresh short snapshots with unchanged guards. Record
+results. Keep #78 open for public integration and unresolved encoding decisions.
+
+Results: the focused test passed. Bootstrap passed; documentation checked 137
+files and 309 links, and all 57 automation tests passed. Runtime passed 2
+baseline and 382 feature tests in a fresh short snapshot; its unchanged guard
+accepted 510,627 bytes. SQLite passed 1 baseline and 56 features. Compiler passed
+18 baseline and 406 feature tests in the short snapshot; its unchanged guard
+accepted 510,084 bytes. Full and exact-base isolated runtime verification
+restored, but the pinned MCR image pull returned `Forbidden` before containers
+ran. Hosted exact-head checks and trusted failure/clean verification remain
+required.
+
 ## Fifty-ninth slice: nested typed integer arrays in records
 
 Base `b53bcaf3734a2b3d66ab5dff14f176a402416c98` supports standalone nested
