@@ -1,5 +1,34 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-ninth slice: nested typed integer arrays in records
+
+Base `b53bcaf3734a2b3d66ab5dff14f176a402416c98` supports standalone nested
+integer arrays and typed scalar arrays in records, but cannot describe an array
+of integer arrays as a typed record field. Add an internal immutable matrix
+snapshot and required/nullable field descriptors, including optional nullable
+presence, encoding, decoding, schema depth and existing tree mapping. Preserve
+ordered indexed errors and redaction for malformed inner values and preserve
+ownership of both levels. Do not adopt a public, Option or durable wire format.
+
+Change `JsonScalarRecordCodec.cs`, runtime feature tests, status and this plan.
+Map nested, nullable and empty round trips and tree/union composition to AC1/AC3;
+missing/null/type/overflow errors, indexed paths, no secret values and mutation
+of caller buffers to AC2/AC4. Merged #9, #14, #59 and #382 supply prerequisites.
+Run bootstrap, full verifier, runtime, SQLite, compiler, and exact-base isolated
+runtime verification in fresh short snapshots, preserving the existing report
+guards; record actual results. Keep #78 open for public integration and its
+unresolved encoding contract.
+
+Results: both focused tests passed. Bootstrap passed; documentation checked 137
+files and 309 links, and all 57 automation tests passed. Runtime passed 2
+baseline and 381 feature tests in a fresh short snapshot; its unchanged report
+guard accepted 509,316 bytes. SQLite passed 1 baseline and 56 features. Compiler
+passed 18 baseline and 406 feature tests in the short snapshot; its unchanged
+guard accepted 510,084 bytes. Full verification and the exact-base isolated
+runtime verifier restored but the pinned MCR image pull returned `Forbidden`
+before either container ran. Hosted exact-head checks and trusted failure/clean
+verification remain required.
+
 ## Fifty-eighth slice: avoid duplicate tree decode snapshots
 
 Base `371e3ca1735bc07c64d6ff2f1b5fee3acfce52af` builds a private temporary
