@@ -1,5 +1,38 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-seventh slice: build tree error paths only on failure
+
+Base `5db180a7937d9592aff65277fa97cce006873bec` eagerly builds a new
+indexed path for every successfully decoded JSON tree element, creating many
+temporary strings for wide valid inputs. Build the indexed path only when a
+child, property name or duplicate fails; preserve the same first error, exact
+indexed path and redaction for nested trees inside records and unions. Keep
+existing byte formats, depth limits, construction and snapshot semantics.
+This is an internal optimization, not a public API, wire or admission policy.
+
+Change the internal JSON value-tree reader, add runtime feature tests, and
+update status and this plan. Map wide valid nested trees and round trips to
+AC1/AC3, nested duplicate/Unicode failures, first-error ordering and redaction
+to AC2/AC4. Demonstrate a wide-array allocation regression against the exact
+base while retaining all existing rejection tests. Merged #9, #14, #59 and
+#372–#380 supply prerequisites. Run bootstrap, full verifier, runtime, SQLite,
+compiler and exact-base isolated runtime verifier with fresh short snapshots
+and unchanged guards; record actual results. Keep #78 open.
+
+Results: both focused tests passed. On a fresh exact-base snapshot, the new
+allocation regression failed as intended (8,238,688 bytes against a
+6,500,000-byte ceiling); changed code passed. Bootstrap passed; documentation
+checked 137 files and 309 links, and all 57 automation tests passed. Full
+verification restored but the pinned MCR image pull returned `Forbidden` before
+the container ran. Runtime passed 2 baseline and 377 feature tests in a fresh
+short snapshot, with the unchanged guard accepting 504,114 bytes. The first
+workspace-path run passed the cases but its 512,408-byte report exceeded the
+unchanged 512,000-byte guard. SQLite passed 1 baseline and 56 feature tests.
+Compiler passed 18 baseline and 406 feature tests in the short snapshot; the
+unchanged guard accepted 510,084 bytes. The exact-base isolated runtime verifier
+restored but hit the same image pull failure before its container ran. Hosted
+exact-head checks and the trusted failure/clean pilot remain required.
+
 ## Fifty-sixth slice: stream JSON field trees into typed records
 
 Base `016646cfdcd074245e75e9585b6e5c5c5542b1b4` writes tagged unions to a

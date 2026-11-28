@@ -121,8 +121,8 @@ internal static class JsonFieldValueCodec
                 var items = new List<JsonFieldValue>();
                 foreach (var item in element.EnumerateArray())
                 {
-                    var result = Read(item, Index(path, items.Count));
-                    if (!result.IsSuccess) return result;
+                    var result = Read(item, "$");
+                    if (!result.IsSuccess) return PrefixError(result.Error!.Value, path, items.Count);
                     items.Add(result.Value);
                 }
                 return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.List(items.ToArray()));
@@ -131,19 +131,20 @@ internal static class JsonFieldValueCodec
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in element.EnumerateObject())
                 {
-                    var entryPath = Index(path, pairs.Count);
                     string name;
                     try { name = property.Name; JsonScalarCodec.ValidateUtf16(name); }
-                    catch (InvalidOperationException) { return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidUnicode, entryPath); }
-                    catch (ArgumentException) { return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidUnicode, entryPath); }
-                    if (!names.Add(name)) return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.DuplicateField, entryPath);
-                    var result = Read(property.Value, entryPath);
-                    if (!result.IsSuccess) return result;
+                    catch (InvalidOperationException) { return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidUnicode, Index(path, pairs.Count)); }
+                    catch (ArgumentException) { return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.InvalidUnicode, Index(path, pairs.Count)); }
+                    if (!names.Add(name)) return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.DuplicateField, Index(path, pairs.Count));
+                    var result = Read(property.Value, "$");
+                    if (!result.IsSuccess) return PrefixError(result.Error!.Value, path, pairs.Count);
                     pairs.Add(new(name, result.Value));
                 }
                 return JsonScalarResult<JsonFieldValue>.Success(JsonFieldValue.Map(pairs.ToArray()));
             default: return JsonScalarResult<JsonFieldValue>.Failure(JsonScalarErrorCode.TypeMismatch, path);
         }
     }
+    private static JsonScalarResult<JsonFieldValue> PrefixError(JsonScalarError error, string path, int index) =>
+        JsonScalarResult<JsonFieldValue>.Failure(error.Code, Index(path, index) + error.Path[1..]);
     private static string Index(string path, int index) => path + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
 }
