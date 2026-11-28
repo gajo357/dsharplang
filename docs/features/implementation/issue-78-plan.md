@@ -1,5 +1,34 @@
 # Issue #78: typed JSON encoding and decoding
 
+## Fifty-third slice: namespaced identities across SQLite reopen
+
+Base `8fe3957117b07a66a561feacc9349674d7b5de59` adds the opt-in
+namespaced schema identity builder but has no storage/restart evidence for it.
+Add a SQLite feature test in which a separate writer process reconstructs one
+record shape for two caller namespaces and stores catalog-encoded identity and
+payload pairs. After writer exit, independently reconstruct the descriptors and
+catalogs, verify each namespace selects its payload, cross-namespace and changed
+shape fail before parsing, and corrupt matching payloads yield redacted errors.
+Use fixture SQL only; no claim of durable admission, automatic evolution, public
+wire format or namespace authority. Preserve all existing tests.
+
+AC1 gains restart evidence for stable explicit identities; AC2/AC4 gain
+cross-namespace and changed-shape rejection and redacted malformed-data evidence;
+AC3 exercises typed payload round trips. Merged #9, #14, #59, #60 and #372–#376
+provide prerequisites. Update tested status and this plan. Run bootstrap, full
+verifier, runtime, SQLite, compiler and exact-base isolated SQLite verifier;
+use fresh short snapshots and unchanged report guards. Keep #78 open.
+
+Results: the focused separate-process SQLite test passed. Bootstrap passed;
+documentation checked 137 files and 309 links, and all 57 automation tests
+passed. Full verification restored but the pinned MCR image pull returned
+`Forbidden` before the container ran. Runtime passed 2 baseline and 367 feature
+tests; SQLite passed 1 baseline and 56 feature tests. Compiler passed 18 baseline
+and 406 feature tests in a fresh short snapshot; the unchanged report guard
+accepted 510,084 bytes. The exact-base isolated SQLite verifier restored but hit
+the same image pull failure before its container ran. Hosted exact-head checks
+and the trusted failure/clean pilot remain required.
+
 ## Fifty-second slice: explicitly namespaced shape identities
 
 Base `0eec9669c64732b1b35c4812ef3a4eedd84ecc61` fingerprints schema shapes
